@@ -1,93 +1,315 @@
-# flocks
+# Flocks
 
+**English** | [简体中文](README_zh.md)
 
+AI-Native SecOps Platform
 
-## Getting started
+![Flocks WebUI](assets/flocks.webp)
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+## 1. Project Overview
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+Flocks is an AI-driven SecOps platform built with Python, featuring multi-agent collaboration, HTTP API server, and modern terminal user interface designed to help you with your SecOps tasks.
 
-## Add your files
+## 2. Features
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/ee/gitlab-basics/add-file.html#add-a-file-using-the-command-line) or push an existing Git repository with the following command:
+- 🤖 **AI Agent System** - Multi-agent collaboration (build, plan, general)
+- 🔧 **Rich Tool Set** - bash, file operations, code search, LSP integration, etc.
+- 🌐 **HTTP API Server** - High-performance API service based on FastAPI
+- 💬 **Session Management** - Session and context management
+- 🎯 **Multiple Model Support** - Support for Anthropic, OpenAI, Google and other AI models
+- 📝 **LSP Integration** - Language Server Protocol support
+- 🔌 **MCP Support** - Model Context Protocol
+- 🖼️ **WebUI** - Browser-based web user interface
+- 🎨 **TUI Interface** - Modern terminal user interface
 
+## 3. Installation & Usage
+
+Flocks supports two deployment methods — **choose one**:
+
+| Method | Description |
+|---|---|
+| 3.1 PC Installation | Recommended for local development and production deployment |
+| 3.2 Docker Installation | Out-of-the-box, but agent-browser headed mode is currently unavailable |
+
+### 3.1 Option 1: PC Installation
+
+#### 3.1.1 System Requirements
+
+- `uv`
+- `Node.js` with `npm` 22.+
+- `agent-browser`
+- `bun` for TUI installation (Optional)
+
+By default, the project install scripts will try to ensure the requirements above are available automatically when possible.
+
+If automatic `npm` installation fails during setup, please install `npm` manually and use version `22.+` or newer.
+
+#### 3.1.2 Install
+
+> The following installation options are supported. **Choose one** to complete the installation, then proceed to 3.1.3 Start service.
+
+---
+
+**Option A: Install with one command (recommended)**
+
+> [!NOTE]
+> **Users in mainland China**: Please follow the installation instructions in the [简体中文](README_zh.md), which provides a mirror-accelerated installation method specifically optimized for users in China.
+
+macOS / Linux
+```bash
+curl -fsSL https://raw.githubusercontent.com/AgentFlocks/flocks/main/install.sh | bash
 ```
-cd existing_repo
-git remote add origin http://192.168.190.93/yf3/flocks.git
-git branch -M main
-git push -uf origin main
+Creates ./flocks under the current directory
+
+Windows PowerShell (Administrator)
+```powershell
+powershell -c "irm https://raw.githubusercontent.com/AgentFlocks/flocks/main/install.ps1 | iex"
 ```
 
-## Integrate with your tools
+---
 
-- [ ] [Set up project integrations](http://192.168.190.93/yf3/flocks/-/settings/integrations)
+**Option B: Install from source code**
 
-## Collaborate with your team
+If you prefer to inspect the repository before installation, clone it locally and run the installer from the workspace:
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html)
+```bash
+git clone https://github.com/AgentFlocks/Flocks.git flocks
+cd flocks
+```
 
-## Test and Deploy
+macOS / Linux
+```bash
+sh ./scripts/install.sh
+```
 
-Use the built-in continuous integration in GitLab.
+Windows PowerShell (Administrator)
+```powershell
+powershell -ep Bypass -File .\scripts\install.ps1
+```
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/index.html)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+---
 
-***
+**Option C: Windows installer (EXE, BETA)**
 
-# Editing this README
+Flocks provides an **Inno Setup** wizard (`.exe`) for **Windows x64**. Download the installer for your version from the [GitHub Releases](https://github.com/AgentFlocks/flocks/releases) page.
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+| Platform | Download |
+| --- | --- |
+| Windows (x64) | `FlocksSetup-<tag>.exe` |
 
-## Suggestions for a good README
+After installation, use the **Start menu** or optional **desktop** shortcut, or open a **new** terminal and run `flocks start` so updated `PATH` and related environment variables take effect. For more details, see [`packaging/README.md`](packaging/README.md).
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+---
 
-## Name
-Choose a self-explaining name for your project.
+#### 3.1.3 Start service
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+Use the `flocks` CLI to manage the backend and WebUI together in daemon mode.
+The `start` command builds the WebUI before launch by default; use `flocks restart` when you want an explicit full restart.
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+```bash
+flocks start
+flocks status
+flocks logs
+flocks restart
+flocks stop
+```
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+The default service URLs are:
+- Backend API: `http://127.0.0.1:8000` by default
+- WebUI: `http://127.0.0.1:5173` by default
+- Remote access configurable via `flocks start --server-host <ip> --webui-host <ip>`
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+Flocks CLI usage: `flocks --help`
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+### 3.2 Option 2: Docker Installation
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+> [!NOTE]
+> In the Docker installation, the agent-browser headed mode is currently unavailable.
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+#### 3.2.1 Pull image
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+```bash
+docker pull ghcr.io/agentflocks/flocks:latest
+```
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+#### 3.2.2 Start service
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+Run the container and mount the host user's `~/.flocks` directory into the container:
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+macOS / Linux
+```bash
+docker run -d \
+  --name flocks \
+  -p 8000:8000 \
+  -p 5173:5173 \
+  --shm-size 2gb \
+  -v "${HOME}/.flocks:/home/flocks/.flocks" \
+  ghcr.io/agentflocks/flocks:latest
+```
 
-## License
-For open source projects, say how it is licensed.
+Windows PowerShell
+```powershell
+docker run -d `
+  --name flocks `
+  -p 8000:8000 `
+  -p 5173:5173 `
+  --shm-size 2gb `
+  -v "${env:USERPROFILE}\.flocks:/home/flocks/.flocks" `
+  ghcr.io/agentflocks/flocks:latest
+```
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+`EXPOSE` in the image only documents container ports. You still need `-p 8000:8000 -p 5173:5173` to access the service from the host browser.
+
+## 4. FAQ
+
+### 4.1 For Users in China: Speed Up Python Package Installation
+
+On machines in mainland China, you can configure `uv` to use a local PyPI mirror for faster package downloads.
+
+Create `~/.config/uv/uv.toml` with:
+
+```toml
+[[index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+
+[[index]]
+url = "https://pypi.org/simple"
+default = true
+```
+
+### 4.2 Docker Issues
+
+Docker registry mirror in China
+``` bash
+ghcr.nju.edu.cn/agentflocks/flocks:latest
+```
+
+Permission issues for `/home/flocks/.flocks` after startup:
+
+``` bash
+-v "$HOME/.flocks:/home/flocks/.flocks:Z" \
+```
+OR
+```bash
+docker run --rm --entrypoint id ghcr.io/agentflocks/flocks
+# example result: uid=1001(flocks) gid=1001(flocks) 组=1001(flocks)
+sudo chown -R <uid>:<gid> ~/.flocks
+# example: sudo chown -R 1001:1001 ~/.flocks
+```
+
+### 4.3 Remote Access to Flocks Service
+```bash
+__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=<your_domain> \
+flocks start --server-host 127.0.0.1 --webui-host 0.0.0.0
+```
+If remote access from a virtual machine fails, please specify the host as the virtual machine's IP.
+
+The WebUI now defaults to same-origin `/api` proxy mode even when the backend
+binds to a non-loopback IP. This keeps browser cookies and SSE on a single
+origin, which is the safest choice for LAN access and reverse proxies.
+
+Only enable direct browser-to-backend URLs when you explicitly need them:
+
+```bash
+FLOCKS_WEBUI_DIRECT_BACKEND_URLS=1 \
+flocks start --server-host 10.0.0.8 --webui-host 0.0.0.0
+```
+
+### 4.4 Authentication & API Token
+
+Since the local-account update, every HTTP path is protected by default — only
+the WebUI bootstrap pages (`/`, `/auth/*`), static assets, and IM platform
+webhooks (`/api/channel/{channel_id}/webhook`) are public.
+
+Initial setup:
+
+1. Open the WebUI and complete the **bootstrap-admin** flow to create the
+   single `admin` account.
+2. The browser session cookie (`flocks_session`) is enough for the WebUI;
+   no extra steps are required.
+
+Non-browser clients (TUI, SDKs, scripts):
+
+- All non-browser clients, including local loopback clients, must present an
+  API token. The token lives in `~/.flocks/config/.secret.json` under the
+  secret id `server_api_token`.
+
+  On the **server**, generate (or rotate) the token — it is persisted on
+  the server's local secret store:
+
+  ```bash
+  flocks admin generate-api-token        # prints token; stores under server_api_token
+  ```
+
+  On each **remote client**, store the same token value into the client's
+  own secret file (so the client SDK / TUI can attach it automatically):
+
+  ```bash
+  flocks admin set-api-token --token <token-from-server>
+  ```
+
+  Or attach it directly per request via either header:
+
+  ```text
+  Authorization: Bearer <token>
+  X-Flocks-API-Token: <token>
+  ```
+
+  Smoke test:
+
+  ```bash
+  curl -H "Authorization: Bearer <token>" https://flocks.example.com/api/health
+  ```
+
+Reverse-proxy deployments:
+
+- Always set `X-Forwarded-For` on the proxy. Without it, any direct
+  loopback request would be auto-elevated to `admin`. The middleware
+  intentionally refuses to trust loopback when this header is absent and a
+  proxy is in front.
+- For HTTPS termination, also forward `X-Forwarded-Proto: https` so that
+  the secure-cookie flag is set correctly.
+- Prefer same-origin proxying for browser traffic: keep the WebUI on `/` and
+  route backend traffic through `/api` (and `/event` if needed). Do not set
+  `VITE_API_BASE_URL` in reverse-proxy deployments unless you intentionally
+  want the browser to bypass the proxy and talk to the backend origin directly.
+- For SSE endpoints, disable proxy buffering and keep HTTP/1.1 enabled. 
+
+Recovery / lost password:
+
+- Run `flocks admin generate-one-time-password` on the host. The admin
+  account is then forced into `must_reset_password=true`; the next WebUI
+  login is redirected to the change-password page. **All non-browser
+  endpoints return 403 in that state**, so do not run this against an
+  account that automation depends on without coordination.
+
+Orphan sessions (CLI / background / inbound channels):
+
+- Sessions created without an auth context (CLI commands, background
+  tasks, inbound IM-channel dispatchers) leave `owner_user_id` empty.
+  The bootstrap admin still sees them, but a later-added member account
+  would not. Backfill ownership with:
+
+  ```bash
+  flocks admin reassign-orphan-sessions --username admin --dry-run   # preview
+  flocks admin reassign-orphan-sessions --username admin             # apply
+  ```
+
+  The command summarises `scanned / orphaned / reassigned / failed`
+  counts; a non-zero `failed` exits with code 2 so CI / scripts can
+  detect partial-write situations and re-run after fixing the underlying
+  cause (typically a transient storage error).
+
+## 5. Join our community
+
+Scan the QR code with **WeChat** to join our official discussion group.  
+
+![WeCom official community QR code](assets/community-wecom-qr.png)
+
+## 6. Contributing
+
+See [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) for development setup, coding standards, testing expectations, and Pull Request guidelines.
+
+## 7. License
+
+Apache License 2.0
