@@ -69,6 +69,11 @@ class SessionCreateRequest(BaseModel):
     title: Optional[str] = Field(None, description="Session title")
     permission: Optional[List[PermissionRule]] = Field(None, description="Permission rules")
     category: Optional[str] = Field(None, description="Session category (e.g. 'user', 'workflow')")
+    user_context: Optional[Dict[str, Any]] = Field(
+        None,
+        alias="userContext",
+        description="Runtime-only user context passed to tools",
+    )
 
 
 class FileDiff(BaseModel):
@@ -324,6 +329,10 @@ async def create_session(http_request: Request, request: Optional[SessionCreateR
         **({"category": request.category} if request.category else {}),
     )
 
+    if request.user_context:
+        from flocks.session.user_context import set_session_user_context
+        set_session_user_context(session.id, request.user_context)
+
     log.info("session.created", {"session_id": session.id})
     return _session_to_response(session)
 
@@ -458,6 +467,8 @@ async def delete_session(sessionID: str, request: Request) -> bool:
     if not SessionPolicy.can_delete(session, current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="仅管理员或会话所有者可删除会话")
 
+    from flocks.session.user_context import clear_session_user_context
+    clear_session_user_context(sessionID)
     await Session.delete(session.project_id, sessionID)
 
     # Best-effort cleanup of any image/file uploads materialised for this
@@ -491,9 +502,14 @@ async def delete_session(sessionID: str, request: Request) -> bool:
 class SessionUpdateRequest(BaseModel):
     """Request to update session"""
     model_config = ConfigDict(populate_by_name=True)
-    
+
     title: Optional[str] = Field(None, description="New title")
     time: Optional[Dict[str, Any]] = Field(None, description="Time updates (archived)")
+    user_context: Optional[Dict[str, Any]] = Field(
+        None,
+        alias="userContext",
+        description="Runtime-only user context passed to tools",
+    )
 
 
 @router.patch(
@@ -521,18 +537,27 @@ async def update_session(
     if request.time and request.time.get("archived") is not None:
         updates["archived"] = request.time["archived"]
     
-    session = await Session.update(
-        project_id=existing.project_id,
-        session_id=sessionID,
-        **updates,
-    )
-    
-    if not session:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Session {sessionID} not found"
+    session = existing
+    if updates:
+        updated = await Session.update(
+            project_id=existing.project_id,
+            session_id=sessionID,
+            **updates,
         )
-    
+        if not updated:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Session {sessionID} not found"
+            )
+        session = updated
+
+    if request.user_context is not None:
+        from flocks.session.user_context import clear_session_user_context, set_session_user_context
+        if request.user_context:
+            set_session_user_context(sessionID, request.user_context)
+        else:
+            clear_session_user_context(sessionID)
+
     log.info("session.updated", {"session_id": sessionID})
     return _session_to_response(session)
 

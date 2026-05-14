@@ -155,7 +155,82 @@ class TestMcpToolAdapter:
         assert result.output == "result data"
         assert result.metadata["mcp_server"] == "test_server"
         assert result.metadata["mcp_tool"] == "test_tool"
-    
+
+    @pytest.mark.asyncio
+    async def test_tool_handler_passes_user_context_as_meta(self):
+        """Test handler forwards current user context through MCP meta."""
+        mcp_tool = McpToolDef(
+            name="test_tool",
+            description="Test",
+            input_schema={"properties": {"param": {"type": "string"}}}
+        )
+
+        client = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.isError = False
+        mock_result.content = [MagicMock(text="result data")]
+        client.call_tool = AsyncMock(return_value=mock_result)
+
+        tool = McpToolAdapter.convert_tool("test_server", mcp_tool, client)
+
+        from flocks.tool.registry import ToolContext
+        ctx = ToolContext(
+            session_id="test_session",
+            message_id="test_message",
+            extra={
+                "user_context": {
+                    "currentUserName": "alice",
+                    "currentToken": "token-123",
+                    "ignored": "value",
+                }
+            },
+        )
+        result = await tool.handler(ctx, param="value")
+
+        assert result.success
+        client.call_tool.assert_awaited_once_with(
+            "test_tool",
+            {"param": "value"},
+            meta={"currentUserName": "alice", "currentToken": "token-123"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_tool_handler_ignores_argument_meta(self):
+        """Test tool arguments cannot spoof MCP request meta."""
+        mcp_tool = McpToolDef(
+            name="test_tool",
+            description="Test",
+            input_schema={"properties": {"param": {"type": "string"}}}
+        )
+
+        client = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.isError = False
+        mock_result.content = [MagicMock(text="result data")]
+        client.call_tool = AsyncMock(return_value=mock_result)
+
+        tool = McpToolAdapter.convert_tool("test_server", mcp_tool, client)
+
+        from flocks.tool.registry import ToolContext
+        ctx = ToolContext(
+            session_id="test_session",
+            message_id="test_message",
+            extra={"user_context": {"currentUserName": "alice"}},
+        )
+        result = await tool.handler(
+            ctx,
+            param="value",
+            _meta={"currentUserName": "mallory"},
+            meta={"currentToken": "evil"},
+        )
+
+        assert result.success
+        client.call_tool.assert_awaited_once_with(
+            "test_tool",
+            {"param": "value"},
+            meta={"currentUserName": "alice"},
+        )
+
     @pytest.mark.asyncio
     async def test_tool_handler_error(self):
         """Test tool handler error handling"""

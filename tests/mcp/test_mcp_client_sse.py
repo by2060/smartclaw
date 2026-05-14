@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from types import MethodType, SimpleNamespace
 
 import pytest
-
+from mcp import types as mcp_types
 import flocks.mcp.client as mcp_client_module
 from flocks.mcp.client import McpClient, _extract_root_cause
 
@@ -344,6 +344,90 @@ class TestMcpClientRemoteFallback:
 
         assert result == {"name": "demo_tool", "arguments": {"value": 1}}
         assert events["call_tool_task"] is events["session_enter_task"]
+
+    @pytest.mark.asyncio
+    async def test_remote_injects_oauth2_client_credentials_header(self):
+        """Remote connection should resolve OAuth2 token before connecting."""
+        client = McpClient(
+            name="oauth-mcp",
+            server_type="remote",
+            url="https://mcp.example.com/mcp",
+            headers={"Accept": "text/event-stream"},
+            auth_config={
+                "type": "oauth2_client_credentials",
+                "token_url": "https://auth.example.com/oauth2/token",
+                "client_id": "client-1",
+                "client_secret": "secret-1",
+                "audience": "mcp-server",
+            },
+            timeout=10.0,
+        )
+
+        client._do_connect_streamable_http = AsyncMock()
+
+        with patch(
+            "flocks.mcp.client.McpOAuth2ClientCredentials.get_access_token",
+            new=AsyncMock(return_value="token-123"),
+        ):
+            await client.connect()
+
+        client._do_connect_streamable_http.assert_called_once_with(
+            "https://mcp.example.com/mcp",
+            {
+                "Accept": "text/event-stream",
+                "Authorization": "Bearer token-123",
+            },
+        )
+
+
+class TestMcpClientCallTool:
+    """Test MCP tool call request construction."""
+
+    @pytest.mark.asyncio
+    async def test_call_tool_sends_meta_as_request_meta(self):
+        """Meta should be sent as MCP request _meta, not tool arguments."""
+        client = McpClient(
+            name="test-server",
+            server_type="remote",
+            url="https://mcp.example.com/mcp",
+            timeout=10.0,
+        )
+        client._connected = True
+
+        mock_result = MagicMock()
+        mock_result.isError = False
+
+        class FakeSession:
+            def __init__(self):
+                self.sent = None
+                self.validated = []
+
+            async def send_request(self, request, result_type, **kwargs):
+                self.sent = (request, result_type, kwargs)
+                return mock_result
+
+            async def _validate_tool_result(self, name, result):
+                self.validated.append((name, result))
+
+        fake_session = FakeSession()
+        client.session = fake_session
+
+        result = await client.call_tool(
+            "test_tool",
+            {"param": "value"},
+            meta={"currentUserName": "alice", "currentToken": "token-123"},
+        )
+
+        assert result is mock_result
+        request, result_type, kwargs = fake_session.sent
+        assert result_type is mcp_types.CallToolResult
+        assert kwargs == {}
+        params = request.root.params.model_dump(by_alias=True)
+        assert params["name"] == "test_tool"
+        assert params["arguments"] == {"param": "value"}
+        assert params["_meta"]["currentUserName"] == "alice"
+        assert params["_meta"]["currentToken"] == "token-123"
+        assert fake_session.validated == [("test_tool", mock_result)]
 
 
 class TestExtractRootCause:

@@ -5,14 +5,17 @@ MCP Authentication Management Unit Tests
 import pytest
 import time
 from flocks.mcp.auth import McpAuth
+from flocks.mcp.oauth2 import McpOAuth2ClientCredentials
 
 
 @pytest.fixture(autouse=True)
 def clean_auth():
     """Clear authentication info before each test"""
     McpAuth.clear()
+    McpOAuth2ClientCredentials._registrations.clear()
     yield
     McpAuth.clear()
+    McpOAuth2ClientCredentials._registrations.clear()
 
 
 class TestMcpAuth:
@@ -87,3 +90,66 @@ class TestMcpAuth:
         McpAuth._auth_storage["test"] = None
         McpAuth.clear()
         assert len(McpAuth._auth_storage) == 0
+
+
+class TestMcpOAuth2ClientCredentials:
+    """Test MCP OAuth2 Client Credentials support."""
+
+    @pytest.mark.asyncio
+    async def test_registers_client_and_requests_token(self, monkeypatch):
+        calls = []
+
+        class FakeResponse:
+            def __init__(self, status_code, payload):
+                self.status_code = status_code
+                self._payload = payload
+
+            def json(self):
+                return self._payload
+
+        class FakeAsyncClient:
+            def __init__(self, timeout):
+                self.timeout = timeout
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+            async def post(self, url, **kwargs):
+                calls.append((url, kwargs))
+                if url.endswith("/register"):
+                    return FakeResponse(200, {"client_id": "mcp-client", "client_secret": "secret"})
+                return FakeResponse(200, {"access_token": "token-123", "expires_in": 3600})
+
+        monkeypatch.setattr("flocks.mcp.oauth2.httpx.AsyncClient", FakeAsyncClient)
+
+        token = await McpOAuth2ClientCredentials.get_access_token(
+            "ais-mcp",
+            {
+                "type": "oauth2_client_credentials",
+                "registration_url": "http://auth.example.com/oauth2/register",
+                "token_url": "http://auth.example.com/oauth2/token",
+                "audience": "mcp-server",
+            },
+        )
+
+        assert token == "token-123"
+        assert calls[0][0] == "http://auth.example.com/oauth2/register"
+        assert calls[1][0] == "http://auth.example.com/oauth2/token"
+        assert calls[1][1]["data"]["grant_type"] == "client_credentials"
+        assert calls[1][1]["data"]["audience"] == "mcp-server"
+        assert calls[1][1]["headers"]["Authorization"] == "Basic bWNwLWNsaWVudDpzZWNyZXQ="
+
+        cached_token = await McpOAuth2ClientCredentials.get_access_token(
+            "ais-mcp",
+            {
+                "type": "oauth2_client_credentials",
+                "registration_url": "http://auth.example.com/oauth2/register",
+                "token_url": "http://auth.example.com/oauth2/token",
+                "audience": "mcp-server",
+            },
+        )
+        assert cached_token == "token-123"
+        assert len(calls) == 2

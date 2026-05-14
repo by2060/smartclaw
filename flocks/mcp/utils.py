@@ -43,6 +43,7 @@ _AUTH_ERROR_KEYWORDS = (
 
 REMOTE_MCP_TYPES = frozenset({"remote", "sse"})
 LOCAL_MCP_TYPES = frozenset({"local", "stdio"})
+OAUTH2_CLIENT_CREDENTIALS_TYPES = frozenset({"oauth2_client_credentials", "client_credentials"})
 MCP_MASKED_SECRET_VALUE = "***"
 
 
@@ -244,10 +245,22 @@ def config_has_pending_credentials(config: Dict[str, Any]) -> bool:
     auth_config = config.get("auth")
     if isinstance(auth_config, dict):
         auth_type = str(auth_config.get("type", "")).strip().lower()
-        auth_value = auth_config.get("value")
-        if auth_type and auth_type != "none":
-            if not isinstance(auth_value, str) or not auth_value.strip():
+        if auth_type in OAUTH2_CLIENT_CREDENTIALS_TYPES:
+            token_url = auth_config.get("token_url") or auth_config.get("tokenUrl")
+            client_id = auth_config.get("client_id") or auth_config.get("clientId")
+            client_secret = auth_config.get("client_secret") or auth_config.get("clientSecret")
+            registration_url = auth_config.get("registration_url") or auth_config.get("registrationUrl")
+            if not str(token_url or "").strip():
                 return True
+            if not str(registration_url or "").strip() and (
+                not str(client_id or "").strip() or not str(client_secret or "").strip()
+            ):
+                return True
+        else:
+            auth_value = auth_config.get("value")
+            if auth_type and auth_type != "none":
+                if not isinstance(auth_value, str) or not auth_value.strip():
+                    return True
 
     headers = config.get("headers")
     if isinstance(headers, dict):
@@ -300,7 +313,7 @@ def get_connect_block_reason(config: Dict[str, Any]) -> Optional[str]:
     if config_has_pending_credentials(config):
         return (
             "MCP server credentials are not configured yet. "
-            "Please save the required API key or auth header first."
+            "Please save the required API key, auth header, or OAuth2 token configuration first."
         )
     return None
 

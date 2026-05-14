@@ -690,13 +690,22 @@ class StreamProcessor:
                         _cb.mark_finished = lambda: _finished.__setitem__(0, True)
                         return _cb
 
+                    extra = dict(sandbox_meta["extra"])
+                    try:
+                        from flocks.session.user_context import get_session_user_context
+                        user_context = get_session_user_context(self.session_id)
+                        if user_context:
+                            extra["user_context"] = user_context
+                    except Exception as exc:
+                        log.warn("stream.user_context.load_failed", {"error": str(exc)})
+
                     ctx = ToolContext(
                         session_id=self.session_id,
                         message_id=self.assistant_message.id,
                         agent=self.agent.name,
                         call_id=tool_call_id,
                         permission_callback=self.permission_callback,
-                        extra=sandbox_meta["extra"],
+                        extra=extra,
                         metadata_callback=_make_metadata_cb(),
                         event_publish_callback=self.event_publish_callback,
                     )

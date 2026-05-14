@@ -27,10 +27,23 @@ log = Log.create(service="mcp.adapter")
 class McpToolAdapter:
     """
     MCP Tool Adapter
-    
+
     Responsible for converting MCP Tools to Flocks Tools
     """
-    
+
+    @staticmethod
+    def _build_call_meta(ctx: ToolContext) -> Dict[str, Any]:
+        user_context = ctx.extra.get("user_context")
+        if not isinstance(user_context, dict):
+            return {}
+
+        meta = {}
+        for key in ("currentUserName", "currentToken"):
+            value = user_context.get(key)
+            if value is not None:
+                meta[key] = value
+        return meta
+
     @staticmethod
     def convert_tool(
         server_name: str,
@@ -86,15 +99,19 @@ class McpToolAdapter:
             Forwards calls to MCP client
             """
             try:
+                arguments = dict(kwargs)
+                arguments.pop("_meta", None)
+                arguments.pop("meta", None)
+                meta = McpToolAdapter._build_call_meta(ctx)
+
                 log.debug("mcp.tool.calling", {
                     "server": server_name,
                     "tool": mcp_tool.name,
-                    "args": list(kwargs.keys())
+                    "args": list(arguments.keys())
                 })
-                
-                # Call MCP tool
-                result = await client.call_tool(mcp_tool.name, kwargs)
-                
+
+                result = await client.call_tool(mcp_tool.name, arguments, meta=meta or None)
+
                 # Check if it's an error
                 if hasattr(result, 'isError') and result.isError:
                     error_msg = str(result.content) if hasattr(result, 'content') else "Unknown error"

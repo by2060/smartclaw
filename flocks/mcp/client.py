@@ -14,13 +14,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
 import httpx
-from mcp import ClientSession
+from mcp import ClientSession, types as mcp_types
 from mcp.client.sse import sse_client
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
 from flocks.mcp.types import McpResource, McpToolDef
-from flocks.mcp.utils import build_mcp_headers, build_mcp_url
+from flocks.mcp.oauth2 import McpOAuth2ClientCredentials
+from flocks.mcp.utils import build_mcp_url, resolve_env_var
 from flocks.utils.log import Log
 
 log = Log.create(service="mcp.client")
@@ -233,7 +234,13 @@ class McpClient:
     async def _connect_remote(self, startup_future: asyncio.Future[None]) -> None:
         """Connect to a remote server using the configured transport strategy."""
         full_url = build_mcp_url(self.url, self.auth_config)
-        request_headers = build_mcp_headers(self.headers, self.auth_config)
+        request_headers = await McpOAuth2ClientCredentials.build_headers(
+            self.name,
+            self.headers,
+            self.auth_config,
+            timeout=self.timeout,
+        )
+
 
         if self.transport == "http":
             log.info("mcp.client.connecting", {
@@ -451,24 +458,57 @@ class McpClient:
 
         if command.action == "call_tool":
             tool_name = command.payload["name"]
+            arguments = command.payload["arguments"]
+            meta = command.payload.get("meta")
+
             try:
-                result = await asyncio.wait_for(
-                    session.call_tool(name=tool_name, arguments=command.payload["arguments"]),
-                    timeout=self.timeout,
-                )
+                if meta:
+                    result = await asyncio.wait_for(
+                        session.send_request(
+                            mcp_types.ClientRequest(
+                                mcp_types.CallToolRequest(
+                                    method="tools/call",
+                                    params=mcp_types.CallToolRequestParams(
+                                        name=tool_name,
+                                        arguments=arguments,
+                                        _meta=meta,
+                                    ),
+                                )
+                            ),
+                            mcp_types.CallToolResult,
+                        ),
+                        timeout=self.timeout,
+                    )
+
+                    if not result.isError:
+                        await session._validate_tool_result(tool_name, result)
+
+                else:
+                    result = await asyncio.wait_for(
+                        session.call_tool(
+                            name=tool_name,
+                            arguments=arguments,
+                        ),
+                        timeout=self.timeout,
+                    )
+
             except asyncio.TimeoutError as exc:
                 log.error("mcp.client.call_timeout", {
                     "server": self.name,
                     "tool": tool_name,
                 })
+
                 from concurrent.futures import TimeoutError as _FuturesTimeoutError
 
-                raise _FuturesTimeoutError(f"MCP工具调用超时 ({self.timeout}s): {tool_name}") from exc
+                raise _FuturesTimeoutError(
+                    f"MCP工具调用超时 ({self.timeout}s): {tool_name}"
+                ) from exc
 
             log.debug("mcp.client.tool_called", {
                 "server": self.name,
                 "tool": tool_name,
             })
+
             return result
 
         if command.action == "list_resources":
@@ -669,22 +709,28 @@ class McpClient:
             })
             raise
     
-    async def call_tool(self, name: str, arguments: Dict[str, Any]) -> Any:
+    async def call_tool(
+        self,
+        name: str,
+        arguments: Dict[str, Any],
+        meta: Optional[Dict[str, Any]] = None,
+    ) -> Any:
         """
         Call a tool
-        
+
         Args:
             name: Tool name
             arguments: Tool arguments
-            
+            meta: MCP protocol metadata passed as request _meta
+
         Returns:
             Tool execution result
-            
+
         Raises:
             RuntimeError: If not connected
         """
         try:
-            return await self._submit_command("call_tool", name=name, arguments=arguments)
+            return await self._submit_command("call_tool", name=name, arguments=arguments, meta=meta)
         except Exception as exc:
             log.error("mcp.client.call_error", {
                 "server": self.name,

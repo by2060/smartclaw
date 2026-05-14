@@ -206,6 +206,32 @@ class TestCredentialStateHelpers:
         assert config_has_pending_credentials(config) is True
         assert should_skip_connect_on_add(config) is True
 
+    def test_oauth2_client_credentials_with_registration_is_not_pending(self):
+        config = {
+            "type": "remote",
+            "url": "https://example.com/mcp",
+            "auth": {
+                "type": "oauth2_client_credentials",
+                "registration_url": "https://auth.example.com/oauth2/register",
+                "token_url": "https://auth.example.com/oauth2/token",
+            },
+        }
+        assert config_has_pending_credentials(config) is False
+        assert should_skip_connect_on_add(config) is False
+
+    def test_oauth2_client_credentials_without_token_source_is_pending(self):
+        config = {
+            "type": "remote",
+            "url": "https://example.com/mcp",
+            "auth": {
+                "type": "oauth2_client_credentials",
+                "token_url": "https://auth.example.com/oauth2/token",
+                "client_id": "client-1",
+            },
+        }
+        assert config_has_pending_credentials(config) is True
+        assert should_skip_connect_on_add(config) is True
+
 
 class TestExtractApiKeyFromMcpUrl:
     """Test secret extraction from remote MCP URLs"""

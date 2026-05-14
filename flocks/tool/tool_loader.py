@@ -41,6 +41,7 @@ log = Log.create(service="tool.loader")
 _TOOLS_SUBDIR = DEFAULT_PLUGIN_ROOT / "tools"
 _PROVIDER_FILENAME = "_provider.yaml"
 _SECRET_PATTERN = re.compile(r"\{secret:([^}]+)\}")
+_USER_PATTERN = re.compile(r"\{user:([^}]+)\}")
 _PARAM_PATTERN = re.compile(r"\{([^}]+)\}")
 
 # ---------------------------------------------------------------------------
@@ -122,6 +123,8 @@ def _merge_provider_defaults(raw: dict, provider: Optional[Dict[str, Any]]) -> d
     if handler.get("type") == "http":
         if "timeout" not in handler and "timeout" in defaults:
             handler["timeout"] = defaults["timeout"]
+        if "verify_ssl" not in handler and "verify_ssl" in defaults:
+            handler["verify_ssl"] = defaults["verify_ssl"]
 
         base_url = defaults.get("base_url", "")
         url = handler.get("url", "")
@@ -139,11 +142,15 @@ def _merge_provider_defaults(raw: dict, provider: Optional[Dict[str, Any]]) -> d
 def _inject_provider_auth(handler: dict, auth: Dict[str, Any]) -> None:
     """Inject provider-level auth into handler headers or query params."""
     secret_ref = auth.get("secret")
-    if not secret_ref:
+    user_ref = auth.get("user")
+    if user_ref:
+        secret_placeholder = f"{{user:{user_ref}}}"
+    elif secret_ref:
+        secret_placeholder = f"{{secret:{secret_ref}}}"
+    else:
         return
 
     inject_as = auth.get("inject_as", "header")
-    secret_placeholder = f"{{secret:{secret_ref}}}"
 
     if inject_as == "header":
         header_name = auth.get("header_name", "Authorization")
@@ -179,16 +186,47 @@ def _resolve_secrets(value: str) -> str:
     return _SECRET_PATTERN.sub(_replacer, value)
 
 
-def _substitute_params(template: str, params: Dict[str, Any], url_encode: bool = False) -> str:
+def _as_bool(value: Any, default: bool = True) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"false", "0", "no", "off"}:
+            return False
+        if text in {"true", "1", "yes", "on"}:
+            return True
+    return default
+
+
+def _substitute_params(
+    template: str,
+    params: Dict[str, Any],
+    url_encode: bool = False,
+    user_context: Optional[Dict[str, Any]] = None,
+    missing_user_keys: Optional[List[str]] = None,
+) -> str:
     """Replace ``{param_name}`` placeholders with actual parameter values.
 
-    Secrets are resolved first, then parameter placeholders.
+    Secrets are resolved first, then user context, then parameter placeholders.
     """
     result = _resolve_secrets(template)
 
+    def _user_replacer(match: re.Match) -> str:
+        key = match.group(1)
+        effective_user_context = user_context or {}
+        value = effective_user_context.get(key)
+        if value is None:
+            if missing_user_keys is not None:
+                missing_user_keys.append(key)
+            return match.group(0)
+        text = str(value)
+        return urllib.parse.quote(text, safe="") if url_encode else text
+
+    result = _USER_PATTERN.sub(_user_replacer, result)
+
     def _replacer(match: re.Match) -> str:
         key = match.group(1)
-        if key.startswith("secret:"):
+        if key.startswith("secret:") or key.startswith("user:"):
             return match.group(0)
         value = params.get(key)
         if value is None:
@@ -306,6 +344,7 @@ def _build_http_handler(cfg: dict) -> ToolHandler:
     query_params_template = cfg.get("query_params", {})
     body_template = cfg.get("body")
     timeout = cfg.get("timeout", 30)
+    verify_ssl = _as_bool(cfg.get("verify_ssl", True), default=True)
     response_cfg = cfg.get("response", {})
     if not response_cfg:
         extract_path = cfg.get("response_path")
@@ -317,25 +356,55 @@ def _build_http_handler(cfg: dict) -> ToolHandler:
     async def handler(ctx: ToolContext, **kwargs: Any) -> ToolResult:
         import aiohttp
 
-        url = _substitute_params(url_template, kwargs, url_encode=False)
+        user_context = ctx.extra.get("user_context")
+        if not isinstance(user_context, dict):
+            user_context = {}
+        missing_user_keys: List[str] = []
+
+        url = _substitute_params(
+            url_template,
+            kwargs,
+            url_encode=False,
+            user_context=user_context,
+            missing_user_keys=missing_user_keys,
+        )
         headers = {
-            k: _substitute_params(v, kwargs)
+            k: _substitute_params(
+                v,
+                kwargs,
+                user_context=user_context,
+                missing_user_keys=missing_user_keys,
+            )
             for k, v in headers_template.items()
         }
         query_params = {
-            k: _substitute_params(v, kwargs)
+            k: _substitute_params(
+                v,
+                kwargs,
+                user_context=user_context,
+                missing_user_keys=missing_user_keys,
+            )
             for k, v in query_params_template.items()
         }
         query_params = {k: v for k, v in query_params.items() if v}
 
         body = None
-        if body_template and isinstance(body_template, dict):
+        if body_template is not None and isinstance(body_template, dict):
             import json as _json
             body = _json.dumps({
-                k: _substitute_params(v, kwargs) if isinstance(v, str) else v
+                k: _substitute_params(
+                    v,
+                    kwargs,
+                    user_context=user_context,
+                    missing_user_keys=missing_user_keys,
+                ) if isinstance(v, str) else v
                 for k, v in body_template.items()
             })
             headers.setdefault("Content-Type", "application/json")
+
+        if missing_user_keys:
+            keys = ", ".join(sorted(set(missing_user_keys)))
+            return ToolResult(success=False, error=f"Missing user_context values: {keys}")
 
         try:
             client_timeout = aiohttp.ClientTimeout(total=timeout)
@@ -345,6 +414,8 @@ def _build_http_handler(cfg: dict) -> ToolHandler:
                     req_kwargs["params"] = query_params
                 if body and method in ("POST", "PUT", "PATCH"):
                     req_kwargs["data"] = body
+                if not verify_ssl:
+                    req_kwargs["ssl"] = False
 
                 async with session.request(method, url, **req_kwargs) as resp:
                     if resp.status >= 400:
