@@ -1,0 +1,12 @@
+name: plan
+mode: subagent
+hidden: true
+delegatable: false
+tools:
+  - read
+  - list
+  - glob
+  - grep
+  - todoread
+  - todowrite
+  - plan_exit
