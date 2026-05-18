@@ -357,10 +357,11 @@ def install_skill(
         "-s",
         help="Skill subdirectory name within the source repo (e.g. --skill find-skills)",
     ),
+    # skill输出路径修改
     scope: str = typer.Option(
-        "global",
+        "project",
         "--scope",
-        help="'global' (default) or 'project'",
+        help="Install scope; skills are always installed to project .flocks/plugins/skills/.",
     ),
 ):
     """Install a skill from an external source."""

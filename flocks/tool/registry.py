@@ -510,7 +510,12 @@ class Tool:
                         result.output = output_text
                 if isinstance(output_text, str):
                     agent_name = ctx.agent if isinstance(ctx.agent, str) else ""
-                    tr = truncate_output(output_text, has_task_tool="task" in agent_name.lower())
+                    tr = truncate_output(
+                        output_text,
+                        has_task_tool="task" in agent_name.lower(),
+                        # 输出按会话隔离新增
+                        session_id=ctx.session_id,
+                    )
                     if tr.truncated:
                         result.output = tr.content
                         result.truncated = True
@@ -741,6 +746,46 @@ class ToolRegistry:
             ctx = ToolContext(
                 session_id="default",
                 message_id="default"
+            )
+
+        try:
+            from flocks.agent.controls import agent_allowed_tools, agent_allows_tool
+            from flocks.tool.catalog import get_always_load_tool_names
+
+            if not await agent_allows_tool(ctx.agent, tool_name):
+                declared = await agent_allowed_tools(ctx.agent)
+                allowed_text = ", ".join(
+                    sorted(set(declared) | set(get_always_load_tool_names()))
+                ) or "none"
+                return ToolResult(
+                    success=False,
+                    error=(
+                        f'Agent "{ctx.agent}" is not allowed to execute tool "{tool_name}". '
+                        f"Allowed tools: {allowed_text}"
+                    ),
+                    metadata={
+                        "blocked_by_agent_tools": True,
+                        "agent": ctx.agent,
+                        "tool": tool_name,
+                    },
+                )
+        except Exception as exc:
+            log.warn("tool.execute.agent_permission_check_failed", {
+                "tool": tool_name,
+                "agent": getattr(ctx, "agent", None),
+                "error": str(exc),
+            })
+            return ToolResult(
+                success=False,
+                error=(
+                    f'Failed to verify agent "{ctx.agent}" permission for tool "{tool_name}": {exc}'
+                ),
+                metadata={
+                    "blocked_by_agent_tools": True,
+                    "agent": ctx.agent,
+                    "tool": tool_name,
+                    "permission_check_error": str(exc),
+                },
             )
 
         log.info("tool.execute", {

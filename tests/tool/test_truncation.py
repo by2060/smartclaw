@@ -21,7 +21,7 @@ def test_output_at_default_line_limit_is_not_truncated():
 
 
 def test_output_over_default_byte_limit_is_truncated(monkeypatch, tmp_path):
-    monkeypatch.setattr(truncation, "_ensure_output_dir", lambda: tmp_path)
+    monkeypatch.setattr(truncation, "_ensure_output_dir", lambda session_id=None: tmp_path)
     monkeypatch.setattr(truncation, "_maybe_cleanup", lambda _output_dir: None)
     text = "x" * (truncation.MAX_BYTES + 1)
 
@@ -30,3 +30,23 @@ def test_output_over_default_byte_limit_is_truncated(monkeypatch, tmp_path):
     assert result.truncated is True
     assert result.output_path is not None
     assert "bytes truncated" in result.content
+
+
+def test_output_dir_uses_session_scoped_workspace(monkeypatch, tmp_path):
+    from flocks.config.config import Config
+    from flocks.workspace.manager import WorkspaceManager
+
+    monkeypatch.setenv("FLOCKS_WORKSPACE_DIR", str(tmp_path / "workspace"))
+    WorkspaceManager._instance = None
+    Config._global_config = None
+    truncation._OUTPUT_DIRS.clear()
+    try:
+        output_dir = truncation._ensure_output_dir("ses_tool")
+    finally:
+        WorkspaceManager._instance = None
+        Config._global_config = None
+        truncation._OUTPUT_DIRS.clear()
+
+    assert output_dir.parent.name == "ses_tool"
+    assert output_dir.name == "tool-output"
+    assert output_dir.is_dir()

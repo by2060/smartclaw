@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, Literal
 from enum import Enum
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 # ==================== Permission System ====================
@@ -271,6 +271,22 @@ class CompactionConfig(BaseModel):
 class EnterpriseConfig(BaseModel):
     """Enterprise configuration"""
     url: Optional[str] = None
+
+
+class BashToolConfig(BaseModel):
+    """Bash tool runtime policy configuration."""
+    model_config = {"extra": "allow", "populate_by_name": True}
+
+    command_black_list: Optional[List[str]] = Field(
+        None,
+        validation_alias=AliasChoices("command_black_list", "commandBlacklist", "command_blacklist"),
+        description="Global command-name blacklist enforced before bash execution.",
+    )
+    block_message: Optional[str] = Field(
+        None,
+        validation_alias=AliasChoices("block_message", "blockMessage"),
+        description="Message template used when a command is blocked. Supports {command}.",
+    )
 
 
 class ExperimentalConfig(BaseModel):
@@ -535,6 +551,7 @@ class ConfigInfo(BaseModel):
     )
     agent_logic: Optional[Literal["base", "rex"]] = Field(None, alias="agentLogic")
     enterprise: Optional[EnterpriseConfig] = None
+    bash: Optional[BashToolConfig] = None
     compaction: Optional[CompactionConfig] = None
     experimental: Optional[ExperimentalConfig] = None
     

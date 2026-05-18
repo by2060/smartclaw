@@ -22,6 +22,7 @@ export interface Agent {
   steps?: number;
   skills: string[];
   tools: string[];
+  sub_agents?: string[];
   tags?: string[];
 }
 
@@ -60,8 +61,10 @@ export const agentAPI = {
     color?: string;
     mode?: string;
     model?: { modelID: string; providerID: string };
+    delegatable?: boolean;
     skills?: string[];
     tools?: string[];
+    sub_agents?: string[];
   }) =>
     client.post<Agent>('/api/agent', data),
 
@@ -72,8 +75,10 @@ export const agentAPI = {
     temperature?: number;
     color?: string;
     model?: { modelID: string; providerID: string };
+    delegatable?: boolean;
     skills?: string[];
     tools?: string[];
+    sub_agents?: string[];
   }) =>
     client.put<Agent>(`/api/agent/${name}`, data),
 

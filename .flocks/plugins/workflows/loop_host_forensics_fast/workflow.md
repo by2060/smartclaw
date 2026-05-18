@@ -86,7 +86,7 @@
 
 ## 文件输出约定
 
-- 目录：`~/.flocks/workspace/outputs/<执行当日 YYYY-MM-DD>/`
+- 目录：`~/.flocks/workspace/outputs/<执行当日 YYYY-MM-DD>/<session_id>/`
 - 逐台完整结果：`host_triage/<序号>_<主机>.md`
 - 循环日志：`batch_host_triage_log.md`
 - 末步索引：`batch_host_triage_index.md`

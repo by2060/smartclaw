@@ -39,7 +39,6 @@ from flocks.agent.agent import (
     AvailableWorkflow,
     DelegationTrigger,
 )
-from flocks.agent.toolset import agent_declares_tool
 from flocks.agent.prompt_utils import categorize_tools
 from flocks.agent.agent_factory import (
     scan_and_load,
@@ -489,13 +488,12 @@ class Agent:
 
     @classmethod
     async def has_tool(cls, agent_name: str, tool: str) -> bool:
+        from flocks.agent.controls import agent_allows_tool
+
         agent = await cls.get(agent_name)
         if not agent:
             return False
-        if agent_declares_tool(agent, tool):
-            return True
-        from flocks.tool.catalog import get_always_load_tool_names
-        return tool in get_always_load_tool_names()
+        return await agent_allows_tool(agent.name, tool)
 
     # ── Agent generation (LLM-assisted) ────────────────────────────────────
 

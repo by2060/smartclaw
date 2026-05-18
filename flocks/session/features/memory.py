@@ -30,6 +30,7 @@ class SessionMemory:
         project_id: str,
         workspace_dir: str,
         enabled: bool = False,
+        current_user_id: Optional[str] = None,
     ):
         """
         Initialize session memory
@@ -39,11 +40,13 @@ class SessionMemory:
             project_id: Project ID
             workspace_dir: Workspace directory
             enabled: Whether memory is enabled
+            current_user_id: session.userContext.currentUserId
         """
         self.session_id = session_id
         self.project_id = project_id
         self.workspace_dir = Path(workspace_dir)
         self.enabled = enabled
+        self.current_user_id = current_user_id
         self._manager: Optional[MemoryManager] = None
         self._initialized = False
         self._init_lock = asyncio.Lock()
@@ -78,6 +81,8 @@ class SessionMemory:
                     project_id=self.project_id,
                     workspace_dir=str(self.workspace_dir),
                     config=memory_config,
+                    current_user_id=self.current_user_id,
+                    session_id=self.session_id,
                 )
                 self._active_sessions.add(self.session_id)
                 

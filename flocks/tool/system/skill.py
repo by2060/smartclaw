@@ -13,6 +13,7 @@ from flocks.tool.registry import (
     ToolRegistry, ToolCategory, ToolParameter, ParameterType, ToolResult, ToolContext
 )
 from flocks.skill.skill import Skill, SkillInfo
+from flocks.agent.controls import agent_allowed_skills, agent_allows_skill, filter_agent_skills
 from flocks.utils.log import Log
 
 
@@ -126,6 +127,17 @@ async def skill_tool_impl(
             success=False,
             error="Skill name is required"
         )
+    # 按agent.yaml添加skills权限控制新增
+    if not await agent_allows_skill(ctx.agent, name):
+        allowed = await agent_allowed_skills(ctx.agent)
+        allowed_text = ", ".join(allowed) or "none"
+        return ToolResult(
+            success=False,
+            error=(
+                f'Agent "{ctx.agent}" is not allowed to load skill "{name}". '
+                f"Allowed skills: {allowed_text}"
+            ),
+        )
     
     # Get skill
     skill = await Skill.get(name)
@@ -197,7 +209,7 @@ async def skill_tool_impl(
     )
 
 
-async def get_all_skills() -> List[dict]:
+async def get_all_skills(agent_name: str | None = None) -> List[dict]:
     """
     Get all available skills as dictionaries
     
@@ -207,6 +219,12 @@ async def get_all_skills() -> List[dict]:
         List of skill dictionaries with name, description, location
     """
     skills = await Skill.all()
+    if agent_name:
+        from flocks.agent.registry import Agent
+
+        agent = await Agent.get(agent_name)
+        if agent:
+            skills = filter_agent_skills(agent, skills)
     return [
         {
             "name": skill.name,
@@ -217,7 +235,7 @@ async def get_all_skills() -> List[dict]:
     ]
 
 
-async def get_skill(name: str) -> dict | None:
+async def get_skill(name: str, agent_name: str | None = None) -> dict | None:
     """
     Get a specific skill by name as a dictionary
     
@@ -229,6 +247,9 @@ async def get_skill(name: str) -> dict | None:
     Returns:
         Skill dictionary or None if not found
     """
+    if agent_name and not await agent_allows_skill(agent_name, name):
+        return None
+
     skill = await Skill.get(name)
     if not skill:
         return None
@@ -271,6 +292,11 @@ async def skill_tool(
     tool = ToolRegistry.get("skill")
     if tool:
         skills = await Skill.all()
+        # 通过agent.yaml的skiils控制权限新增
+        from flocks.agent.registry import Agent
+        agent = await Agent.get(ctx.agent or "")
+        if agent:
+            skills = filter_agent_skills(agent, skills)
         tool.info.description = build_description(skills)
     
     return await skill_tool_impl(ctx, name)

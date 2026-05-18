@@ -16,6 +16,7 @@ from flocks.session.session import Session
 from flocks.session.message import Message, MessageRole
 from flocks.session.session_loop import SessionLoop
 from flocks.task.background import get_background_manager, LaunchInput
+from flocks.agent.controls import agent_allowed_subagents, agent_allows_subagent
 from flocks.utils.log import Log
 
 log = Log.create(service="tool.call_omo_agent")
@@ -81,6 +82,16 @@ async def call_omo_agent_tool(
             success=False,
             error=f'Invalid agent type "{subagent_type}". Only {", ".join(ALLOWED_AGENTS)} are allowed.',
         )
+    if not await agent_allows_subagent(ctx.agent, normalized):
+        allowed = await agent_allowed_subagents(ctx.agent)
+        allowed_text = ", ".join(allowed) or "none"
+        return ToolResult(
+            success=False,
+            error=(
+                f'Agent "{ctx.agent}" is not allowed to delegate to "{normalized}". '
+                f"Allowed sub_agents: {allowed_text}"
+            ),
+        )
     if run_in_background is None:
         run_in_background = False
 
@@ -137,6 +148,10 @@ async def call_omo_agent_tool(
             parent_id=parent_session.id,
             permission=[{"permission": "question", "action": "deny", "pattern": "*"}],
             agent=normalized,
+            metadata=parent_session.metadata if isinstance(parent_session.metadata, dict) else None,
+            # 澄清选择答案记忆新增
+            owner_user_id=parent_session.owner_user_id,
+            owner_username=parent_session.owner_username,
         )
         target_session_id = created.id
 

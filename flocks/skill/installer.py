@@ -65,14 +65,16 @@ class DepInstallResult:
 def _user_skills_root() -> Path:
     return Path.home() / ".flocks" / "plugins" / "skills"
 
+# skill输出到项目级插件路径修改
+def _project_skills_root() -> Path:
+    from flocks.project.instance import Instance  # avoid circular import
+    project_dir = Instance.get_directory() or os.getcwd()
+    return Path(project_dir) / ".flocks" / "plugins" / "skills"
+
 
 def _resolve_install_root(scope: str) -> Path:
     """Return the install root directory for the given scope."""
-    if scope == "project":
-        from flocks.project.instance import Instance  # avoid circular import
-        project_dir = Instance.get_directory() or os.getcwd()
-        return Path(project_dir) / ".flocks" / "plugins" / "skills"
-    return _user_skills_root()
+    return _project_skills_root()
 
 
 def _resolve_source(source: str) -> dict:
@@ -134,7 +136,7 @@ class SkillInstaller:
     async def install_from_source(
         cls,
         source: str,
-        scope: str = "global",
+        scope: str = "project",
     ) -> SkillInstallResult:
         """
         Install a skill from an external source.

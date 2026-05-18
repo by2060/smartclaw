@@ -42,7 +42,7 @@ async def test_session_create_initializes_callable_tools_from_declared_agent_too
     )
     monkeypatch.setattr(
         "flocks.tool.catalog.get_always_load_tool_names",
-        lambda: {"question", "tool_search"},
+        lambda: {"bash", "question", "read", "skill", "write"},
     )
 
     class _AgentInfo:
@@ -63,7 +63,7 @@ async def test_session_create_initializes_callable_tools_from_declared_agent_too
     initialize_mock.assert_awaited_once_with(
         session.id,
         [],
-        always_load_tool_names={"question", "tool_search"},
+        always_load_tool_names={"bash", "question", "read", "skill", "write"},
     )
 
 

@@ -27,6 +27,8 @@ class HybridSearch:
         provider_id: str,
         embedding_model: str,
         config: MemoryQueryConfig,
+        current_user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
     ):
         """
         Initialize hybrid search engine
@@ -41,6 +43,8 @@ class HybridSearch:
         self.provider_id = provider_id
         self.embedding_model = embedding_model
         self.config = config
+        self.current_user_id = str(current_user_id or "__shared__")
+        self.session_id = session_id
     
     async def search(
         self,
@@ -155,6 +159,8 @@ class HybridSearch:
                 max_results=max_results,
                 min_score=min_score,
                 sources=[s.value for s in sources],
+                current_user_id=self.current_user_id,
+                session_id=None,
             )
             
             # Convert to MemorySearchResult
@@ -190,6 +196,8 @@ class HybridSearch:
                 query=query,
                 max_results=max_results,
                 sources=[s.value for s in sources],
+                current_user_id=self.current_user_id,
+                session_id=None,
             )
             
             # Convert to MemorySearchResult

@@ -119,6 +119,7 @@ class SessionResponse(BaseModel):
     revert: Optional[Dict[str, Any]] = Field(None, description="Revert state")
     category: str = Field("user", description="Session category: user or task")
     ownerUserID: Optional[str] = Field(None, description="Session owner user id")
+    userContext: Dict[str, Any] = Field(default_factory=dict, description="Runtime user context")
     canDelete: bool = Field(False, description="Whether current user can delete this session")
 
 
@@ -151,8 +152,24 @@ def _session_to_response(session: SessionModel) -> SessionResponse:
         permission=[p.model_dump() for p in session.permission] if session.permission else None,
         category=session.category,
         ownerUserID=session.owner_user_id,
+        userContext=_session_user_context(session),
         canDelete=can_delete,
     )
+
+
+def _session_user_context(session: SessionModel) -> Dict[str, Any]:
+    context = getattr(session, "user_context", None)
+    return dict(context) if isinstance(context, dict) else {}
+
+
+def _session_current_user_id(session: Optional[SessionModel]) -> Optional[str]:
+    if not session:
+        return None
+    context = _session_user_context(session)
+    current_user_id = context.get("currentUserId")
+    if current_user_id:
+        return str(current_user_id)
+    return None
 
 
 def _is_hidden_from_session_manager(session: SessionModel) -> bool:
@@ -276,6 +293,16 @@ async def create_session(http_request: Request, request: Optional[SessionCreateR
     except Exception:
         directory = os.getcwd()
         project_id = "default"
+
+    effective_user_context: Dict[str, Any] = {}
+    if request.user_context is not None:
+        effective_user_context = dict(request.user_context)
+    elif request.parentID:
+        parent_for_context = await Session.get_by_id(request.parentID)
+        if parent_for_context:
+            effective_user_context = _session_user_context(parent_for_context)
+    if not effective_user_context.get("currentUserId"):
+        effective_user_context["currentUserId"] = str(current_user.id)
     
     # Trigger command:new hook if creating from parent (like /new command)
     if request.parentID:
@@ -284,6 +311,11 @@ async def create_session(http_request: Request, request: Optional[SessionCreateR
             from flocks.config import Config
             
             config = await Config.get()
+            parent_session = await Session.get_by_id(request.parentID)
+            current_user_id = (
+                _session_current_user_id(parent_session)
+                or str(effective_user_context.get("currentUserId") or current_user.id)
+            )
             
             # Create hook event for the parent session
             event = create_command_event(
@@ -293,6 +325,7 @@ async def create_session(http_request: Request, request: Optional[SessionCreateR
                     "previous_session_id": request.parentID,
                     "project_id": project_id,
                     "workspace_dir": directory,
+                    "current_user_id": current_user_id,
                 },
             )
             
@@ -318,6 +351,7 @@ async def create_session(http_request: Request, request: Optional[SessionCreateR
             )
             for p in request.permission
         ]
+
     
     session = await Session.create(
         project_id=project_id,
@@ -326,12 +360,13 @@ async def create_session(http_request: Request, request: Optional[SessionCreateR
         parent_id=request.parentID,
         permission=permission,
         owner_user_id=current_user.id,
+        user_context=effective_user_context,
         **({"category": request.category} if request.category else {}),
     )
 
-    if request.user_context:
+    if effective_user_context:
         from flocks.session.user_context import set_session_user_context
-        set_session_user_context(session.id, request.user_context)
+        set_session_user_context(session.id, effective_user_context)
 
     log.info("session.created", {"session_id": session.id})
     return _session_to_response(session)
@@ -557,6 +592,18 @@ async def update_session(
             set_session_user_context(sessionID, request.user_context)
         else:
             clear_session_user_context(sessionID)
+        updated = await Session.update(
+            project_id=session.project_id,
+            session_id=sessionID,
+            user_context=request.user_context,
+        )
+        if updated:
+            session = updated
+        try:
+            from flocks.tool.system.memory import evict_session_memory
+            evict_session_memory(sessionID)
+        except Exception:
+            pass
 
     log.info("session.updated", {"session_id": sessionID})
     return _session_to_response(session)
@@ -3292,5 +3339,3 @@ async def clear_session(sessionID: str):
     except Exception as e:
         log.error("session.clear.error", {"sessionID": sessionID, "error": str(e)})
         raise HTTPException(status_code=500, detail=f"Failed to clear session: {str(e)}")
-
-

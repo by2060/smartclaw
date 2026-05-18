@@ -15,6 +15,7 @@ tools:
   - write
   - bash
   - skill
+  - tool_search
   - delegate_task
   - task
   - todoread
@@ -25,4 +26,9 @@ tools:
   - background_cancel
   - session_list
   - channel_message
+  # 记忆按账号隔离新增
+  - memory_search
+  - memory_get
+  - memory_write
+  # ------end------------
 # prompt is left empty – injected dynamically by prompt_builder.py

@@ -187,6 +187,21 @@ class TestMemoryBootstrap:
         assert "MEMORY.md" in instructions
         assert "daily/" in instructions
         assert "memory_search" in instructions
+        assert "current human user" in instructions
+        assert "Current human user id: `__shared__`" in instructions
+
+    def test_get_agent_instructions_binds_current_user_memory(self):
+        """Memory instructions should bind account memory to the human user."""
+        bootstrap = MemoryBootstrap(current_user_id="zhh_test_001")
+
+        instructions = bootstrap.get_agent_instructions(
+            today="2026-02-09",
+            yesterday="2026-02-08"
+        )
+
+        assert "Current human user id: `zhh_test_001`" in instructions
+        assert "not the assistant's personal identity" in instructions
+        assert "first-person" in instructions
     
     @pytest.mark.asyncio
     async def test_bootstrap(self):

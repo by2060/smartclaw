@@ -12,6 +12,7 @@ situation.
 from __future__ import annotations
 
 import asyncio
+import os
 import shlex
 import shutil
 from typing import Optional
@@ -93,6 +94,50 @@ _SUBCOMMAND_ENUM = ["find", "install", "status", "install-deps", "list", "remove
 _READ_ONLY_SUBCOMMANDS = frozenset({"find", "list", "status"})
 
 
+def _ctx_agent(ctx: ToolContext) -> Optional[str]:
+    value = getattr(ctx, "agent", None)
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _infer_skill_name(args: str) -> str:
+    """Best-effort extraction of the target skill name from a CLI arg string."""
+    tokens = shlex.split((args or "").strip())
+    if not tokens:
+        return ""
+    source = tokens[0].rstrip("/\\")
+    if ":" in source and not source.lower().startswith(("http://", "https://")):
+        source = source.rsplit(":", 1)[-1]
+    source = source.rstrip("/\\")
+    base = os.path.basename(source) or source
+    if base.upper() == "SKILL.MD":
+        parent = os.path.basename(os.path.dirname(source))
+        if parent:
+            base = parent
+    return base.strip()
+
+
+def _filter_text_output_by_skills(output: str, allowed: list[str]) -> str:
+    if not allowed:
+        return "No skills are allowed for this agent."
+
+    allowed_lower = [name.lower() for name in allowed]
+    kept: list[str] = []
+    for line in (output or "").splitlines():
+        stripped = line.strip()
+        lower = stripped.lower()
+        if not stripped:
+            kept.append(line)
+        elif any(name in lower for name in allowed_lower):
+            kept.append(line)
+        elif set(stripped) <= {"-", "=", " "}:
+            kept.append(line)
+        elif lower.startswith(("skill", "name", "available", "status", "eligible", "source")):
+            kept.append(line)
+
+    filtered = "\n".join(kept).strip()
+    return filtered or "No allowed skills matched the command output."
+
+
 def _flocks_executable() -> Optional[str]:
     """Locate the `flocks` CLI on PATH."""
     return shutil.which("flocks")
@@ -154,6 +199,29 @@ async def flocks_skills(
         )
 
     # Build the command list — no shell interpolation, safe from injection.
+    from flocks.agent.controls import agent_allows_skill, agent_skill_allowlist
+
+    agent_name = _ctx_agent(ctx)
+    skill_allowlist = await agent_skill_allowlist(agent_name)
+    if skill_allowlist is not None:
+        if subcommand in {"install", "install-deps", "remove"}:
+            target_skill = _infer_skill_name(args)
+            if not target_skill or not await agent_allows_skill(agent_name, target_skill):
+                allowed_text = ", ".join(skill_allowlist) or "none"
+                return ToolResult(
+                    success=False,
+                    error=(
+                        f'Agent "{agent_name or ""}" is not allowed to manage skill '
+                        f'"{target_skill or args}". Allowed skills: {allowed_text}'
+                    ),
+                )
+        elif subcommand in _READ_ONLY_SUBCOMMANDS and not skill_allowlist:
+            return ToolResult(
+                success=True,
+                output="No skills are allowed for this agent.",
+                title=f"flocks skills {subcommand}",
+            )
+
     cmd: list[str] = [flocks_bin, "skills", subcommand]
     if args.strip():
         # shlex.split preserves quoted tokens (e.g. paths with spaces).
@@ -212,6 +280,9 @@ async def flocks_skills(
     # Truncate very long output so we don't flood the context window.
     if len(output) > _MAX_OUTPUT:
         output = output[:_MAX_OUTPUT] + f"\n\n[… output truncated at {_MAX_OUTPUT} chars]"
+
+    if subcommand in _READ_ONLY_SUBCOMMANDS and skill_allowlist is not None:
+        output = _filter_text_output_by_skills(output, skill_allowlist)
 
     exit_code = proc.returncode
     success = exit_code == 0

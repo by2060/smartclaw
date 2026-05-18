@@ -1,16 +1,16 @@
 ---
 name: agent-builder
 category: system
-description: Create new sub-agents (subagents) by generating YAML config and prompt files in ~/.flocks/plugins/agents/. The created agent can be delegated to by Rex via delegate_task. Use when the user asks to create, add, or generate a new agent.
+description: Create new sub-agents (subagents) by generating YAML config and prompt files in the project-level .flocks/plugins/agents/ directory. The created agent can be delegated to by Rex via delegate_task. Use when the user asks to create, add, or generate a new agent.
 ---
 
 # Agent Builder
 
-Create a new sub-agent from user requirements. Produces a YAML config file + prompt file under `~/.flocks/plugins/agents/<name>/`, loadable by the system without restart.
+Create a new sub-agent from user requirements. Produces a YAML config file + prompt file under `<project>/.flocks/plugins/agents/<name>/`, loadable by the system without restart.
 
 **Required directory layout:**
 ```
-~/.flocks/plugins/agents/
+<project>/.flocks/plugins/agents/
 └── {name}/          ← subdirectory named after the agent (kebab-case)
     ├── agent.yaml   ← YAML config
     └── prompt.md    ← system prompt
@@ -33,7 +33,7 @@ Use the `Question` tool to confirm (skip if already clear):
 
 ### 2. Generate Prompt File
 
-Create `~/.flocks/plugins/agents/{name}/prompt.md` with the following structure:
+Create `<project>/.flocks/plugins/agents/{name}/prompt.md` with the following structure:
 
 ```markdown
 You are a specialized {role} agent.
@@ -61,7 +61,7 @@ You are a specialized {role} agent.
 
 ### 3. Generate YAML Config File
 
-Create `~/.flocks/plugins/agents/{name}/agent.yaml`. Prefer an explicit `tools` allowlist; use `permission` only for advanced wildcard matching or deny/allow patterns that cannot be expressed as a simple list.
+Create `<project>/.flocks/plugins/agents/{name}/agent.yaml`. Prefer an explicit `tools` allowlist; use `permission` only for advanced wildcard matching or deny/allow patterns that cannot be expressed as a simple list.
 
 ```yaml
 # Required
@@ -177,9 +177,9 @@ tools:
 
 After generating files, verify:
 
-1. **YAML syntax**: run `python3 -c "import yaml; from pathlib import Path; yaml.safe_load(Path('~/.flocks/plugins/agents/{name}/agent.yaml').expanduser().read_text(encoding='utf-8'))"`
-2. **Prompt file exists**: confirm `~/.flocks/plugins/agents/{name}/prompt.md` has been created
-3. **Directory structure**: ensure files are inside `~/.flocks/plugins/agents/{name}/`, NOT as flat files like `agents/{name}.yaml`
+1. **YAML syntax**: run `python3 -c "from pathlib import Path; import yaml; root=Path.cwd(); yaml.safe_load((root/'.flocks/plugins/agents/{name}/agent.yaml').read_text(encoding='utf-8'))"`
+2. **Prompt file exists**: confirm `<project>/.flocks/plugins/agents/{name}/prompt.md` has been created
+3. **Directory structure**: ensure files are inside `<project>/.flocks/plugins/agents/{name}/`, NOT as flat files like `agents/{name}.yaml`
 4. **Name uniqueness**: ensure no collision with built-in agents (reserved names: rex, hephaestus, oracle, librarian, explore, general, metis, momus, multimodal-looker, rex-junior, build, plan, compaction, title, summary)
 5. **Tool names**: verify every listed tool exists in the current registry; if the repo exposes a `/tools` or tool listing command, check against that instead of relying on memory
 6. **Trigger reload**: call the refresh API so Rex recognizes the new agent immediately — **no restart needed**:
@@ -191,7 +191,7 @@ After generating files, verify:
 ### 7. Output
 
 After creation, inform the user:
-- File paths created (e.g. `~/.flocks/plugins/agents/{name}/agent.yaml` and `prompt.md`)
+- File paths created (e.g. `<project>/.flocks/plugins/agents/{name}/agent.yaml` and `prompt.md`)
 - Agent name and role
 - Can be invoked via `delegate_task(subagent_type="{name}", ...)`
 - Takes effect immediately after calling `POST /api/agents/refresh` (no restart needed)
@@ -202,7 +202,7 @@ After creation, inform the user:
 
 - Agent names must be `kebab-case` (lowercase letters + digits + hyphens)
 - `mode` is always `subagent` (this skill only creates sub-agents)
-- **Files MUST be written to `~/.flocks/plugins/agents/<name>/` subdirectory** — flat files like `agents/<name>.yaml` are legacy and should NOT be created
+- **Files MUST be written to `<project>/.flocks/plugins/agents/<name>/` subdirectory** — flat files like `agents/<name>.yaml` are legacy and should NOT be created
 - The subdirectory name must match the agent `name` field exactly
 - Do not create agents with names that collide with built-in agents
 - Prefer `tools:` over `permission:` for new agents so the config stays aligned with the current UI and loader behavior

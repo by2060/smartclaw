@@ -95,6 +95,50 @@ async def api_question_handler(
             if field in q:
                 question_info[field] = q[field]
         question_infos.append(question_info)
+
+    # 添加澄清问题答案记忆新增
+    remembered_by_index: List[Optional[List[str]]] = [None] * len(question_infos)
+    pending_indices = list(range(len(question_infos)))
+    pending_question_infos = question_infos
+
+    # If the current account has explicitly remembered answers, only ask for
+    # the missing items and merge the answers back into the original order.
+    try:
+        from flocks.memory.question_memory import QuestionMemoryService
+
+        remembered_matches = await QuestionMemoryService.match_questions(
+            session_id=session_id,
+            questions=question_infos,
+        )
+        if remembered_matches is not None:
+            remembered_by_index = remembered_matches
+            pending_indices = [
+                idx for idx, answer in enumerate(remembered_by_index)
+                if answer is None
+            ]
+            if not pending_indices:
+                remembered_answers = [
+                    answer or [] for answer in remembered_by_index
+                ]
+                log.info("question.remembered_answers.used", {
+                    "session": session_id,
+                    "count": len(remembered_answers),
+                })
+                return remembered_answers
+
+            pending_question_infos = [
+                question_infos[idx] for idx in pending_indices
+            ]
+            log.info("question.remembered_answers.used", {
+                "session": session_id,
+                "count": len(question_infos) - len(pending_question_infos),
+                "pending": len(pending_question_infos),
+            })
+    except Exception as e:
+        log.warn("question.remembered_answers.failed", {
+            "session": session_id,
+            "error": str(e),
+        })
     
     # Create a single QuestionRequest for all questions
     # This matches TUI's expected format
@@ -106,7 +150,8 @@ async def api_question_handler(
         question_request = {
             "id": request_id,
             "sessionID": session_id,
-            "questions": question_infos,
+            # 添加澄清问题答案记忆新增
+            "questions": pending_question_infos,
         }
         
         # Add tool info if call_id is available
@@ -126,7 +171,8 @@ async def api_question_handler(
             log.info("question.event.published", {
                 "request_id": request_id,
                 "session": session_id,
-                "count": len(question_infos)
+                # 添加澄清问题答案记忆修改
+                "count": len(pending_question_infos)
             })
         except Exception as e:
             log.error("question.event.publish_failed", {"error": str(e)})
@@ -154,9 +200,18 @@ async def api_question_handler(
             # Check if answered
             answer = get_request_answer(request_id)
             if answer is not None:
-                answers = answer
+                # 添加澄清问题答案记忆修改
+                answers = [remembered or [] for remembered in remembered_by_index]
+                for pending_answer_idx, original_idx in enumerate(pending_indices):
+                    answers[original_idx] = (
+                        answer[pending_answer_idx]
+                        if pending_answer_idx < len(answer)
+                        else []
+                    )
                 log.info("question.all_answered", {
                     "count": len(answers),
+                    # 添加澄清问题答案记忆修改
+                    "asked_count": len(answer),
                     "session": session_id
                 })
                 break

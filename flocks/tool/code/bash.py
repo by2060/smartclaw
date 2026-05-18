@@ -15,6 +15,7 @@ import asyncio
 import subprocess
 import shlex
 import tempfile
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -38,6 +39,21 @@ DEFAULT_PATH = os.environ.get(
     "PATH",
     "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 )
+# 输出按会话隔离新增，解决绕过file/write工具写文件时文件输出目录不正确问题
+OUTPUT_FILE_EXTENSIONS = (
+    "csv",
+    "html",
+    "htm",
+    "json",
+    "log",
+    "md",
+    "pdf",
+    "txt",
+    "xlsx",
+    "yaml",
+    "yml",
+)
+# ---------------------end-------------------
 
 
 def get_description(directory: str) -> str:
@@ -47,6 +63,7 @@ def get_description(directory: str) -> str:
 All commands run in {directory} by default. Use the `workdir` parameter if you need to run a command in a different directory. AVOID using `cd <directory> && <command>` patterns - use `workdir` instead.
 
 IMPORTANT: This tool is for terminal operations like git, npm, docker, etc. DO NOT use it for file operations (reading, writing, editing, searching, finding files) - use the specialized tools for this instead.
+Generated reports, summaries, analysis documents, tables, JSON/CSV exports, and other user-facing output files MUST be written with the Write tool so they are saved under the Workspace outputs directory for the root session. Do not use Bash redirection, tee, Python one-liners, or shell scripts to create those files.
 
 Before executing the command, please follow these steps:
 
@@ -215,6 +232,78 @@ def _is_elevated_allowed(ctx: ToolContext, tool_name: str) -> bool:
     allowed_tools = elevated.get("tools") or ["bash"]
     return tool_name in allowed_tools
 
+# 输出按会话隔离新增
+def _effective_output_session_id(ctx: ToolContext) -> str:
+    extra = ctx.extra if isinstance(ctx.extra, dict) else {}
+    for key in ("output_session_id", "main_session_key"):
+        value = extra.get(key)
+        if value:
+            return str(value)
+    return ctx.session_id
+
+
+def _looks_like_generated_document_write(command: str) -> Optional[str]:
+    """Detect common shell patterns that create user-facing document outputs."""
+    ext_group = "|".join(OUTPUT_FILE_EXTENSIONS)
+    path_pattern = (
+        rf"(?:"
+        rf"/[^\s'\";|&<>]+\.(?:{ext_group})"
+        rf"|(?:\./)?(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:{ext_group})"
+        rf")"
+    )
+    patterns = [
+        rf"(?:^|[^<])>>?\s*['\"]?(?P<path>{path_pattern})['\"]?",
+        rf"\btee(?:\s+-a)?\s+['\"]?(?P<path>{path_pattern})['\"]?",
+        rf"\b(?:Out-File|Set-Content|Add-Content)\b[^\n\r;|&]*?(?:-FilePath|-Path)?\s*['\"](?P<path>{path_pattern})['\"]",
+        rf"\bopen\(\s*['\"](?P<path>{path_pattern})['\"]\s*,\s*['\"][wa]",
+        rf"\bPath\(\s*['\"](?P<path>{path_pattern})['\"]\s*\)\.write_(?:text|bytes)\(",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, command, flags=re.IGNORECASE)
+        if match:
+            return match.group("path")
+    return None
+
+
+def _is_flocks_plugin_write_path(path: str, base_dir: str) -> bool:
+    """Return True when a shell write targets a project Flocks plugin definition."""
+    normalized = str(path).replace("\\", "/").strip("'\"")
+    if normalized.startswith((".flocks/plugins/", "./.flocks/plugins/")):
+        return True
+    if normalized.startswith("/workspace/.flocks/plugins/"):
+        return True
+
+    candidate = Path(path).expanduser()
+    if not candidate.is_absolute():
+        candidate = Path(base_dir) / candidate
+
+    roots = [Path(base_dir).expanduser() / ".flocks" / "plugins", Path.cwd() / ".flocks" / "plugins"]
+    for root in roots:
+        try:
+            candidate_resolved = candidate.resolve()
+            root_resolved = root.resolve()
+        except OSError:
+            candidate_resolved = candidate.absolute()
+            root_resolved = root.absolute()
+        try:
+            if candidate_resolved.is_relative_to(root_resolved):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def _is_user_flocks_plugin_write_path(path: str) -> bool:
+    """Return True when a shell write targets ~/.flocks/plugins."""
+    candidate = Path(path).expanduser()
+    if not candidate.is_absolute():
+        return False
+    root = Path.home() / ".flocks" / "plugins"
+    try:
+        return candidate.resolve().is_relative_to(root.resolve())
+    except (OSError, ValueError):
+        return False
+#------------------------------end--------------------------------
 
 async def _resolve_sandbox_workdir(
     workdir: str,
@@ -242,7 +331,11 @@ async def _resolve_sandbox_workdir(
 
         # 将相对路径映射为容器路径
         relative = result.relative.replace(os.sep, "/") if result.relative else ""
-        container_workdir = f"{sandbox.container_workdir}/{relative}" if relative else sandbox.container_workdir
+        container_workdir = (
+            f"{sandbox.container_workdir}/{relative}"
+            if relative
+            else sandbox.container_workdir
+        )
         return result.resolved, container_workdir
     except (ValueError, OSError):
         return fallback, sandbox.container_workdir
@@ -259,19 +352,19 @@ async def _resolve_sandbox_workdir(
             type=ParameterType.INTEGER,
             description="Optional timeout in milliseconds",
             required=False,
-            default=DEFAULT_TIMEOUT_MS,
+            default=DEFAULT_TIMEOUT_MS
         ),
         ToolParameter(
             name="workdir",
             type=ParameterType.STRING,
             description="The working directory to run the command in. Defaults to project directory.",
-            required=False,
+            required=False
         ),
         ToolParameter(
             name="description",
             type=ParameterType.STRING,
             description="Clear, concise description of what this command does in 5-10 words",
-            required=False,
+            required=False
         ),
         ToolParameter(
             name="host",
@@ -280,7 +373,7 @@ async def _resolve_sandbox_workdir(
             required=False,
             enum=["sandbox", "host"],
         ),
-    ],
+    ]
 )
 async def bash_tool(
     ctx: ToolContext,
@@ -299,8 +392,13 @@ async def bash_tool(
     """
     # Resolve working directory
     base_dir = Instance.get_directory() or os.getcwd()
-    cwd = _resolve_workdir(base_dir, workdir)
-
+    # 输出按会话隔离修改
+    # 删除
+    # cwd = _resolve_workdir(base_dir, workdir)
+    # 新增
+    cwd = workdir or base_dir
+    if not os.path.isabs(cwd):
+        cwd = os.path.join(base_dir, cwd)
     # Validate timeout
     timeout_ms = timeout or DEFAULT_TIMEOUT_MS
     if timeout_ms < 0:
@@ -309,6 +407,63 @@ async def bash_tool(
         )
 
     timeout_sec = timeout_ms / 1000
+
+    from flocks.tool.code.bash_blacklist import check_bash_blacklist
+
+    blocked_command = await check_bash_blacklist(command)
+    if blocked_command:
+        return ToolResult(
+            success=False,
+            error=blocked_command.message,
+            title=description or command,
+            metadata={
+                "blocked_by_bash_blacklist": True,
+                "blocked_command": blocked_command.command,
+                "blacklist_rule": blocked_command.rule,
+            },
+        )
+
+    # 输出按会话隔离新增
+    blocked_output_path = _looks_like_generated_document_write(command)
+    if blocked_output_path and _is_user_flocks_plugin_write_path(blocked_output_path):
+        expected_plugin_dir = Path(cwd) / ".flocks" / "plugins"
+        return ToolResult(
+            success=False,
+            error=(
+                "Flocks plugin definitions must be written to the project-level "
+                f"plugin directory, not ~/.flocks/plugins. Detected attempted path: {blocked_output_path}. "
+                f"Use Write with a filePath under: {expected_plugin_dir}"
+            ),
+            title=description or command,
+            metadata={
+                "blocked_user_plugin_write": True,
+                "detected_path": blocked_output_path,
+                "expected_plugin_dir": str(expected_plugin_dir),
+            },
+        )
+    if blocked_output_path and not _is_flocks_plugin_write_path(blocked_output_path, cwd):
+        from flocks.workspace.manager import WorkspaceManager
+
+        output_dir = WorkspaceManager.get_instance().get_outputs_dir(
+            _effective_output_session_id(ctx),
+            create=False,
+        )
+        return ToolResult(
+            success=False,
+            error=(
+                "Generated documents must be written with the Write tool, not Bash, "
+                "so they are saved under the root session Workspace outputs directory. "
+                f"Detected attempted output path: {blocked_output_path}. "
+                f"Use Write with a filePath under: {output_dir}"
+            ),
+            title=description or command,
+            metadata={
+                "blocked_generated_document_write": True,
+                "detected_path": blocked_output_path,
+                "expected_output_dir": str(output_dir),
+            },
+        )
+    # -------------------------end------------------------------------------------
 
     # Check for sandbox configuration
     sandbox = _get_sandbox_config_from_ctx(ctx)

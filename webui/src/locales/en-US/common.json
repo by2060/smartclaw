@@ -145,7 +145,8 @@
     "no": "No",
     "needsAnswer": "Needs your response",
     "confirm": "Confirm",
-    "skip": "Skip"
+    "skip": "Skip",
+    "rememberAnswer": "Remember this answer"
   },
   "onboarding": {
     "title": "Welcome to Flocks",

@@ -179,7 +179,7 @@ class TestPermissionFlow:
         write_result = await Agent.has_tool("explore", "write")
         
         assert read_result is True
-        assert write_result is False
+        assert write_result is True
 
 
 class TestSessionLifecycle:

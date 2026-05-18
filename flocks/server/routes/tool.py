@@ -975,9 +975,9 @@ async def create_tool(request: CreateToolRequest, _admin: object = Depends(requi
     """
     Create a new tool via YAML plugin.
 
-    The tool is written to ``~/.flocks/plugins/tools/api/`` (or a provider
-    subdirectory ``api/{provider}/`` if specified), then loaded into the
-    ToolRegistry immediately.
+    The tool is written to ``<project>/.flocks/plugins/tools/api/`` (or a
+    provider subdirectory ``api/{provider}/`` if specified), then loaded into
+    the ToolRegistry immediately.
     """
     from flocks.tool.tool_loader import (
         create_yaml_tool,

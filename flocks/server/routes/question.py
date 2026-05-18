@@ -40,6 +40,10 @@ class QuestionOption(BaseModel):
 class QuestionRequestReply(BaseModel):
     """Batch reply: one answer-list per question."""
     answers: List[List[str]]
+    # 添加澄清问题答案记忆新增
+    # Optional, backward-compatible flag from external frontends:
+    # true/false applies to all questions; a list applies per question.
+    remember: Optional[Any] = None
 
 
 # ---------------------------------------------------------------------------
@@ -141,16 +145,43 @@ async def reply_question_request(
 ) -> Dict[str, Any]:
     if request_id not in _question_requests:
         raise HTTPException(status_code=404, detail="Question request not found")
+    # 添加澄清问题答案记忆新增
+    question_request = _question_requests[request_id]
 
     log.info("question.request.reply", {
         "request_id": request_id,
         "answer_count": len(request.answers),
     })
     _request_answers[request_id] = request.answers
+    # 添加澄清问题答案记忆新增
+    try:
+        from flocks.memory.question_memory import (
+            QuestionMemoryService,
+            normalize_remember_flags,
+        )
+
+        questions = question_request.get("questions") or []
+        remember_flags = normalize_remember_flags(
+            request.remember,
+            max(len(questions), len(request.answers)),
+        )
+        if any(remember_flags):
+            await QuestionMemoryService.save_remembered_answers(
+                session_id=question_request.get("sessionID", ""),
+                question_request=question_request,
+                answers=request.answers,
+                remember_flags=remember_flags,
+            )
+    except Exception as e:
+        log.warn("question.remember.failed", {
+            "request_id": request_id,
+            "error": str(e),
+        })
 
     try:
         from flocks.server.routes.event import publish_event
-        question_request = _question_requests[request_id]
+        # 添加澄清问题答案记忆删除
+        # question_request = _question_requests[request_id]
         await publish_event("question.replied", {
             "sessionID": question_request.get("sessionID", ""),
             "requestID": request_id,

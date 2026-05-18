@@ -38,8 +38,10 @@ export function usePendingQuestions() {
 
   /** Submit answers for a pending question. */
   const submitAnswer = useCallback(
-    async (callID: string, requestId: string, answers: string[][]) => {
-      await client.post(`/api/question/${requestId}/reply`, { answers });
+    async (callID: string, requestId: string, answers: string[][], remember?: boolean | boolean[]) => {
+      const payload: { answers: string[][]; remember?: boolean | boolean[] } = { answers };
+      if (remember !== undefined) payload.remember = remember;
+      await client.post(`/api/question/${requestId}/reply`, payload);
       setPendingQuestions(prev => {
         const next = { ...prev };
         delete next[callID];

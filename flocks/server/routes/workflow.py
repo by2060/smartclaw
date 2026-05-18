@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Any, Dict, Literal
 from fastapi import APIRouter, HTTPException, status, Query
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import AliasChoices, BaseModel, Field, ConfigDict
 import uuid
 
 from flocks.workflow.models import Workflow, Node, Edge
@@ -130,8 +130,18 @@ class WorkflowRunRequest(BaseModel):
     inputs: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Input parameters")
     timeout_s: Optional[float] = Field(None, alias="timeoutS", description="Timeout in seconds")
     trace: bool = Field(False, description="Enable tracing")
-    session_id: Optional[str] = Field(None, alias="sessionId", description="Optional parent session ID")
-    message_id: Optional[str] = Field(None, alias="messageId", description="Optional parent message ID")
+    session_id: Optional[str] = Field(
+        None,
+        alias="sessionId",
+        validation_alias=AliasChoices("sessionId", "sessionID", "session_id"),
+        description="Optional parent session ID",
+    )
+    message_id: Optional[str] = Field(
+        None,
+        alias="messageId",
+        validation_alias=AliasChoices("messageId", "messageID", "message_id"),
+        description="Optional parent message ID",
+    )
     agent: Optional[str] = Field(None, description="Optional agent name for tool context")
 
 
@@ -1528,8 +1538,18 @@ class RunNodeRequest(BaseModel):
 
     node_id: str = Field(..., description="Node ID to execute")
     inputs: Dict[str, Any] = Field(default_factory=dict, description="Input data for the node")
-    session_id: Optional[str] = Field(None, alias="sessionId", description="Optional parent session ID")
-    message_id: Optional[str] = Field(None, alias="messageId", description="Optional parent message ID")
+    session_id: Optional[str] = Field(
+        None,
+        alias="sessionId",
+        validation_alias=AliasChoices("sessionId", "sessionID", "session_id"),
+        description="Optional parent session ID",
+    )
+    message_id: Optional[str] = Field(
+        None,
+        alias="messageId",
+        validation_alias=AliasChoices("messageId", "messageID", "message_id"),
+        description="Optional parent message ID",
+    )
     agent: Optional[str] = Field(None, description="Optional agent name for tool context")
 
 

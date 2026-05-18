@@ -379,6 +379,12 @@ class BackgroundManager:
                     agent=input_data.agent,
                     category=input_data.category or "task",
                 )
+                # 澄清选择答案记忆新增
+                if parent_session:
+                    create_kwargs.update(
+                        owner_user_id=parent_session.owner_user_id,
+                        owner_username=parent_session.owner_username,
+                    )
                 if persist_model:
                     create_kwargs.update(
                         model=launch_model_id,

@@ -23,6 +23,7 @@ async def handle_slash_command(
     send_prompt: SendPrompt,
     clear_screen: Optional[ClearScreen] = None,
     surface: Optional[CommandSurface] = None,
+    agent_name: Optional[str] = None,
 ) -> bool:
     """
     Handle supported slash commands.
@@ -72,9 +73,21 @@ async def handle_slash_command(
         return True
 
     if name == "tools":
-        if not args or args == "list":
+        async def _allowed_tools():
             ToolRegistry.init()
             tools = ToolRegistry.list_tools()
+            if not agent_name:
+                return tools
+            from flocks.agent.controls import agent_allows_tool
+
+            return [
+                tool
+                for tool in tools
+                if await agent_allows_tool(agent_name, tool.name)
+            ]
+
+        if not args or args == "list":
+            tools = await _allowed_tools()
             lines = ["Available tools (summary):", ""]
             for i, tool in enumerate(tools, 1):
                 desc = (tool.description or "").strip().splitlines()[0]
@@ -86,8 +99,7 @@ async def handle_slash_command(
 
         if args == "refresh":
             ToolRegistry.refresh_dynamic_tools()
-            ToolRegistry.init()
-            tools = ToolRegistry.list_tools()
+            tools = await _allowed_tools()
             lines = ["Dynamic tools refreshed. Current summary:", ""]
             for i, tool in enumerate(tools, 1):
                 desc = (tool.description or "").strip().splitlines()[0]
@@ -108,6 +120,12 @@ async def handle_slash_command(
             if not tool:
                 await send_text(f'Tool not found: "{name}"')
                 return True
+            if agent_name:
+                from flocks.agent.controls import agent_allows_tool
+
+                if not await agent_allows_tool(agent_name, name):
+                    await send_text(f'Agent "{agent_name}" is not allowed to use tool "{name}".')
+                    return True
 
             info = tool.info
             lines = [
@@ -141,6 +159,12 @@ async def handle_slash_command(
             if not skill:
                 await send_text('Skill not found: "tool-builder". Check whether skills are loaded.')
                 return True
+            if agent_name:
+                from flocks.agent.controls import agent_allows_skill
+
+                if not await agent_allows_skill(agent_name, "tool-builder"):
+                    await send_text(f'Agent "{agent_name}" is not allowed to load skill "tool-builder".')
+                    return True
 
             try:
                 with open(skill.location, "r", encoding="utf-8") as f:
@@ -163,6 +187,13 @@ async def handle_slash_command(
     if name == "skills":
         if not args or args == "list":
             skills = await Skill.all()
+            if agent_name:
+                from flocks.agent.controls import filter_agent_skills
+                from flocks.agent.registry import Agent
+
+                agent = await Agent.get(agent_name)
+                if agent:
+                    skills = filter_agent_skills(agent, skills)
             lines = ["Available skills:", ""]
             for i, skill in enumerate(skills, 1):
                 lines.append(f"{i}. {skill.name}: {skill.description}")
@@ -171,6 +202,13 @@ async def handle_slash_command(
 
         if args == "refresh":
             skills = await Skill.refresh()
+            if agent_name:
+                from flocks.agent.controls import filter_agent_skills
+                from flocks.agent.registry import Agent
+
+                agent = await Agent.get(agent_name)
+                if agent:
+                    skills = filter_agent_skills(agent, skills)
             lines = ["Skills refreshed. Current list:", ""]
             for i, skill in enumerate(skills, 1):
                 lines.append(f"{i}. {skill.name}: {skill.description}")

@@ -531,6 +531,20 @@ class TestYamlToTool:
 # ---------------------------------------------------------------------------
 
 class TestCrudHelpers:
+    def test_create_uses_project_plugin_root(self, tmp_path: Path, monkeypatch):
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+        monkeypatch.setattr(
+            "flocks.project.instance.Instance.get_directory",
+            staticmethod(lambda: str(project_dir)),
+        )
+
+        data = _make_tool_yaml(name="project_tool")
+        path = create_yaml_tool(data)
+
+        assert path == project_dir / ".flocks" / "plugins" / "tools" / "api" / "project_tool.yaml"
+        assert path.exists()
+
     def test_create_and_find(self, tmp_path: Path, monkeypatch):
         monkeypatch.setattr("flocks.tool.tool_loader._TOOLS_SUBDIR", tmp_path)
         data = _make_tool_yaml(name="my_tool")

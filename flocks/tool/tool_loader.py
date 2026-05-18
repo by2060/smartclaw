@@ -16,6 +16,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import inspect
+import os
 import re
 import urllib.parse
 from pathlib import Path
@@ -38,7 +39,8 @@ from flocks.utils.log import Log
 
 log = Log.create(service="tool.loader")
 
-_TOOLS_SUBDIR = DEFAULT_PLUGIN_ROOT / "tools"
+_DEFAULT_TOOLS_SUBDIR = DEFAULT_PLUGIN_ROOT / "tools"
+_TOOLS_SUBDIR = _DEFAULT_TOOLS_SUBDIR
 _PROVIDER_FILENAME = "_provider.yaml"
 _SECRET_PATTERN = re.compile(r"\{secret:([^}]+)\}")
 _USER_PATTERN = re.compile(r"\{user:([^}]+)\}")
@@ -61,6 +63,16 @@ TOOL_TYPE_GENERATED = "generated"
 """Auto-generated tools from API specs. Supports hot-reload."""
 
 ALL_TOOL_TYPES = (TOOL_TYPE_MCP, TOOL_TYPE_API, TOOL_TYPE_PYTHON, TOOL_TYPE_GENERATED)
+
+# 插件输出和执行结果输出新增
+def _project_tools_root() -> Path:
+    """Return the project-level tools plugin root for newly created tools."""
+    if _TOOLS_SUBDIR != _DEFAULT_TOOLS_SUBDIR:
+        return _TOOLS_SUBDIR
+    from flocks.project.instance import Instance
+
+    project_dir = Instance.get_directory() or os.getcwd()
+    return Path(project_dir) / ".flocks" / "plugins" / "tools"
 
 
 # ---------------------------------------------------------------------------
@@ -711,10 +723,14 @@ def _yaml_tool_search_roots() -> List[Path]:
     helper is expected to find them. This keeps "installed" the single
     source of truth for editing/listing.
     """
-    roots = [
+    # 插件输出和执行结果输出修改
+    # 删除
+    '''roots = [
         _TOOLS_SUBDIR,
         Path.cwd() / ".flocks" / "plugins" / "tools",
-    ]
+    ]'''
+    # 新增
+    roots = [_project_tools_root(), _TOOLS_SUBDIR]
     result: List[Path] = []
     seen: set[str] = set()
     for root in roots:
@@ -833,7 +849,7 @@ def create_yaml_tool(
 
     The resulting path is::
 
-        ~/.flocks/plugins/tools/{tool_type}/{provider?}/{name}.yaml
+        <project>/.flocks/plugins/tools/{tool_type}/{provider?}/{name}.yaml
 
     Returns
     -------
@@ -851,7 +867,8 @@ def create_yaml_tool(
     if _find_yaml_file(name):
         raise ValueError(f"Tool '{name}' already exists")
 
-    base_dir = _TOOLS_SUBDIR / tool_type
+    # 插件输出和执行结果输出新增
+    base_dir = _project_tools_root() / tool_type
     if provider:
         target_dir = base_dir / provider
     else:
@@ -923,10 +940,14 @@ def _python_tool_dirs() -> List[Path]:
     tools must be installed via the Hub flow before being picked up
     by the discovery layer.
     """
-    dirs = [
+    # 插件输出和执行结果输出修改
+    # 删除
+    '''dirs = [
         _TOOLS_SUBDIR / TOOL_TYPE_PYTHON,
         Path.cwd() / ".flocks" / "plugins" / "tools" / TOOL_TYPE_PYTHON,
-    ]
+    ]'''
+    # 新增
+    dirs = [_project_tools_root() / TOOL_TYPE_PYTHON, _TOOLS_SUBDIR / TOOL_TYPE_PYTHON]
     result: List[Path] = []
     seen: set[str] = set()
     for directory in dirs:
@@ -1027,7 +1048,11 @@ def _infer_tool_type(yaml_path: Path) -> str:
     Checks both the user-level tools dir (~/.flocks/plugins/tools/) and
     the project-level tools dir (<cwd>/.flocks/plugins/tools/).
     """
-    candidates = [_TOOLS_SUBDIR, Path.cwd() / ".flocks" / "plugins" / "tools"]
+    # 插件输出和执行结果输出修改
+    # 删除
+    # candidates = [_TOOLS_SUBDIR, Path.cwd() / ".flocks" / "plugins" / "tools"]
+    candidates = [_project_tools_root(), _TOOLS_SUBDIR]
+
     for base in candidates:
         try:
             rel = yaml_path.relative_to(base)
@@ -1069,7 +1094,9 @@ def list_yaml_tools() -> List[Dict[str, Any]]:
             ):
                 _collect(item, depth + 1, max_depth)
 
-    search_roots = _yaml_tool_search_roots()
+    # 插件输出和执行结果输出修改
+    # search_roots = _yaml_tool_search_roots()
+    search_roots = [_project_tools_root(), _TOOLS_SUBDIR]
     for root in search_roots:
         _collect(root)
 
@@ -1113,9 +1140,12 @@ def _mcp_filename(name: str) -> str:
     """Normalise an MCP server name to a safe filename stem."""
     return name.replace("-", "_")
 
+# 插件输出和执行结果输出新增
+def _mcp_dirs() -> List[Path]:
+    return [_project_tools_root() / TOOL_TYPE_MCP, _TOOLS_SUBDIR / TOOL_TYPE_MCP]
 
 def save_mcp_config(name: str, config: Dict[str, Any]) -> Path:
-    """Save an MCP server config to ``~/.flocks/plugins/tools/mcp/{name}.yaml``.
+    """Save an MCP server config to the project plugin tools directory.
 
     Parameters
     ----------
@@ -1129,7 +1159,9 @@ def save_mcp_config(name: str, config: Dict[str, Any]) -> Path:
     Path to the created/updated YAML file.
     """
     filename = _mcp_filename(name)
-    target = _MCP_SUBDIR / f"{filename}.yaml"
+    # 插件输出和执行结果输出修改
+    # target = _MCP_SUBDIR / f"{filename}.yaml"
+    target = _project_tools_root() / TOOL_TYPE_MCP / f"{filename}.yaml"
     data: Dict[str, Any] = {"name": name}
     data.update(config)
     _write_yaml(target, data)
@@ -1138,15 +1170,16 @@ def save_mcp_config(name: str, config: Dict[str, Any]) -> Path:
 
 
 def find_mcp_config(name: str) -> Optional[Path]:
-    """Find an MCP config YAML under ``~/.flocks/plugins/tools/mcp/``."""
-    if not _MCP_SUBDIR.is_dir():
-        return None
+    """Find an MCP config YAML under project/user plugin tool roots."""
     filename = _mcp_filename(name)
-    for variant in (filename, name):
-        for suffix in (".yaml", ".yml"):
-            candidate = _MCP_SUBDIR / f"{variant}{suffix}"
-            if candidate.is_file():
-                return candidate
+    for mcp_dir in _mcp_dirs():
+        if not mcp_dir.is_dir():
+            continue
+        for variant in (filename, name):
+            for suffix in (".yaml", ".yml"):
+                candidate = mcp_dir / f"{variant}{suffix}"
+                if candidate.is_file():
+                    return candidate
     return None
 
 
@@ -1163,25 +1196,31 @@ def delete_mcp_config(name: str) -> bool:
         log.error("tool.mcp_config.delete_failed", {"name": name, "error": str(e)})
         return False
 
-
+# 插件输出和执行结果输出修改
 def list_mcp_configs() -> List[Dict[str, Any]]:
-    """List all MCP server configs under ``~/.flocks/plugins/tools/mcp/``."""
+    """List all MCP server configs under project/user plugin tool roots."""
     results: List[Dict[str, Any]] = []
-    if not _MCP_SUBDIR.is_dir():
-        return results
-    for item in sorted(_MCP_SUBDIR.iterdir()):
-        if not item.is_file() or item.suffix not in (".yaml", ".yml"):
+    seen: set[str] = set()
+    for mcp_dir in _mcp_dirs():
+        if not mcp_dir.is_dir():
             continue
-        if item.name.startswith("_"):
-            continue
-        try:
-            data = _read_yaml_raw(item)
-            results.append({
-                "name": data.get("name", item.stem),
-                "type": data.get("type", "unknown"),
-                "path": str(item),
-                **{k: v for k, v in data.items() if k not in ("name", "type")},
-            })
-        except Exception as e:
-            log.warn("tool.mcp_config.list_error", {"path": str(item), "error": str(e)})
+        for item in sorted(mcp_dir.iterdir()):
+            if not item.is_file() or item.suffix not in (".yaml", ".yml"):
+                continue
+            if item.name.startswith("_"):
+                continue
+            try:
+                data = _read_yaml_raw(item)
+                name = data.get("name", item.stem)
+                if name in seen:
+                    continue
+                seen.add(name)
+                results.append({
+                    "name": name,
+                    "type": data.get("type", "unknown"),
+                    "path": str(item),
+                    **{k: v for k, v in data.items() if k not in ("name", "type")},
+                })
+            except Exception as e:
+                log.warn("tool.mcp_config.list_error", {"path": str(item), "error": str(e)})
     return results

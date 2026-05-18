@@ -14,6 +14,7 @@ Covers:
 from __future__ import annotations
 
 import pytest
+import yaml
 from fastapi import status
 from httpx import AsyncClient
 
@@ -111,6 +112,55 @@ class TestAgentCreate:
         assert get_resp.status_code == status.HTTP_200_OK
         assert get_resp.json()["name"] == "test-agent"
 
+    @pytest.mark.asyncio
+    async def test_create_agent_writes_yaml_and_storage_overlay(self, client: AsyncClient):
+        """POST /api/agent writes mandatory runtime-control fields to YAML and Storage."""
+        from flocks.agent.agent_factory import delete_yaml_agent, find_yaml_agent
+        from flocks.storage.storage import Storage
+
+        name = "agent-runtime-control-create"
+        payload = {
+            **_AGENT_PAYLOAD,
+            "name": name,
+            "tools": ["read", "skill"],
+            "delegatable": True,
+            "skills": ["skill1", "skill2"],
+            "sub_agents": ["agent1", "agent2"],
+        }
+
+        delete_yaml_agent(name)
+        await Storage.remove(f"agent/custom/{name}")
+        try:
+            resp = await client.post("/api/agent", json=payload)
+            assert resp.status_code == status.HTTP_200_OK, resp.text
+            data = resp.json()
+            assert data["delegatable"] is True
+            assert data["sub_agents"] == ["agent1", "agent2"]
+            assert data["tools"] == ["read", "skill"]
+            for tool in ("read", "skill"):
+                assert tool in data["tools"]
+
+            yaml_path = find_yaml_agent(name)
+            assert yaml_path is not None
+            raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+            assert raw["delegatable"] is True
+            assert raw["skills"] == ["skill1", "skill2"]
+            assert raw["sub_agents"] == ["agent1", "agent2"]
+            assert raw["tools"] == ["read", "skill"]
+            for tool in ("read", "skill"):
+                assert tool in raw["tools"]
+
+            overlay = await Storage.read(f"agent/custom/{name}")
+            assert overlay["delegatable"] is True
+            assert overlay["skills"] == ["skill1", "skill2"]
+            assert overlay["sub_agents"] == ["agent1", "agent2"]
+            assert overlay["tools"] == ["read", "skill"]
+            for tool in ("read", "skill"):
+                assert tool in overlay["tools"]
+        finally:
+            delete_yaml_agent(name)
+            await Storage.remove(f"agent/custom/{name}")
+
 
 # ===========================================================================
 # Update
@@ -137,6 +187,60 @@ class TestAgentUpdate:
             json=_AGENT_PAYLOAD,
         )
         assert resp.status_code == status.HTTP_404_NOT_FOUND
+
+    @pytest.mark.asyncio
+    async def test_update_agent_syncs_yaml_and_storage_overlay(self, client: AsyncClient):
+        """PUT /api/agent/{name} keeps YAML and Storage overlay aligned."""
+        from flocks.agent.agent_factory import delete_yaml_agent, find_yaml_agent
+        from flocks.storage.storage import Storage
+
+        name = "agent-runtime-control-update"
+        delete_yaml_agent(name)
+        await Storage.remove(f"agent/custom/{name}")
+        try:
+            create_resp = await client.post("/api/agent", json={**_AGENT_PAYLOAD, "name": name})
+            assert create_resp.status_code == status.HTTP_200_OK, create_resp.text
+
+            resp = await client.put(
+                f"/api/agent/{name}",
+                json={
+                    "description": "Updated controls",
+                    "delegatable": True,
+                    "tools": ["write"],
+                    "skills": ["skill2"],
+                    "sub_agents": ["agent2"],
+                },
+            )
+            assert resp.status_code == status.HTTP_200_OK, resp.text
+            data = resp.json()
+            assert data["delegatable"] is True
+            assert data["skills"] == ["skill2"]
+            assert data["sub_agents"] == ["agent2"]
+            assert data["tools"] == ["write"]
+            for tool in ("write",):
+                assert tool in data["tools"]
+
+            yaml_path = find_yaml_agent(name)
+            assert yaml_path is not None
+            raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+            assert raw["description"] == "Updated controls"
+            assert raw["delegatable"] is True
+            assert raw["skills"] == ["skill2"]
+            assert raw["sub_agents"] == ["agent2"]
+            assert raw["tools"] == ["write"]
+            for tool in ("write",):
+                assert tool in raw["tools"]
+
+            overlay = await Storage.read(f"agent/custom/{name}")
+            assert overlay["delegatable"] is True
+            assert overlay["skills"] == ["skill2"]
+            assert overlay["sub_agents"] == ["agent2"]
+            assert overlay["tools"] == ["write"]
+            for tool in ("write",):
+                assert tool in overlay["tools"]
+        finally:
+            delete_yaml_agent(name)
+            await Storage.remove(f"agent/custom/{name}")
 
 
 # ===========================================================================

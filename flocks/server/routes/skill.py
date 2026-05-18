@@ -9,7 +9,7 @@ import os
 import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from flocks.skill.skill import Skill, SkillInfo
@@ -23,6 +23,14 @@ def _user_skills_root() -> Path:
     """Return the canonical user-level skills directory (~/.flocks/plugins/skills/)."""
     return Path.home() / ".flocks" / "plugins" / "skills"
 
+# skill输出到项目级目录下新增
+def _project_skills_root() -> Path:
+    """Return the project-level skills directory used for created skills."""
+    from flocks.project.instance import Instance
+
+    project_dir = Instance.get_directory() or os.getcwd()
+    return Path(project_dir) / ".flocks" / "plugins" / "skills"
+
 
 def _is_user_managed_skill(skill: SkillInfo) -> bool:
     """Return True if this skill lives under the user-managed skills root.
@@ -32,7 +40,12 @@ def _is_user_managed_skill(skill: SkillInfo) -> bool:
     or other system locations are read-only from the API's perspective.
     """
     try:
-        return Path(skill.location).is_relative_to(_user_skills_root())
+        location = Path(skill.location)
+        # skill输出到项目级目录下修改
+        location = Path(skill.location)
+        return location.is_relative_to(_project_skills_root()) or location.is_relative_to(
+            _user_skills_root()
+        )
     except ValueError:
         return False
 
@@ -50,6 +63,55 @@ async def _refresh_agents_for_skill_change() -> None:
         log.info("skills.agents_cache_invalidated")
     except Exception as e:
         log.warning("skills.agents_refresh_failed", {"error": str(e)})
+
+
+def _infer_skill_name_from_source(source: str) -> str:
+    """Best-effort target skill name extraction for permission checks."""
+    raw = (source or "").strip().rstrip("/\\")
+    if not raw:
+        return ""
+    if ":" in raw and not raw.lower().startswith(("http://", "https://")):
+        raw = raw.rsplit(":", 1)[-1]
+    raw = raw.rstrip("/\\")
+    base = os.path.basename(raw) or raw
+    if base.upper() == "SKILL.MD":
+        parent = os.path.basename(os.path.dirname(raw))
+        if parent:
+            base = parent
+    return base.strip()
+
+
+async def _agent_allowed_skill_or_403(agent: Optional[str], skill_name: str) -> None:
+    if not agent:
+        return
+    from flocks.agent.controls import agent_allowed_skills, agent_allows_skill
+
+    if await agent_allows_skill(agent, skill_name):
+        return
+    allowed = await agent_allowed_skills(agent)
+    allowed_text = ", ".join(allowed) or "none"
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=(
+            f'Agent "{agent}" is not allowed to manage skill "{skill_name}". '
+            f"Allowed skills: {allowed_text}"
+        ),
+    )
+
+
+async def _filter_skills_for_agent(
+    skills: List[SkillInfo],
+    agent: Optional[str],
+) -> List[SkillInfo]:
+    if not agent:
+        return skills
+    from flocks.agent.controls import filter_agent_skills
+    from flocks.agent.registry import Agent
+
+    agent_info = await Agent.get(agent)
+    if not agent_info:
+        return skills
+    return filter_agent_skills(agent_info, skills)
 
 
 # =============================================================================
@@ -109,9 +171,10 @@ class SkillInstallRequest(BaseModel):
             "  <owner>/<repo>         – shorthand for GitHub"
         ),
     )
+    # skill输出到项目级目录下修改
     scope: str = Field(
-        default="global",
-        description="'global' (default, ~/.flocks/plugins/skills/) or 'project' (.flocks/plugins/skills/)",
+        default="project",
+        description="Install scope. Skills are always installed to project .flocks/plugins/skills/.",
     )
 
 
@@ -237,14 +300,14 @@ def _skill_to_response(skill: SkillInfo, include_content: bool = False) -> Skill
 # =============================================================================
 
 @router.get("/skills", response_model=List[SkillResponse])
-async def list_skills():
+async def list_skills(agent: Optional[str] = Query(None)):
     """
     Get skill list
 
     Returns list of all discovered skills from SKILL.md files.
     """
     try:
-        skills = await Skill.all()
+        skills = await _filter_skills_for_agent(await Skill.all(), agent)
         result = [_skill_to_response(skill) for skill in skills]
         log.info("skills.list", {"count": len(result)})
         return result
@@ -254,7 +317,7 @@ async def list_skills():
 
 
 @router.get("/skills/status", response_model=List[SkillResponse])
-async def skill_status():
+async def skill_status(agent: Optional[str] = Query(None)):
     """
     Get skill status with eligibility information
 
@@ -262,7 +325,7 @@ async def skill_status():
     on runtime dependency checks (bins in PATH, env vars set).
     """
     try:
-        skills = await Skill.all()
+        skills = await _filter_skills_for_agent(await Skill.all(), agent)
         result = []
         for skill in skills:
             checked = Skill.check_eligibility(skill)
@@ -296,7 +359,7 @@ async def refresh_skills():
 
 
 @router.post("/skills/install", response_model=SkillInstallResponse, status_code=status.HTTP_200_OK)
-async def install_skill(req: SkillInstallRequest):
+async def install_skill(req: SkillInstallRequest, agent: Optional[str] = Query(None)):
     """
     Install a skill from an external source
 
@@ -308,12 +371,16 @@ async def install_skill(req: SkillInstallRequest):
     - `safeskill:<name>` — SafeSkill registry (reserved, future)
     """
     try:
+        inferred_name = _infer_skill_name_from_source(req.source)
+        if inferred_name:
+            await _agent_allowed_skill_or_403(agent, inferred_name)
         result = await SkillInstaller.install_from_source(req.source, scope=req.scope)
         if not result.success:
             raise HTTPException(
                 status_code=422,
                 detail=result.error or "Install failed",
             )
+        await _agent_allowed_skill_or_403(agent, result.skill_name)
         await _refresh_agents_for_skill_change()
         log.info("skill.install.api.ok", {"source": req.source, "name": result.skill_name})
         return SkillInstallResponse(
@@ -330,13 +397,14 @@ async def install_skill(req: SkillInstallRequest):
 
 
 @router.get("/skills/{name}", response_model=SkillResponse)
-async def get_skill(name: str):
+async def get_skill(name: str, agent: Optional[str] = Query(None)):
     """
     Get skill details
 
     Returns skill information including full SKILL.md content.
     """
     try:
+        await _agent_allowed_skill_or_403(agent, name)
         skill = await Skill.get(name)
         if not skill:
             raise HTTPException(status_code=404, detail=f"Skill not found: {name}")
@@ -351,7 +419,11 @@ async def get_skill(name: str):
 
 
 @router.post("/skills/{name}/install-deps", response_model=DepInstallResponse)
-async def install_skill_deps(name: str, req: DepInstallRequest):
+async def install_skill_deps(
+    name: str,
+    req: DepInstallRequest,
+    agent: Optional[str] = Query(None),
+):
     """
     Install a skill's tool dependencies
 
@@ -359,6 +431,7 @@ async def install_skill_deps(name: str, req: DepInstallRequest):
     (brew, npm, uv, pip, go).  Returns per-spec results.
     """
     try:
+        await _agent_allowed_skill_or_403(agent, name)
         results = await SkillInstaller.install_deps(
             name,
             install_id=req.install_id,
@@ -378,21 +451,26 @@ async def install_skill_deps(name: str, req: DepInstallRequest):
         ]
         log.info("skill.install_deps.api.ok", {"name": name, "count": len(dep_results)})
         return DepInstallResponse(results=dep_results)
+    except HTTPException:
+        raise
     except Exception as e:
         log.error("skill.install_deps.api.error", {"name": name, "error": str(e)})
         raise HTTPException(status_code=500, detail=f"Failed to install deps: {str(e)}")
 
 
 @router.post("/skills", response_model=SkillResponse, status_code=status.HTTP_201_CREATED)
-async def create_skill(req: SkillCreateRequest):
+async def create_skill(req: SkillCreateRequest, agent: Optional[str] = Query(None)):
     """
     Create a new skill
 
-    Creates a new SKILL.md file in the user's skill directory
-    (~/.flocks/plugins/skills/<name>/SKILL.md).
+    Creates a new SKILL.md file in the project skill directory
+    (<project>/.flocks/plugins/skills/<name>/SKILL.md).
     """
     try:
-        skill_dir = _user_skills_root() / req.name
+        await _agent_allowed_skill_or_403(agent, req.name)
+        skill_dir = _project_skills_root() / req.name
+        # skill输出到项目级目录下新增
+        skill_dir = _project_skills_root() / req.name
         skill_dir.mkdir(parents=True, exist_ok=True)
 
         skill_path = skill_dir / "SKILL.md"
@@ -411,7 +489,8 @@ async def create_skill(req: SkillCreateRequest):
             name=req.name,
             description=req.description,
             location=str(skill_path),
-            source="user",
+            # skill输出到项目级目录下修改
+            source="project",
             content=full_content,
         )
     except HTTPException:
@@ -422,7 +501,11 @@ async def create_skill(req: SkillCreateRequest):
 
 
 @router.put("/skills/{name}", response_model=SkillResponse)
-async def update_skill(name: str, req: SkillCreateRequest):
+async def update_skill(
+    name: str,
+    req: SkillCreateRequest,
+    agent: Optional[str] = Query(None),
+):
     """
     Update a skill.
 
@@ -431,6 +514,8 @@ async def update_skill(name: str, req: SkillCreateRequest):
     writes file, removes old directory.
     """
     try:
+        await _agent_allowed_skill_or_403(agent, name)
+        await _agent_allowed_skill_or_403(agent, req.name)
         skill = await Skill.get(name)
         if not skill:
             raise HTTPException(status_code=404, detail=f"Skill not found: {name}")
@@ -443,9 +528,12 @@ async def update_skill(name: str, req: SkillCreateRequest):
             if skill.source == 'project':
                 raise HTTPException(
                     status_code=400,
-                    detail="Built-in project skills (.flocks/plugins/skills/) cannot be renamed",
+                    # # skill输出到项目级目录下修改
+                    detail="Project skills (.flocks/plugins/skills/) can be updated in place but not renamed",
                 )
-            new_dir = _user_skills_root() / req.name
+            # # skill输出到项目级目录下修改
+            new_dir = _project_skills_root() / req.name
+            new_dir = _project_skills_root() / req.name
             new_path = new_dir / "SKILL.md"
             new_dir.mkdir(parents=True, exist_ok=True)
             new_path.write_text(full_content, encoding="utf-8")
@@ -487,7 +575,7 @@ async def update_skill(name: str, req: SkillCreateRequest):
 
 
 @router.delete("/skills/{name}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_skill(name: str):
+async def delete_skill(name: str, agent: Optional[str] = Query(None)):
     """
     Delete a skill
 
@@ -495,6 +583,7 @@ async def delete_skill(name: str):
     (~/.flocks/plugins/skills/) can be deleted via the API.
     """
     try:
+        await _agent_allowed_skill_or_403(agent, name)
         skill = await Skill.get(name)
         if not skill:
             raise HTTPException(status_code=404, detail=f"Skill not found: {name}")

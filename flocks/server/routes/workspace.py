@@ -50,7 +50,10 @@ from pydantic import BaseModel
 from flocks.workspace.manager import WorkspaceManager
 from flocks.workspace.models import WorkspaceNode, WorkspaceStats
 from flocks.utils.log import Log
-
+# 记忆按账号隔离新增
+from flocks.auth.context import get_current_auth_user
+from flocks.memory.manager import _safe_scope_segment
+# -----------end-------------------
 router = APIRouter()
 log = Log.create(service="workspace.routes")
 
@@ -478,25 +481,91 @@ def _list_memory_sync(memory_dir: Path) -> List[WorkspaceNode]:
             ))
     return nodes
 
+# 记忆按账号隔离新增
+def _current_memory_base(mgr: WorkspaceManager) -> Path:
+    memory_dir = mgr.get_memory_dir()
+    user = get_current_auth_user()
+    if user and user.role != "admin":
+        return memory_dir / "users" / _safe_scope_segment(user.id)
+    return memory_dir
+
+
+def _resolve_visible_memory_path(mgr: WorkspaceManager, path: str) -> Path:
+    user = get_current_auth_user()
+    if user and user.role != "admin":
+        scoped = _safe_scope_segment(user.id)
+        normalized = path.replace("\\", "/").lstrip("/")
+        own_prefix = f"users/{scoped}/"
+        if normalized.startswith("users/") and not normalized.startswith(own_prefix):
+            raise PermissionError("Memory path belongs to a different account scope")
+        if normalized.startswith(own_prefix):
+            return mgr.resolve_memory_path(normalized)
+        return mgr.resolve_memory_path(f"{own_prefix}{normalized}")
+    return mgr.resolve_memory_path(path)
+
+# ----------------------end-------------------------
+
+def _current_memory_base(mgr: WorkspaceManager) -> Path:
+    memory_dir = mgr.get_memory_dir()
+    user = get_current_auth_user()
+    if user and user.role != "admin":
+        return memory_dir / "users" / _safe_scope_segment(user.id)
+    return memory_dir
+
+
+def _resolve_visible_memory_path(mgr: WorkspaceManager, path: str) -> Path:
+    user = get_current_auth_user()
+    if user and user.role != "admin":
+        scoped = _safe_scope_segment(user.id)
+        normalized = path.replace("\\", "/").lstrip("/")
+        own_prefix = f"users/{scoped}/"
+        if normalized.startswith("users/") and not normalized.startswith(own_prefix):
+            raise PermissionError("Memory path belongs to a different account scope")
+        if normalized.startswith(own_prefix):
+            return mgr.resolve_memory_path(normalized)
+        return mgr.resolve_memory_path(f"{own_prefix}{normalized}")
+    return mgr.resolve_memory_path(path)
+
 
 @router.get("/memory/list", response_model=List[WorkspaceNode], summary="List memory files")
 async def list_memory():
     mgr = _get_manager()
+    # 记忆按账号隔离修改
+    # 删除
+    '''
     memory_dir = mgr.get_memory_dir()
     if not memory_dir.exists():
         return []
     return await asyncio.to_thread(_list_memory_sync, memory_dir)
-
+    '''
+    # 新增
+    memory_dir = _current_memory_base(mgr)
+    if not memory_dir.exists():
+        return []
+    return await asyncio.to_thread(_list_memory_sync, memory_dir)
+    # -------------end-------------------------
 
 @router.get("/memory/file", summary="Read memory file content")
 async def read_memory_file(
     path: str = Query(..., description="Relative path inside memory directory"),
 ):
     mgr = _get_manager()
+    # 记忆按账号隔离修改
+    # 删除
+    '''
     try:
         target = mgr.resolve_memory_path(path)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    '''
+    # 新增
+    try:
+        target = _resolve_visible_memory_path(mgr, path)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    # ------------end-------------------------
     if not target.exists():
         raise HTTPException(status_code=404, detail=f"Memory file not found: {path}")
     if not target.is_file():
@@ -514,7 +583,9 @@ async def read_memory_file(
 async def get_stats():
     mgr = _get_manager()
     ws_dir = mgr.get_workspace_dir()
-    mem_dir = mgr.get_memory_dir()
+    # 记忆按账号隔离修改
+    # mem_dir = mgr.get_memory_dir()
+    mem_dir = _current_memory_base(mgr)
 
     fc, dc, ts = await asyncio.to_thread(_dir_stats_sync, ws_dir) if ws_dir.exists() else (0, 0, 0)
     mfc, _, mts = await asyncio.to_thread(_dir_stats_sync, mem_dir) if mem_dir.exists() else (0, 0, 0)

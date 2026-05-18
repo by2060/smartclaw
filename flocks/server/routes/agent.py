@@ -29,7 +29,14 @@ from pydantic import BaseModel, Field
 
 from flocks.agent.registry import Agent
 from flocks.agent.agent import AgentInfo as AgentInfoModel, AgentModel as AgentModelConfig
-from flocks.agent.agent_factory import find_yaml_agent, read_yaml_agent, update_yaml_agent, delete_yaml_agent
+from flocks.agent.agent_factory import (
+    create_yaml_agent,
+    find_yaml_agent,
+    load_agent,
+    read_yaml_agent,
+    update_yaml_agent,
+    delete_yaml_agent,
+)
 from flocks.utils.log import Log
 
 router = APIRouter()
@@ -45,6 +52,37 @@ def _get_overrides_lock() -> asyncio.Lock:
     if _model_overrides_lock is None:
         _model_overrides_lock = asyncio.Lock()
     return _model_overrides_lock
+
+
+def _dedupe_strings(values: Optional[List[str]]) -> List[str]:
+    result: List[str] = []
+    seen = set()
+    for value in values or []:
+        item = str(value).strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
+
+
+def _agent_overlay(
+    *,
+    delegatable: Optional[bool] = None,
+    skills: Optional[List[str]] = None,
+    tools: Optional[List[str]] = None,
+    sub_agents: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    overlay: Dict[str, Any] = {}
+    if delegatable is not None:
+        overlay["delegatable"] = delegatable
+    if skills is not None:
+        overlay["skills"] = _dedupe_strings(skills)
+    if tools is not None:
+        overlay["tools"] = _dedupe_strings(tools)
+    if sub_agents is not None:
+        overlay["sub_agents"] = _dedupe_strings(sub_agents)
+    return overlay
 
 
 class AgentModelInfo(BaseModel):
@@ -76,6 +114,7 @@ class AgentResponse(BaseModel):
     steps: Optional[int] = None
     skills: List[str] = Field(default_factory=list)
     tools: List[str] = Field(default_factory=list)
+    sub_agents: List[str] = Field(default_factory=list)
     tags: List[str] = Field(default_factory=list)
 
 
@@ -89,9 +128,14 @@ def agent_to_response(
     temperature_override: Optional[float] = None,
     skills: Optional[List[str]] = None,
     tools: Optional[List[str]] = None,
+    sub_agents: Optional[List[str]] = None,
+    delegatable_override: Optional[bool] = None,
 ) -> AgentResponse:
     """Convert internal AgentInfo to API response format."""
-    delegatable = agent.delegatable if agent.delegatable is not None else True
+    if delegatable_override is not None:
+        delegatable = delegatable_override
+    else:
+        delegatable = agent.delegatable if agent.delegatable is not None else True
 
     if model_override:
         model_info = AgentModelInfo(
@@ -122,8 +166,9 @@ def agent_to_response(
         options=agent.options,
         delegatable=delegatable,
         steps=agent.steps,
-        skills=skills or [],
-        tools=tools or [],
+        skills=skills if skills is not None else (getattr(agent, "skills", None) or []),
+        tools=tools if tools is not None else (agent.tools or []),
+        sub_agents=sub_agents if sub_agents is not None else (getattr(agent, "sub_agents", None) or []),
         tags=agent.tags,
     )
 
@@ -148,6 +193,10 @@ def _agent_data_to_info(agent_data: Dict[str, Any]) -> AgentInfoModel:
         ) if model_data else None,
         native=False,
         hidden=False,
+        tools=agent_data.get("tools", []),
+        skills=agent_data.get("skills") if "skills" in agent_data else None,
+        sub_agents=agent_data.get("sub_agents") if "sub_agents" in agent_data else None,
+        delegatable=agent_data.get("delegatable"),
     )
 
 
@@ -170,7 +219,9 @@ def _custom_agent_data_to_response(agent_data: Dict[str, Any]) -> AgentResponse:
         options={},
         skills=agent_data.get("skills", []),
         tools=agent_data.get("tools", []),
+        sub_agents=agent_data.get("sub_agents", []),
         tags=agent_data.get("tags", []),
+        delegatable=agent_data.get("delegatable", True),
     )
 
 
@@ -184,20 +235,19 @@ async def _load_model_overrides() -> Dict[str, Dict[str, Any]]:
         return {}
 
 
-async def _load_custom_agent_extras(name: str) -> tuple[List[str], List[str]]:
-    """Load skills/tools list for an agent from storage.
+async def _load_agent_overlay(name: str) -> Dict[str, Any]:
+    """Load the agent Storage overlay, if present.
 
-    Works for both full Storage-based custom agents and YAML agents with
-    a skills/tools overlay (written by the YAML update path).
+    Works for both full Storage-based custom agents and YAML agents with an
+    overlay. For YAML agents, the overlay mirrors runtime-control fields from
+    agent.yaml so API reads and cached runtime state stay in sync.
     """
     from flocks.storage.storage import Storage
     try:
         data = await Storage.read(f"agent/custom/{name}")
-        if not isinstance(data, dict):
-            return [], []
-        return data.get("skills", []), data.get("tools", [])
+        return data if isinstance(data, dict) else {}
     except Exception:
-        return [], []
+        return {}
 
 
 def _get_all_tool_names() -> List[str]:
@@ -221,11 +271,15 @@ async def _build_single_agent_response(
     all_tool_names: List[str],
 ) -> AgentResponse:
     """Build AgentResponse for one agent, resolving model overrides and tools/skills."""
+    overlay = await _load_agent_overlay(agent.name)
     if agent.native:
-        tools = _compute_native_agent_tools(agent, all_tool_names)
-        skills: List[str] = []
+        tools = overlay.get("tools") if "tools" in overlay else _compute_native_agent_tools(agent, all_tool_names)
+        skills = overlay.get("skills") if "skills" in overlay else getattr(agent, "skills", [])
     else:
-        skills, tools = await _load_custom_agent_extras(agent.name)
+        skills = overlay.get("skills", getattr(agent, "skills", []))
+        tools = overlay.get("tools", agent.tools or [])
+    sub_agents = overlay.get("sub_agents") if "sub_agents" in overlay else getattr(agent, "sub_agents", [])
+    delegatable = overlay.get("delegatable") if "delegatable" in overlay else None
     override = overrides.get(agent.name, {})
     model_override = {k: override[k] for k in ("modelID", "providerID") if k in override} or None
     temperature_override = override.get("temperature")
@@ -235,6 +289,8 @@ async def _build_single_agent_response(
         temperature_override=temperature_override,
         skills=skills,
         tools=tools,
+        sub_agents=sub_agents,
+        delegatable_override=delegatable,
     )
 
 
@@ -321,8 +377,10 @@ class AgentCreateRequest(BaseModel):
     color: Optional[str] = Field(None, description="Color")
     mode: str = Field("primary", description="Agent mode")
     model: Optional[AgentModelInfo] = Field(None, description="Preferred model")
-    skills: List[str] = Field(default_factory=list, description="Enabled skill names")
+    delegatable: bool = Field(False, description="Whether this agent can be delegated to")
+    skills: Optional[List[str]] = Field(None, description="Enabled skill names")
     tools: List[str] = Field(default_factory=list, description="Enabled tool names")
+    sub_agents: Optional[List[str]] = Field(None, description="Allowed L1 execution agent names")
 
 
 class AgentUpdateRequest(BaseModel):
@@ -333,8 +391,10 @@ class AgentUpdateRequest(BaseModel):
     temperature: Optional[float] = Field(None, description="Temperature")
     color: Optional[str] = Field(None, description="Color")
     model: Optional[AgentModelInfo] = Field(None, description="Preferred model")
+    delegatable: Optional[bool] = Field(None, description="Whether this agent can be delegated to")
     skills: Optional[List[str]] = Field(None, description="Enabled skill names")
     tools: Optional[List[str]] = Field(None, description="Enabled tool names")
+    sub_agents: Optional[List[str]] = Field(None, description="Allowed L1 execution agent names")
 
 
 class AgentModelUpdateRequest(BaseModel):
@@ -348,35 +408,56 @@ async def create_agent(req: AgentCreateRequest):
     """
     Create a custom agent
 
-    Saves custom agent configuration to storage.
+    Saves custom agent configuration as a project-level YAML plugin agent.
     """
-    from flocks.storage.storage import Storage
-
     try:
         existing = await Agent.get(req.name)
         if existing:
             raise HTTPException(status_code=409, detail=f"Agent {req.name} already exists")
 
+        overlay = _agent_overlay(
+            delegatable=req.delegatable,
+            skills=req.skills,
+            tools=req.tools,
+            sub_agents=req.sub_agents,
+        )
         agent_data: Dict[str, Any] = {
             "name": req.name,
             "description": req.description,
             "description_cn": req.descriptionCn,
-            "prompt": req.prompt,
             "temperature": req.temperature,
             "color": req.color,
             "mode": req.mode,
-            "model": req.model.model_dump() if req.model else None,
-            "native": False,
+            "model": (
+                {"provider_id": req.model.providerID, "model_id": req.model.modelID}
+                if req.model
+                else None
+            ),
             "hidden": False,
-            "skills": req.skills,
-            "tools": req.tools,
+            **overlay,
         }
-        await Storage.write(f"agent/custom/{req.name}", agent_data)
+        yaml_path = create_yaml_agent(agent_data, prompt=req.prompt)
+        from flocks.storage.storage import Storage
+        await Storage.write(f"agent/custom/{req.name}", overlay)
         from flocks.agent.registry import Agent as AgentRegistry
-        AgentRegistry.register(req.name, _agent_data_to_info(agent_data))
+
+        loaded_agent = load_agent(yaml_path.parent, native=True)
+        if loaded_agent is None:
+            loaded_agent = _agent_data_to_info({
+                **agent_data,
+                "prompt": req.prompt,
+                "native": True,
+                "model": req.model.model_dump() if req.model else None,
+            })
+        AgentRegistry.register(req.name, loaded_agent)
         AgentRegistry.invalidate_cache()
-        log.info("agent.created", {"name": req.name})
-        return _custom_agent_data_to_response(agent_data)
+        log.info("agent.created", {"name": req.name, "path": str(yaml_path)})
+        return agent_to_response(
+            loaded_agent,
+            skills=overlay.get("skills"),
+            tools=overlay.get("tools"),
+            sub_agents=overlay.get("sub_agents"),
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -416,10 +497,19 @@ async def update_agent(name: str, req: AgentUpdateRequest):
                 agent_data["color"] = req.color
             if req.model is not None:
                 agent_data["model"] = req.model.model_dump()
-            if req.skills is not None:
-                agent_data["skills"] = req.skills
-            if req.tools is not None:
-                agent_data["tools"] = req.tools
+            overlay = _agent_overlay(
+                delegatable=req.delegatable if req.delegatable is not None else agent_data.get("delegatable"),
+                skills=(
+                    req.skills if req.skills is not None
+                    else agent_data.get("skills") if "skills" in agent_data else None
+                ),
+                tools=req.tools if req.tools is not None else agent_data.get("tools", []),
+                sub_agents=(
+                    req.sub_agents if req.sub_agents is not None
+                    else agent_data.get("sub_agents") if "sub_agents" in agent_data else None
+                ),
+            )
+            agent_data.update(overlay)
 
             await Storage.write(agent_key, agent_data)
 
@@ -432,6 +522,7 @@ async def update_agent(name: str, req: AgentUpdateRequest):
 
         # --- Fall back to YAML plugin agent ---
         if find_yaml_agent(name) is not None:
+            yaml_data = read_yaml_agent(name) or {}
             updates: Dict[str, Any] = {}
             if req.description is not None:
                 updates["description"] = req.description
@@ -445,20 +536,30 @@ async def update_agent(name: str, req: AgentUpdateRequest):
                 updates["color"] = req.color
             if req.model is not None:
                 updates["model"] = req.model.model_dump()
+            updates.update(_agent_overlay(
+                delegatable=req.delegatable if req.delegatable is not None else yaml_data.get("delegatable"),
+                skills=(
+                    req.skills if req.skills is not None
+                    else yaml_data.get("skills") if "skills" in yaml_data else None
+                ),
+                tools=req.tools if req.tools is not None else yaml_data.get("tools", []),
+                sub_agents=(
+                    req.sub_agents if req.sub_agents is not None
+                    else yaml_data.get("sub_agents") if "sub_agents" in yaml_data else None
+                ),
+            ))
 
             if not update_yaml_agent(name, updates):
                 raise HTTPException(status_code=500, detail=f"Failed to write YAML for agent {name}")
 
-            # Persist skills/tools overlay for YAML agents in Storage.
-            # The entry intentionally omits "name" so it is not mistaken
-            # for a full Storage-based custom agent on subsequent updates.
-            if req.skills is not None or req.tools is not None:
-                extras: Dict[str, Any] = agent_data if isinstance(agent_data, dict) else {}
-                if req.skills is not None:
-                    extras["skills"] = req.skills
-                if req.tools is not None:
-                    extras["tools"] = req.tools
-                await Storage.write(agent_key, extras)
+            # Persist the runtime-control overlay for YAML agents in Storage.
+            # The entry intentionally omits "name" so it is not mistaken for a
+            # full Storage-based custom agent on subsequent updates.
+            extras: Dict[str, Any] = agent_data if isinstance(agent_data, dict) else {}
+            for key in ("delegatable", "skills", "tools", "sub_agents"):
+                if key in updates:
+                    extras[key] = updates[key]
+            await Storage.write(agent_key, extras)
 
             # Sync: apply updates to the in-memory AgentInfo cache
             agent = await Agent.get(name)
@@ -478,11 +579,19 @@ async def update_agent(name: str, req: AgentUpdateRequest):
                         model_id=req.model.modelID,
                         provider_id=req.model.providerID,
                     )
+                if "delegatable" in updates:
+                    agent.delegatable = updates["delegatable"]
+                if "skills" in updates:
+                    agent.skills = updates["skills"]
+                if "tools" in updates:
+                    agent.tools = updates["tools"]
+                if "sub_agents" in updates:
+                    agent.sub_agents = updates["sub_agents"]
                 overrides = await _load_model_overrides()
                 all_tool_names = _get_all_tool_names()
                 return await _build_single_agent_response(agent, overrides, all_tool_names)
-            yaml_data = read_yaml_agent(name) or {}
-            return _custom_agent_data_to_response(yaml_data)
+            updated_yaml_data = read_yaml_agent(name) or {}
+            return _custom_agent_data_to_response(updated_yaml_data)
 
         raise HTTPException(status_code=404, detail=f"Custom agent {name} not found")
     except HTTPException:

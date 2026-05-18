@@ -53,6 +53,57 @@ class TestSessionCRUD:
         assert resp.json()["category"] == "workflow"
 
     @pytest.mark.asyncio
+    async def test_create_session_stores_user_context(self, client: AsyncClient):
+        """userContext drives account-scoped memory and knowledge-base scope."""
+        resp = await client.post(
+            "/api/session",
+            json={
+                "title": "User context",
+                "userContext": {
+                    "currentUserId": "acct_123",
+                    "knowledgeBaseIds": ["kb_a", "kb_b"],
+                },
+            },
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        data = resp.json()
+        assert data["userContext"] == {
+            "currentUserId": "acct_123",
+            "knowledgeBaseIds": ["kb_a", "kb_b"],
+        }
+
+        session = await Session.get_by_id(data["id"])
+        assert session is not None
+        assert session.user_context["currentUserId"] == "acct_123"
+        assert session.user_context["knowledgeBaseIds"] == ["kb_a", "kb_b"]
+
+    @pytest.mark.asyncio
+    async def test_child_session_inherits_user_context(self, client: AsyncClient):
+        """Child sessions keep the parent's userContext unless explicitly replaced."""
+        parent_resp = await client.post(
+            "/api/session",
+            json={
+                "title": "Parent context",
+                "userContext": {
+                    "currentUserId": "acct_parent",
+                    "knowledgeBaseIds": ["kb_parent"],
+                },
+            },
+        )
+        assert parent_resp.status_code == status.HTTP_200_OK
+        parent_id = parent_resp.json()["id"]
+
+        child_resp = await client.post(
+            "/api/session",
+            json={"title": "Child context", "parentID": parent_id},
+        )
+        assert child_resp.status_code == status.HTTP_200_OK
+        assert child_resp.json()["userContext"] == {
+            "currentUserId": "acct_parent",
+            "knowledgeBaseIds": ["kb_parent"],
+        }
+
+    @pytest.mark.asyncio
     async def test_list_sessions_empty(self, client: AsyncClient):
         """GET /api/session returns an empty list when no sessions exist."""
         resp = await client.get("/api/session")

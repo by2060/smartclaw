@@ -21,6 +21,7 @@ declared in agent.yaml.
 from __future__ import annotations
 
 import importlib
+import os
 import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -28,6 +29,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import yaml
 
 from flocks.agent.agent import AgentInfo, AgentModel, AgentPromptMetadata, DelegationTrigger
+from flocks.agent.controls import filter_agent_skills, filter_agent_subagents, filter_agent_tools
 from flocks.agent.toolset import resolve_agent_initial_tools
 from flocks.utils.log import Log
 
@@ -156,6 +158,9 @@ def load_agent(agent_dir: Path, native: bool = False) -> Optional[AgentInfo]:
         prompt=prompt,
         prompt_builder=prompt_builder,
         tools=tools_list,
+        # 权限控制新增
+        skills=raw.get("skills") if "skills" in raw else None,
+        sub_agents=raw.get("sub_agents") if "sub_agents" in raw else None,
         options=raw.get("options", {}),
         steps=raw.get("steps"),
         delegatable=raw.get("delegatable"),
@@ -273,7 +278,14 @@ def inject_dynamic_prompts(
             module_path, func_name = agent.prompt_builder.rsplit(":", 1)
             module = importlib.import_module(module_path)
             inject_fn = getattr(module, func_name)
-            inject_fn(agent, available_agents, tools, skills, categories, workflows or [])
+            inject_fn(
+                agent,
+                filter_agent_subagents(agent, available_agents),
+                filter_agent_tools(agent, tools),
+                filter_agent_skills(agent, skills),
+                categories,
+                workflows or [],
+            )
             log.debug("agent.factory.prompt_injected", {"name": name})
         except Exception as e:
             log.error("agent.factory.prompt_inject_error", {
@@ -286,18 +298,30 @@ def inject_dynamic_prompts(
 # ---------------------------------------------------------------------------
 # YAML CRUD helpers (for plugin agents via API routes)
 # ---------------------------------------------------------------------------
-
+# 插件agents查找路径修改
 def _find_yaml_file(name: str) -> Optional[Path]:
     """Find the YAML source file for a plugin agent by name."""
-    for suffix in (".yaml", ".yml"):
-        candidate = _PLUGIN_AGENTS_DIR / name / f"agent{suffix}"
-        if candidate.is_file():
-            return candidate
-        # Legacy: flat file layout (name.yaml)
-        flat = _PLUGIN_AGENTS_DIR / f"{name}{suffix}"
-        if flat.is_file():
-            return flat
+    project_agents_dir = _project_agents_dir()
+    search_dirs = [project_agents_dir]
+    if _PLUGIN_AGENTS_DIR != project_agents_dir:
+        search_dirs.append(_PLUGIN_AGENTS_DIR)
+    for agents_dir in search_dirs:
+        for suffix in (".yaml", ".yml"):
+            candidate = agents_dir / name / f"agent{suffix}"
+            if candidate.is_file():
+                return candidate
+            # Legacy: flat file layout (name.yaml)
+            flat = agents_dir / f"{name}{suffix}"
+            if flat.is_file():
+                return flat
     return None
+
+# 插件agents查找路径新增
+def _project_agents_dir() -> Path:
+    from flocks.project.instance import Instance
+
+    project_dir = Instance.get_directory() or os.getcwd()
+    return Path(project_dir) / ".flocks" / "plugins" / "agents"
 
 
 def _read_yaml_raw(yaml_path: Path) -> Dict[str, Any]:
@@ -308,6 +332,27 @@ def _write_yaml(yaml_path: Path, data: Dict[str, Any]) -> None:
     yaml_path.parent.mkdir(parents=True, exist_ok=True)
     content = yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False)
     yaml_path.write_text(content, encoding="utf-8")
+
+# 插件agents查找路径新增
+def create_yaml_agent(data: Dict[str, Any], prompt: Optional[str] = None) -> Path:
+    """Create a project-level YAML plugin agent."""
+    name = data.get("name")
+    if not name:
+        raise ValueError("Agent data missing required 'name' field")
+    if _find_yaml_file(name):
+        raise ValueError(f"Agent '{name}' already exists")
+
+    agent_dir = _project_agents_dir() / name
+    yaml_path = agent_dir / "agent.yaml"
+    data = dict(data)
+    if prompt is not None:
+        data["prompt_file"] = "prompt.md"
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        (agent_dir / "prompt.md").write_text(prompt, encoding="utf-8")
+        data.pop("prompt", None)
+    _write_yaml(yaml_path, data)
+    log.info("agent.factory.yaml_created", {"name": name, "path": str(yaml_path)})
+    return yaml_path
 
 
 def yaml_to_agent_info(raw: dict, yaml_path: Path) -> AgentInfo:
@@ -358,6 +403,9 @@ def yaml_to_agent_info(raw: dict, yaml_path: Path) -> AgentInfo:
         color=raw.get("color"),
         permission=legacy_permission,
         tools=tools_list,
+        # skill和sub_agents权限控制新增
+        skills=raw.get("skills") if "skills" in raw else None,
+        sub_agents=raw.get("sub_agents") if "sub_agents" in raw else None,
         model=model,
         prompt=prompt,
         prompt_builder=raw.get("prompt_builder"),

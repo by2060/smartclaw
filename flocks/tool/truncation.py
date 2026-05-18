@@ -34,14 +34,18 @@ MAX_TOOL_RESULT_CONTEXT_SHARE = 0.3
 HARD_MAX_TOOL_RESULT_CHARS = 100_000
 MIN_KEEP_CHARS = 1_000
 
-_OUTPUT_DIR: Optional[Path] = None
+# 输出按会话隔离
+# _OUTPUT_DIR: Optional[Path] = None
+_OUTPUT_DIRS: dict[str, Path] = {}
 
 # Cleanup: keep files for at most 4 hours
 _CLEANUP_MAX_AGE_SECS = 4 * 3600
 _CLEANUP_INTERVAL_SECS = 600  # run at most once per 10 min
 _last_cleanup_ts: float = 0.0
 
-
+# 输出按会话隔离
+# 删除
+'''
 def _ensure_output_dir() -> Path:
     global _OUTPUT_DIR
     if _OUTPUT_DIR is None:
@@ -49,7 +53,16 @@ def _ensure_output_dir() -> Path:
         base.mkdir(parents=True, exist_ok=True)
         _OUTPUT_DIR = base
     return _OUTPUT_DIR
-
+'''
+# 新增
+def _ensure_output_dir(session_id: Optional[str] = None) -> Path:
+    key = session_id or "default-session"
+    if key not in _OUTPUT_DIRS:
+        base = WorkspaceManager.get_instance().get_outputs_dir(session_id) / "tool-output"
+        base.mkdir(parents=True, exist_ok=True)
+        _OUTPUT_DIRS[key] = base
+    return _OUTPUT_DIRS[key]
+# ---------end-----------------------
 
 def _maybe_cleanup(output_dir: Path) -> None:
     """Remove stale temp files older than _CLEANUP_MAX_AGE_SECS."""
@@ -90,6 +103,8 @@ def truncate_output(
     max_bytes: int = MAX_BYTES,
     direction: str = "head",
     has_task_tool: bool = False,
+    # 输出按会话隔离新增
+    session_id: Optional[str] = None,
 ) -> TruncateResult:
     """
     Truncate tool output that exceeds size limits.
@@ -100,6 +115,7 @@ def truncate_output(
         max_bytes: Maximum byte size to keep.
         direction: "head" keeps the first N lines, "tail" keeps the last N.
         has_task_tool: Whether the current agent can delegate via task tool.
+        session_id: Current session ID for output isolation.
 
     Returns:
         TruncateResult with (possibly truncated) content.
@@ -145,7 +161,9 @@ def truncate_output(
     unit = "bytes" if hit_bytes else "lines"
     preview = "\n".join(out)
 
-    output_dir = _ensure_output_dir()
+    # 输出按会话隔离
+    # output_dir = _ensure_output_dir()
+    output_dir = _ensure_output_dir(session_id)
     _maybe_cleanup(output_dir)
 
     filename = f"tool_{int(time.time() * 1000)}"

@@ -70,6 +70,21 @@ def build_tools_catalog_summary(
     )
 
 
+async def _list_tools_allowed_for_agent(agent_name: str | None) -> list:
+    ToolRegistry.init()
+    tools = ToolRegistry.list_tools()
+    if not agent_name:
+        return tools
+
+    from flocks.agent.controls import agent_allows_tool
+
+    return [
+        tool
+        for tool in tools
+        if await agent_allows_tool(agent_name, tool.name)
+    ]
+
+
 def format_tools_catalog_summary(
     tools: list,
     max_description_chars: int = 100,
@@ -130,11 +145,21 @@ async def run_slash_command_tool(ctx: ToolContext, command: str) -> ToolResult:
         return ToolResult(success=True, output=_HELP_TEXT)
 
     if command == "tools":
-        return ToolResult(success=True, output=build_tools_catalog_summary())
+        tools = await _list_tools_allowed_for_agent(ctx.agent)
+        return ToolResult(
+            success=True,
+            output=format_tools_catalog_summary(tools=tools),
+        )
 
     if command == "skills":
+        from flocks.agent.controls import filter_agent_skills
+        from flocks.agent.registry import Agent
         from flocks.skill.skill import Skill
+
         skills = await Skill.all()
+        agent = await Agent.get(ctx.agent or "")
+        if agent:
+            skills = filter_agent_skills(agent, skills)
         if not skills:
             return ToolResult(success=True, output="No skills available.")
         lines = ["Available Skills:", ""]

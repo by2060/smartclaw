@@ -328,12 +328,6 @@ async def extract_and_save(
         count_tokens: Optional callable to count tokens in a string.
                       Defaults to a simple ``len(text) // 4`` heuristic.
     """
-    try:
-        from flocks.memory.daily import DailyMemory
-    except ImportError:
-        log.warn("extract_and_save.import_error", {"session_id": session_id})
-        return
-
     if count_tokens is None:
         count_tokens = lambda text: len(text) // 4  # noqa: E731
 
@@ -407,14 +401,34 @@ async def extract_and_save(
     if not memory_text:
         memory_text = summary
 
-    daily = DailyMemory()
     header = f"\n## Session {session_id[:16]}… ({today} {now_ts})\n\n"
     content_to_write = header + memory_text + "\n"
 
     try:
-        await daily.write_daily(
+        from flocks.session import Session
+        from flocks.session.features.memory import SessionMemory
+
+        session = await Session.get_by_id(session_id)
+        if not session:
+            log.warn("extract_and_save.no_session", {"session_id": session_id})
+            return
+        user_context = getattr(session, "user_context", None)
+        if not isinstance(user_context, dict):
+            user_context = {}
+        current_user_id = user_context.get("currentUserId")
+
+        memory = SessionMemory(
+            session_id=session.id,
+            project_id=session.project_id,
+            workspace_dir=session.directory,
+            enabled=getattr(session, "memory_enabled", True),
+            current_user_id=str(current_user_id) if current_user_id else None,
+        )
+        if not await memory.initialize():
+            return
+        await memory.write(
             content=content_to_write,
-            date=today,
+            path=f"daily/{today}.md",
             append=True,
         )
         log.info("extract_and_save.saved", {

@@ -32,14 +32,14 @@ async def test_tool_search_adds_matches_to_session_callable_tools_and_emits_even
     monkeypatch.setattr("flocks.tool.system.tool_search.ToolRegistry.list_tools", lambda: tools)
     monkeypatch.setattr("flocks.tool.system.tool_search.add_session_callable_tools", add_callable)
 
-    ctx = SimpleNamespace(session_id="session-3", event_publish_callback=event_callback)
+    ctx = SimpleNamespace(session_id="session-3", agent="rex", event_publish_callback=event_callback)
     result = await tool_search(ctx, query="web", limit=5)
 
     assert result.success is True
     assert result.output["callableToolNames"] == ["websearch"]
     assert result.output["callableToolCount"] == 1
     assert result.output["matches"][0]["name"] == "websearch"
-    add_callable.assert_awaited_once_with("session-3", ["websearch"])
+    add_callable.assert_awaited_once_with("session-3", ["websearch"], agent_name="rex")
     event_callback.assert_awaited()
 
 
@@ -96,14 +96,18 @@ async def test_tool_search_supports_exact_batch_select_and_aliases(
     monkeypatch.setattr("flocks.tool.system.tool_search.ToolRegistry.list_tools", lambda: tools)
     monkeypatch.setattr("flocks.tool.system.tool_search.add_session_callable_tools", add_callable)
 
-    ctx = SimpleNamespace(session_id="session-select", event_publish_callback=AsyncMock())
+    ctx = SimpleNamespace(session_id="session-select", agent="rex", event_publish_callback=AsyncMock())
     result = await tool_search(ctx, query="select:WebSearchTool,webfetch", limit=5)
 
     assert result.success is True
     assert result.output["normalizedQuery"] == "websearch webfetch"
     assert result.output["callableToolNames"] == ["webfetch", "websearch"]
     assert [match["name"] for match in result.output["matches"]] == ["websearch", "webfetch"]
-    add_callable.assert_awaited_once_with("session-select", ["websearch", "webfetch"])
+    add_callable.assert_awaited_once_with(
+        "session-select",
+        ["websearch", "webfetch"],
+        agent_name="rex",
+    )
 
 
 @pytest.mark.asyncio
@@ -150,7 +154,7 @@ async def test_tool_search_adds_matching_tools_to_callable_set(
     assert result.output["count"] == 1
     assert result.output["matches"][0]["name"] == "read"
     assert result.output["callableToolNames"] == ["read"]
-    add_callable.assert_awaited_once_with("session-nondeferred", ["read"])
+    add_callable.assert_awaited_once_with("session-nondeferred", ["read"], agent_name=None)
 
 
 @pytest.mark.asyncio
@@ -180,7 +184,7 @@ async def test_tool_search_does_not_return_disabled_tools(
     assert result.output["count"] == 0
     assert result.output["matches"] == []
     assert result.output["callableToolNames"] == []
-    add_callable.assert_awaited_once_with("session-disabled", [])
+    add_callable.assert_awaited_once_with("session-disabled", [], agent_name=None)
 
 
 def test_runtime_tool_events_are_recognized() -> None:

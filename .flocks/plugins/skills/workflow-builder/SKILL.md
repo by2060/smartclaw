@@ -227,7 +227,7 @@ flowchart TD
 - **工具/LLM 标注**：明确该步是 Tool-driven 还是 LLM-driven（详细决策指南见 [reference.md § Tool vs LLM](references/reference.md#5-tool-vs-llm-决策指南)）。
   - **推荐组合**：`tool.run_safe(...)` 获取数据 → `llm.ask(...)` 分析 → `tool.run('write', ...)` 落盘。
   - **默认使用 `tool.run_safe()`**，返回 `{"success", "text", "obj", "error"}` 统一包络。
-- **文件落盘**：节点有任何文件输出时，统一写入 `~/.flocks/workspace/outputs/<YYYY-MM-DD>/` 目录下，详见 [reference.md § 文件输出规则](references/reference.md#6-文件输出规则)。
+- **文件落盘**：节点有任何文件输出时，统一写入 `~/.flocks/workspace/outputs/<YYYY-MM-DD>/<session_id>/` 目录下，详见 [reference.md § 文件输出规则](references/reference.md#6-文件输出规则)。
 - **决策分支**：写清条件、各分支处理、跳转规则。
 - **报告结构**（若涉及）：除非用户要求简化，需包含摘要、分析、发现、建议、来源（模板见 [reference.md § 报告生成](references/reference.md#7-报告生成最佳实践)）。
 
@@ -344,7 +344,7 @@ elif isinstance(obj, str):
 
 **数据落盘与传递：**
 
-- **文件输出**：有文件输出时写入 `~/.flocks/workspace/outputs/<YYYY-MM-DD>/`（详见全局文件输出约定）
+- **文件输出**：有文件输出时写入 `~/.flocks/workspace/outputs/<YYYY-MM-DD>/<session_id>/`（详见全局文件输出约定）
 - **数据传递**：`inputs` 和 `outputs` 字典，运行时浅合并 `payload = {**inputs, **outputs}`
 
 > **⚠️** 生成后必须使用 `write` 写入到文件，并验证：1) `json.load` 确认 JSON 格式正确；2) 对每个 `type="python"` 节点的 `code` 执行 `compile(code, "<node_id>", "exec")` 确认 Python 语法正确。若语法报错，修复后重新写入。
@@ -545,7 +545,7 @@ Body: { "inputs": <样例数据> }
 新建工作流时，写入路径必须在 用户级（全局）目录下：
 
 - **用户级（全局）**：`~/.flocks/plugins/workflows/<slug-or-folder>/`（`workflow.json`、`workflow.md`、`meta.json` 由 API 写入时可能同目录）
-  - ⚠️ 任务输出（报告、artifacts）**不**写入此目录，统一写入 `~/.flocks/workspace/outputs/<YYYY-MM-DD>/`（见全局文件输出约定）
+  - ⚠️ 任务输出（报告、artifacts）**不**写入此目录，统一写入 `~/.flocks/workspace/outputs/<YYYY-MM-DD>/<session_id>/`（见全局文件输出约定）
 
 
 ### 读取路径（扫描）

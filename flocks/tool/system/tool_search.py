@@ -68,7 +68,11 @@ async def tool_search(
     matches, matched_tags = search_tool_catalog(query, category=category, limit=limit)
     normalized_query = normalize_tool_search_query(query or "")
     callable_candidates = [match["name"] for match in matches]
-    callable_tools = await add_session_callable_tools(ctx.session_id, callable_candidates)
+    callable_tools = await add_session_callable_tools(
+        ctx.session_id,
+        callable_candidates,
+        agent_name=getattr(ctx, "agent", None),
+    )
     if ctx.event_publish_callback:
         await ctx.event_publish_callback("runtime.tool_discovery", {
             "sessionID": ctx.session_id,

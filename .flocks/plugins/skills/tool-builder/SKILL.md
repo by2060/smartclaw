@@ -1,7 +1,7 @@
 ---
 name: tool-builder
 category: system
-description: Creates reusable Flocks tools and API integrations. Supports YAML-HTTP for REST APIs and Python for local utilities, with mandatory verification and smoke testing. All output under ~/.flocks/plugins/tools/. When to use: creating or adding a new Flocks tool, building local utilities such as base64 encode-decode, URL encode-decode, JSON formatting, parsing, hashing, text or file transformation, or integrating an external REST API as a reusable tool. Example requests: "Create a base64 encode/decode tool", "Build a URL encode/decode utility", "Add a JSON formatter tool", "Integrate a REST API as a Flocks tool".
+description: Creates reusable Flocks tools and API integrations. Supports YAML-HTTP for REST APIs and Python for local utilities, with mandatory verification and smoke testing. All output under the project-level .flocks/plugins/tools/ directory. When to use: creating or adding a new Flocks tool, building local utilities such as base64 encode-decode, URL encode-decode, JSON formatting, parsing, hashing, text or file transformation, or integrating an external REST API as a reusable tool. Example requests: "Create a base64 encode/decode tool", "Build a URL encode/decode utility", "Add a JSON formatter tool", "Integrate a REST API as a Flocks tool".
 ---
 
 # Tool Builder
@@ -25,10 +25,10 @@ Every tool created with this skill must be usable immediately after the task fin
 
 ## CRITICAL: Output Location
 
-**ALL generated artifacts MUST be placed under `~/.flocks/plugins/tools/`.**
+**ALL generated artifacts MUST be placed under `<project>/.flocks/plugins/tools/`.**
 
 ```
-~/.flocks/plugins/tools/
+<project>/.flocks/plugins/tools/
 ├── api/                          # YAML HTTP/Script tools
 │   ├── standalone_tool.yaml
 │   └── threatbook/               # Provider group
@@ -43,11 +43,11 @@ Every tool created with this skill must be usable immediately after the task fin
 
 | Mode | Output Path |
 |------|------------|
-| YAML-HTTP tool | `~/.flocks/plugins/tools/api/{name}.yaml` |
-| YAML-HTTP tool (Provider) | `~/.flocks/plugins/tools/api/{provider}/{name}.yaml` |
-| YAML script handler | `~/.flocks/plugins/tools/api/{provider}/{name}.handler.py` |
-| Provider config | `~/.flocks/plugins/tools/api/{provider}/_provider.yaml` |
-| Python tool | `~/.flocks/plugins/tools/python/{name}.py` |
+| YAML-HTTP tool | `<project>/.flocks/plugins/tools/api/{name}.yaml` |
+| YAML-HTTP tool (Provider) | `<project>/.flocks/plugins/tools/api/{provider}/{name}.yaml` |
+| YAML script handler | `<project>/.flocks/plugins/tools/api/{provider}/{name}.handler.py` |
+| Provider config | `<project>/.flocks/plugins/tools/api/{provider}/_provider.yaml` |
+| Python tool | `<project>/.flocks/plugins/tools/python/{name}.py` |
 
 **NEVER** write to `flocks/tool/generated/`, `flocks/tool/`, or any other project source path.
 
@@ -131,10 +131,10 @@ For declarative REST API integrations. One YAML file per endpoint, no Python cod
 
 1. **Clarify requirements** — Ask only when key parameters are missing.
 2. **Inventory the API surface first** — Read the official API reference / OpenAPI spec / sidebar nav and make a complete list of in-scope endpoints before writing files.
-3. **Check if a Provider exists** — Look for `~/.flocks/plugins/tools/api/{provider}/_provider.yaml`.
+3. **Check if a Provider exists** — Look for `<project>/.flocks/plugins/tools/api/{provider}/_provider.yaml`.
 4. **Create Provider (if needed)** — Write `_provider.yaml` with shared auth and base URL.
 5. **Add secret (if needed)** — Add API key to `.secret.json` (see above).
-6. **Write tool YAMLs for all in-scope endpoints** — Create `~/.flocks/plugins/tools/api/{name}.yaml` (or `api/{provider}/{name}.yaml`) until the inventory is exhausted, not just the first few endpoints.
+6. **Write tool YAMLs for all in-scope endpoints** — Create `<project>/.flocks/plugins/tools/api/{name}.yaml` (or `api/{provider}/{name}.yaml`) until the inventory is exhausted, not just the first few endpoints.
 7. **Run Verification Protocol** (see below) — MANDATORY.
 
 ### Endpoint Coverage Rule (CRITICAL)
@@ -267,7 +267,7 @@ parameters:
 `_provider.yaml` is **required** for grouped tools. It serves two purposes: shared auth/base_url injection, and **triggering the API service card** in the Tools > API Services tab (for API key configuration).
 
 ```yaml
-# ~/.flocks/plugins/tools/api/threatbook-cn/_provider.yaml
+# <project>/.flocks/plugins/tools/api/threatbook-cn/_provider.yaml
 name: threatbook-cn
 description: ThreatBook Threat Intelligence Platform
 description_cn: ThreatBook 威胁情报平台，提供 IOC 查询与安全分析能力
@@ -292,7 +292,7 @@ defaults:
 For API calls requiring pre/post-processing that still benefits from YAML metadata:
 
 ```yaml
-# ~/.flocks/plugins/tools/api/threatbook-cn/threatbook_cn_file_report.yaml
+# <project>/.flocks/plugins/tools/api/threatbook-cn/threatbook_cn_file_report.yaml
 name: threatbook_cn_file_report
 description: Query file hash threat intelligence from ThreatBook API
 inputSchema:
@@ -310,7 +310,7 @@ handler:
   function: file_report
 ```
 
-Script (`~/.flocks/plugins/tools/api/threatbook-cn/threatbook_cn.handler.py`):
+Script (`<project>/.flocks/plugins/tools/api/threatbook-cn/threatbook_cn.handler.py`):
 ```python
 from flocks.tool.registry import ToolContext, ToolResult
 
@@ -368,12 +368,12 @@ For tools that do NOT call external APIs: local utilities, data processing, mult
 
 1. **Clarify requirements** — Ask only when key parameters are missing.
 2. **Add secret (if needed)** — Add API key to `.secret.json` (see above).
-3. **Generate tool code** — Create `~/.flocks/plugins/tools/python/{name}.py` with `@ToolRegistry.register_function`.
+3. **Generate tool code** — Create `<project>/.flocks/plugins/tools/python/{name}.py` with `@ToolRegistry.register_function`.
 4. **Run Verification Protocol** (see below) — MANDATORY.
 
 ### Python Tool Format
 
-File: `~/.flocks/plugins/tools/python/{name}.py`
+File: `<project>/.flocks/plugins/tools/python/{name}.py`
 ```python
 from flocks.tool.registry import (
     ToolRegistry, ToolContext, ToolResult,
@@ -641,11 +641,11 @@ Tool created: {name}
 - **HTTP handler errors**: check URL, auth config, parameter placeholders
 - **Python import errors**: check imports, fix missing dependencies
 - **Smoke test auth error**: expected if API key not configured — report to user
-- **Wrong output path**: STOP immediately, move files to `~/.flocks/plugins/tools/{type}/`
+- **Wrong output path**: STOP immediately, move files to `<project>/.flocks/plugins/tools/{type}/`
 
 ## Pre-flight Checklist (mental, before writing any file)
 
-1. Output path is under `~/.flocks/plugins/tools/{type}/`
+1. Output path is under `<project>/.flocks/plugins/tools/{type}/`
 2. **If the tool calls an external HTTP API → MUST be under `api/` (Mode A), NEVER `python/` (Mode B)**
 3. Tool name is `snake_case` and unique (no collision with builtins: read, write, edit, bash, grep, glob, todo, question, plan, task, websearch, webfetch, codesearch, skill, etc.)
 4. Description follows "outcomes over operations" style

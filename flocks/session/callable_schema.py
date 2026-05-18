@@ -12,6 +12,8 @@ from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional
 
 from flocks.tool.catalog import get_always_load_tool_names
 from flocks.session.callable_state import (
+    get_session_callable_agent,
+    get_session_callable_base_tools,
     get_session_callable_tools,
     initialize_session_callable_tools,
 )
@@ -43,19 +45,29 @@ async def list_session_callable_tool_infos(
     session_id: str,
     declared_tool_names: Optional[Iterable[str]] = None,
     *,
+    agent_name: Optional[str] = None,
     step: int = 0,
     event_publish_callback: Optional[Callable[[str, Dict[str, Any]], Awaitable[None]]] = None,
 ) -> CallableSchemaResult:
     callable_tool_names = await get_session_callable_tools(session_id)
+    callable_agent = await get_session_callable_agent(session_id)
+    callable_base_tools = await get_session_callable_base_tools(session_id)
     always_load_names = get_always_load_tool_names()
+    base_tools = list(declared_tool_names) if declared_tool_names is not None else []
+    declared_base = {str(name).strip() for name in base_tools if str(name).strip()}
 
-    if not callable_tool_names:
-        base_tools = list(declared_tool_names) if declared_tool_names is not None else []
+    if (
+        not callable_tool_names
+        or (agent_name and callable_agent != agent_name)
+        or (declared_tool_names is not None and callable_base_tools != declared_base)
+    ):
         callable_tool_names = await initialize_session_callable_tools(
             session_id,
             base_tools,
             always_load_tool_names=always_load_names,
+            agent_name=agent_name,
         )
+        callable_agent = agent_name
 
     effective_callable_names = set(callable_tool_names) | always_load_names
     tool_infos, enabled_count = resolve_callable_tool_infos(effective_callable_names)
@@ -66,6 +78,7 @@ async def list_session_callable_tool_infos(
         "alwaysLoadToolCount": len(always_load_names),
         "callableToolNames": sorted(callable_tool_names),
         "alwaysLoadToolNames": sorted(always_load_names),
+        "callableAgent": callable_agent,
     }
 
     if event_publish_callback:

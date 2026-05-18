@@ -6,7 +6,7 @@ Includes: auth, skill, command endpoints.
 """
 
 from typing import Dict, List, Any, Optional
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 
 from flocks.utils.log import Log
@@ -95,14 +95,14 @@ async def dispose_instance() -> Dict[str, bool]:
     summary="List skills",
     description="Get all available agent skills"
 )
-async def list_skills() -> List[Dict[str, Any]]:
+async def list_skills(agent: Optional[str] = Query(None)) -> List[Dict[str, Any]]:
     """
     List all available skills
     
     Returns a list of skill definitions with name, description, and location.
     Flocks compatible endpoint.
     """
-    skills = await get_all_skills()
+    skills = await get_all_skills(agent_name=agent)
     return skills
 
 
@@ -111,7 +111,7 @@ async def list_skills() -> List[Dict[str, Any]]:
     summary="Get skill",
     description="Get a specific skill by name"
 )
-async def get_skill_by_name(name: str) -> Dict[str, Any]:
+async def get_skill_by_name(name: str, agent: Optional[str] = Query(None)) -> Dict[str, Any]:
     """
     Get a specific skill
     
@@ -119,7 +119,7 @@ async def get_skill_by_name(name: str) -> Dict[str, Any]:
     Flocks compatible endpoint.
     """
     try:
-        skill = await get_skill(name)
+        skill = await get_skill(name, agent_name=agent)
         if not skill:
             return {"error": f"Skill '{name}' not found"}
         return skill

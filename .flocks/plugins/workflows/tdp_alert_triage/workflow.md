@@ -49,7 +49,7 @@
   - 提取 HTTP 请求行、请求头、请求体
   - 使用 LLM 分析该流量更像攻击、扫描、误报还是正常请求
   - 识别具体攻击/扫描方式和意图
-  - **必须落盘**: 将 LLM 分析结果写入 `~/.flocks/workspace/outputs/<YYYY-MM-DD>/artifacts/payload_analysis_llm_output.md`
+  - **必须落盘**: 将 LLM 分析结果写入 `~/.flocks/workspace/outputs/<YYYY-MM-DD>/<session_id>/artifacts/payload_analysis_llm_output.md`
 
 ### 5. 响应包分析与攻击成功判定（并行）
 - **描述**: 结合服务器响应包和 TDP 判定字段，判断攻击是否成功
@@ -60,7 +60,7 @@
   - 提取请求包和响应包内容
   - 将 `HTTP status`、`threat.result`、`threat.failed_by` 一并作为判定信号
   - 优先让 LLM 结构化输出成功/失败结论，解析失败时再使用规则兜底
-  - **必须落盘**: 将分析结果写入 `~/.flocks/workspace/outputs/<YYYY-MM-DD>/artifacts/response_analysis_llm_output.md`
+  - **必须落盘**: 将分析结果写入 `~/.flocks/workspace/outputs/<YYYY-MM-DD>/<session_id>/artifacts/response_analysis_llm_output.md`
 
 ### 6. 汇聚并行结果
 - **描述**: 使用 `join=true` 等待并行节点全部完成，再把结果归一化后传给报告节点
@@ -83,7 +83,7 @@
   - 汇总攻击负载分析和响应分析
   - 根据 `attack_success` 和 TDP 失败信号生成风险等级
   - 生成结构化报告，包含：摘要、IOC、情报、漏洞、分析、风险评估、建议
-  - **必须落盘**: 将报告写入 `~/.flocks/workspace/outputs/<YYYY-MM-DD>/artifacts/final_report.md`
+  - **必须落盘**: 将报告写入 `~/.flocks/workspace/outputs/<YYYY-MM-DD>/<session_id>/artifacts/final_report.md`
 
 ## 并行执行设计
 

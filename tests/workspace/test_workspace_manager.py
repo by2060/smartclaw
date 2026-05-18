@@ -71,6 +71,107 @@ class TestDirectoryPaths:
     def test_get_workspace_dir_respects_env(self, tmp_workspace: Path, manager):
         assert manager.get_workspace_dir() == tmp_workspace
 
+    def test_workspace_dir_env_source_root_falls_back_to_user_workspace(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from flocks.config.config import Config
+        from flocks.workspace.manager import WorkspaceManager
+
+        project = tmp_path / "project"
+        home = tmp_path / "home"
+        project.mkdir()
+        home.mkdir()
+        (project / "pyproject.toml").write_text("[project]\nname = \"demo\"\n")
+        monkeypatch.setenv("FLOCKS_WORKSPACE_DIR", str(project))
+        monkeypatch.setattr("flocks.workspace.manager._user_home_dir", lambda: home)
+        WorkspaceManager._instance = None
+        Config._global_config = None
+        try:
+            manager = WorkspaceManager.get_instance()
+            assert manager.get_workspace_dir() == home / ".flocks" / "workspace"
+            assert (
+                manager.get_outputs_dir("ses_same", day="2026-05-07", create=False)
+                == home / ".flocks" / "workspace" / "outputs" / "2026-05-07" / "ses_same"
+            )
+        finally:
+            WorkspaceManager._instance = None
+            Config._global_config = None
+
+    def test_workspace_dir_named_flocks_falls_back_to_user_workspace(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from flocks.config.config import Config
+        from flocks.workspace.manager import WorkspaceManager
+
+        deploy_root = tmp_path / "opt" / "zhhtest" / "flocks"
+        home = tmp_path / "home"
+        deploy_root.mkdir(parents=True)
+        home.mkdir()
+        monkeypatch.setenv("FLOCKS_WORKSPACE_DIR", str(deploy_root))
+        monkeypatch.setattr("flocks.workspace.manager._user_home_dir", lambda: home)
+        WorkspaceManager._instance = None
+        Config._global_config = None
+        try:
+            manager = WorkspaceManager.get_instance()
+            assert manager.get_workspace_dir() == home / ".flocks" / "workspace"
+        finally:
+            WorkspaceManager._instance = None
+            Config._global_config = None
+
+    def test_home_env_pointing_at_project_does_not_define_user_workspace(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from flocks.config.config import Config
+        from flocks.workspace.manager import WorkspaceManager
+
+        deploy_root = tmp_path / "opt" / "zhhtest" / "flocks"
+        real_home = tmp_path / "root"
+        deploy_root.mkdir(parents=True)
+        real_home.mkdir()
+        monkeypatch.setenv("HOME", str(deploy_root))
+        monkeypatch.setenv("FLOCKS_WORKSPACE_DIR", str(deploy_root / ".flocks" / "workspace"))
+        monkeypatch.setattr("flocks.workspace.manager._user_home_dir", lambda: real_home)
+        WorkspaceManager._instance = None
+        Config._global_config = None
+        try:
+            manager = WorkspaceManager.get_instance()
+            assert manager.get_workspace_dir() == real_home / ".flocks" / "workspace"
+            assert (
+                manager.get_outputs_dir("ses_abc123", day="2026-05-07", create=False)
+                == real_home
+                / ".flocks"
+                / "workspace"
+                / "outputs"
+                / "2026-05-07"
+                / "ses_abc123"
+            )
+        finally:
+            WorkspaceManager._instance = None
+            Config._global_config = None
+
+    def test_project_flocks_workspace_falls_back_to_user_workspace(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from flocks.config.config import Config
+        from flocks.workspace.manager import WorkspaceManager
+
+        project = tmp_path / "project"
+        home = tmp_path / "home"
+        project_workspace = project / ".flocks" / "workspace"
+        project_workspace.mkdir(parents=True)
+        home.mkdir()
+        (project / "AGENTS.md").write_text("# rules\n")
+        monkeypatch.setenv("FLOCKS_WORKSPACE_DIR", str(project_workspace))
+        monkeypatch.setattr("flocks.workspace.manager._user_home_dir", lambda: home)
+        WorkspaceManager._instance = None
+        Config._global_config = None
+        try:
+            manager = WorkspaceManager.get_instance()
+            assert manager.get_workspace_dir() == home / ".flocks" / "workspace"
+        finally:
+            WorkspaceManager._instance = None
+            Config._global_config = None
+
     def test_get_memory_dir_points_to_data_memory(self, tmp_workspace: Path, manager):
         mem = manager.get_memory_dir()
         assert mem.name == "memory"
@@ -85,6 +186,110 @@ class TestDirectoryPaths:
         """Calling ensure_dirs twice must not raise."""
         manager.ensure_dirs()
         manager.ensure_dirs()
+
+    def test_get_outputs_dir_is_session_scoped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manager
+    ):
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setattr("flocks.workspace.manager._user_home_dir", lambda: home)
+        out = manager.get_outputs_dir("ses_abc123", day="2026-05-06")
+        assert out == home / ".flocks" / "workspace" / "outputs" / "2026-05-06" / "ses_abc123"
+        assert out.is_dir()
+
+    def test_get_outputs_dir_sanitizes_session_id(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manager
+    ):
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setattr("flocks.workspace.manager._user_home_dir", lambda: home)
+        out = manager.get_outputs_dir("../ses/bad", day="2026-05-06")
+        assert out == home / ".flocks" / "workspace" / "outputs" / "2026-05-06" / "ses_bad"
+        assert out.is_dir()
+
+    def test_rewrite_legacy_workspace_output_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manager
+    ):
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setattr("flocks.workspace.manager._user_home_dir", lambda: home)
+        legacy = home / ".flocks" / "workspace" / "outputs" / "2026-05-06" / "report.md"
+        rewritten = manager.rewrite_legacy_output_path(legacy, "ses_abc123")
+        assert rewritten == (
+            home
+            / ".flocks"
+            / "workspace"
+            / "outputs"
+            / "2026-05-06"
+            / "ses_abc123"
+            / "report.md"
+        )
+
+    def test_rewrite_project_outputs_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_workspace: Path, manager
+    ):
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setattr("flocks.workspace.manager._user_home_dir", lambda: home)
+        project = tmp_workspace.parent / "project"
+        legacy = project / "outputs" / "report.md"
+        rewritten = manager.rewrite_legacy_output_path(legacy, "ses_abc123", source_dir=project)
+        assert rewritten == manager.get_outputs_dir("ses_abc123") / "report.md"
+
+    def test_rewrite_sandbox_flocks_outputs_alias(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_workspace: Path, manager
+    ):
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setattr("flocks.workspace.manager._user_home_dir", lambda: home)
+        legacy = Path("/workspace/.flocks_outputs/2026-05-07/baseline_192.168.185.174.md")
+        rewritten = manager.rewrite_legacy_output_path(legacy, "ses_abc123")
+        assert rewritten == (
+            home
+            / ".flocks"
+            / "workspace"
+            / "outputs"
+            / "2026-05-07"
+            / "ses_abc123"
+            / "baseline_192.168.185.174.md"
+        )
+
+    def test_rewrite_dated_project_outputs_to_user_workspace(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from flocks.config.config import Config
+        from flocks.workspace.manager import WorkspaceManager
+
+        deploy_root = tmp_path / "opt" / "zhhtest" / "flocks"
+        home = tmp_path / "home"
+        deploy_root.mkdir(parents=True)
+        home.mkdir()
+        monkeypatch.setenv("FLOCKS_WORKSPACE_DIR", str(deploy_root))
+        monkeypatch.setattr("flocks.workspace.manager._user_home_dir", lambda: home)
+        WorkspaceManager._instance = None
+        Config._global_config = None
+        try:
+            manager = WorkspaceManager.get_instance()
+            legacy = (
+                deploy_root
+                / "outputs"
+                / "2026-05-07"
+                / "ses_abc123"
+                / "baseline.md"
+            )
+            rewritten = manager.rewrite_legacy_output_path(legacy, "ses_abc123")
+            assert rewritten == (
+                home
+                / ".flocks"
+                / "workspace"
+                / "outputs"
+                / "2026-05-07"
+                / "ses_abc123"
+                / "baseline.md"
+            )
+        finally:
+            WorkspaceManager._instance = None
+            Config._global_config = None
 
 
 # ─── Path resolution ──────────────────────────────────────────────────────────

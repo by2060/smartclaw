@@ -1,6 +1,7 @@
 from flocks.tool.catalog import (
     apply_tool_catalog_defaults,
     canonical_tool_token,
+    get_always_load_tool_names,
     get_tool_catalog_metadata,
     list_tool_catalog_infos,
     normalize_tool_search_query,
@@ -19,7 +20,7 @@ def test_apply_tool_catalog_defaults_for_read_tool() -> None:
 
     enriched = apply_tool_catalog_defaults(info)
 
-    assert enriched.always_load is False
+    assert enriched.always_load is True
     assert "file-inspection" in enriched.tags
 
 
@@ -36,7 +37,7 @@ def test_registry_uses_read_not_read_file() -> None:
     assert "read_file" not in tool_ids
 
 
-def test_catalog_marks_tool_search_as_always_load() -> None:
+def test_catalog_keeps_tool_search_out_of_always_load() -> None:
     info = ToolInfo(
         name="tool_search",
         description="Search tools",
@@ -46,7 +47,8 @@ def test_catalog_marks_tool_search_as_always_load() -> None:
 
     metadata = get_tool_catalog_metadata("tool_search", info)
 
-    assert metadata.always_load is True
+    assert metadata.always_load is False
+    assert "tool_search" not in get_always_load_tool_names()
 
 
 def test_explicit_tags_are_merged_with_defaults() -> None:

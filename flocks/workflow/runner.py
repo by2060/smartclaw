@@ -222,9 +222,16 @@ class RunWorkflowResult:
 def _build_initial_inputs(
     inputs: Optional[Dict[str, Any]],
     workflow_path: Optional[str],
+    # 输出按会话隔离新增
+    session_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build initial inputs and inject workflow file context when available."""
     initial_inputs: Dict[str, Any] = dict(inputs or {})
+    # 输出按会话隔离新增
+    if session_id:
+        initial_inputs.setdefault("_session_id", session_id)
+        initial_inputs.setdefault("session_id", session_id)
+    # ---------------end------------------------------
     if not workflow_path:
         return initial_inputs
 
@@ -389,8 +396,26 @@ def run_workflow(
         node_timeout_s=effective_node_timeout_s,
         max_parallel_workers=max_parallel_workers,
     )
-    
+    # 输出按会话隔离修改
+    # 删除
+    '''
     initial_inputs = _build_initial_inputs(inputs, workflow_path_for_engine)
+    '''
+    # 新增
+    workflow_session_id = None
+    if tool_context is not None:
+        extra = getattr(tool_context, "extra", None)
+        if isinstance(extra, dict):
+            workflow_session_id = (
+                extra.get("output_session_id")
+                or extra.get("main_session_key")
+            )
+        workflow_session_id = workflow_session_id or getattr(tool_context, "session_id", None)
+    initial_inputs = _build_initial_inputs(
+        inputs,
+        workflow_path_for_engine,
+        session_id=workflow_session_id,
+    )
     _logger.info(
         "开始执行 workflow (timeout=%ss, inputs=%s)",
         timeout_s,

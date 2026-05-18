@@ -251,6 +251,7 @@ class SessionRunner:
         result = await list_session_callable_tool_infos(
             session_id=self.session.id,
             declared_tool_names=getattr(agent, "tools", None),
+            agent_name=getattr(agent, "name", None),
             step=self._step,
             event_publish_callback=self.callbacks.event_publish_callback,
         )
@@ -709,6 +710,36 @@ class SessionRunner:
             agent=agent,
             parent_id=user_msg.id,
         )
+
+        from flocks.tool.code.bash_blacklist import check_bash_blacklist
+
+        blocked_command = await check_bash_blacklist(command)
+        if blocked_command:
+            return {
+                "info": {
+                    "id": assistant_msg.id,
+                    "sessionID": session_id,
+                    "role": "assistant",
+                    "agent": agent,
+                },
+                "parts": [{
+                    "id": Identifier.create("part"),
+                    "messageID": assistant_msg.id,
+                    "sessionID": session_id,
+                    "type": "tool",
+                    "tool": "bash",
+                    "state": {
+                        "status": "completed",
+                        "input": {"command": command},
+                        "output": blocked_command.message,
+                        "metadata": {
+                            "blocked_by_bash_blacklist": True,
+                            "blocked_command": blocked_command.command,
+                            "blacklist_rule": blocked_command.rule,
+                        },
+                    },
+                }],
+            }
         
         start_time = asyncio.get_event_loop().time()
         try:
@@ -1299,14 +1330,25 @@ class SessionRunner:
     async def _build_system_prompts(self, agent: AgentInfo) -> List[str]:
         """Build system prompts."""
         tool_revision = ToolRegistry.revision()
+        # 输出按会话隔离修改
+        # 删除
+        '''
         cache_key = (
             f"system_prompts:{self.session.id}:{agent.name}:{self.provider_id}:{self.model_id}:{tool_revision}"
         )
+        '''
+        # 输出按会话隔离新增
+        output_session_id = await self._resolve_output_session_id()
+        cache_key = (
+            f"system_prompts:{self.session.id}:{output_session_id}:{agent.name}:{self.provider_id}:{self.model_id}:{tool_revision}"
+        )
+        # -------------end-----------------
         cached = self._static_cache.get(cache_key)
         if cached is not None:
             return list(cached)
 
         prompts = []
+        human_memory_answer_rule = None
         
         # Provider-specific base prompt (from anthropic.txt, gemini.txt, etc.)
         provider_prompts = SystemPrompt.provider(self.model_id)
@@ -1324,7 +1366,34 @@ class SessionRunner:
             if main_memory and main_memory.get("inject"):
                 memory_content = main_memory.get("content", "")
                 if memory_content:
-                    prompts.append(f"## {main_memory['path']}\n\n{memory_content}")
+                    user_context = (
+                        self.session.user_context
+                        if isinstance(self.session.user_context, dict)
+                        else {}
+                    )
+                    current_user_id = str(user_context.get("currentUserId") or "__shared__")
+                    human_memory_answer_rule = (
+                        "## Current Human User Profile Answering Rule\n\n"
+                        f"Current human user id: `{current_user_id}`\n\n"
+                        "For direct questions about the current human user's profile, "
+                        "preferences, hobbies, name, recurring context, or other remembered "
+                        "facts, answer directly from the account-scoped memory in second "
+                        "person. Do not begin with, add, or emphasize statements like "
+                        "\"I am an AI and do not have personal hobbies\" when the user's "
+                        "question is about their own remembered facts. Example: if memory "
+                        "says the user's hobbies are hiking and travel, answer \"Your "
+                        "hobbies are hiking and travel.\""
+                    )
+                    prompts.append(
+                        "## Current Human User Memory "
+                        f"({main_memory['path']})\n\n"
+                        f"Current human user id: `{current_user_id}`\n\n"
+                        "The following memory entries describe the current human user, "
+                        "not the assistant. When the user asks about first-person facts "
+                        "such as \"my hobbies\" or \"what do I like\", answer from this "
+                        "account-scoped memory when relevant.\n\n"
+                        f"{memory_content}"
+                    )
             
             # Note: daily files are NOT injected, agent reads them per instructions
             log.debug("runner.memory_injected", {
@@ -1336,6 +1405,8 @@ class SessionRunner:
         env_prompts = await SystemPrompt.environment(
             directory=self.session.directory,
             vcs="git" if self.session.directory else None,
+            # 输出按会话隔离新增
+            session_id=output_session_id,
         )
         prompts.extend(env_prompts)
         
@@ -1346,6 +1417,11 @@ class SessionRunner:
         # Agent-specific prompt (if any)
         if agent.prompt:
             prompts.append(agent.prompt)
+
+        # Keep this after the agent identity prompt so user-profile questions
+        # are answered from account memory instead of the assistant persona.
+        if human_memory_answer_rule:
+            prompts.append(human_memory_answer_rule)
 
         # Sandbox runtime context for better tool/path awareness
         sandbox_prompt = await self._build_sandbox_prompt(agent)
@@ -1378,6 +1454,21 @@ class SessionRunner:
         
         self._static_cache[cache_key] = list(prompts)
         return list(prompts)
+    # 输出按会话隔离新增
+    async def _resolve_output_session_id(self) -> str:
+        """Use the root parent session for user-facing output directories."""
+        session_id = self.session.id
+        parent_id = getattr(self.session, "parent_id", None)
+        seen: Set[str] = set()
+        while parent_id and parent_id not in seen:
+            seen.add(parent_id)
+            parent = await Session.get_by_id(parent_id)
+            if parent is None:
+                break
+            session_id = parent.id
+            parent_id = getattr(parent, "parent_id", None)
+        return session_id
+    # ----------------------end-----------------------------------
 
     async def _build_sandbox_prompt(self, agent: AgentInfo) -> Optional[str]:
         """Build sandbox context prompt when sandboxing is active."""
@@ -1480,16 +1571,13 @@ class SessionRunner:
 
     def _list_catalog_tool_infos(self, agent: AgentInfo) -> List[Any]:
         tool_infos: List[Any] = []
-        is_rex = getattr(agent, "name", "") == "rex"
+        has_tool_search = agent_declares_tool(agent, "tool_search")
 
         for tool_info in list_tool_catalog_infos():
-            if is_rex:
+            if has_tool_search:
                 tool_infos.append(tool_info)
                 continue
 
-            if not isinstance(getattr(agent, "tools", None), (list, tuple, set)):
-                tool_infos.append(tool_info)
-                continue
             metadata = get_tool_catalog_metadata(tool_info.name, tool_info)
             if not agent_declares_tool(agent, tool_info.name) and not metadata.always_load:
                 continue
@@ -1512,8 +1600,7 @@ class SessionRunner:
         if not catalog_summary:
             return None
 
-        is_rex = getattr(agent, "name", "") == "rex"
-        if is_rex:
+        if agent_declares_tool(agent, "tool_search"):
             rules = (
                 "You can see the full tool catalog for awareness. "
                 "This catalog is reference-only and does not define parameter names. "
@@ -1607,10 +1694,12 @@ class SessionRunner:
             description = tool_info.description
             if tool_info.name == "skill":
                 # Import here to avoid circular dependency
+                from flocks.agent.controls import filter_agent_skills
                 from flocks.tool.system.skill import build_description
                 from flocks.skill.skill import Skill
                 
                 skills = await Skill.all()
+                skills = filter_agent_skills(agent, skills)
                 description = build_description(skills)
                 log.info("runner.build_tools.skill_description", {
                     "skill_count": len(skills),
@@ -2092,7 +2181,10 @@ class SessionRunner:
             return summaries
 
         # Create stream processor
-        main_session_key = self.session.id
+        # 输出按会话隔离修改
+        # 删除
+        '''
+         main_session_key = self.session.id
         config_data: Dict[str, Any] = {}
         try:
             from flocks.config import Config
@@ -2103,6 +2195,19 @@ class SessionRunner:
             main_session_key = get_main_session_id() or self.session.id
         except Exception as e:
             log.debug("runner.sandbox_context_init_failed", {"error": str(e)})
+
+        '''
+        # 输出按会话隔离新增
+        main_session_key = await self._resolve_output_session_id()
+        config_data: Dict[str, Any] = {}
+        try:
+            from flocks.config import Config
+
+            cfg = await Config.get()
+            config_data = cfg.model_dump(by_alias=True, exclude_none=True)
+        except Exception as e:
+            log.debug("runner.sandbox_context_init_failed", {"error": str(e)})
+        # -----------------------------end-------------------------------------
 
         processor = StreamProcessor(
             session_id=self.session.id,

@@ -13,6 +13,7 @@ import { Filesystem } from "@/util/filesystem"
 import { fileURLToPath } from "url"
 import { Flag } from "@/flag/flag.ts"
 import { Shell } from "@/shell/shell"
+import { Config } from "@/config/config"
 
 import { BashArity } from "@/permission/arity"
 import { Truncate } from "./truncation"
@@ -21,6 +22,88 @@ const MAX_METADATA_LENGTH = 30_000
 const DEFAULT_TIMEOUT = Flag.FLOCKS_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
 
 export const log = Log.create({ service: "bash-tool" })
+
+type BashBlacklistConfig = {
+  command_black_list?: string[]
+  commandBlacklist?: string[]
+  command_blacklist?: string[]
+  block_message?: string
+  blockMessage?: string
+}
+
+const DEFAULT_BLOCK_MESSAGE = "没有执行，黑名单命令已被拒绝：{command}"
+const COMMAND_WRAPPERS = new Set(["builtin", "command", "doas", "env", "exec", "nice", "nohup", "run0", "sudo", "time"])
+const ASSIGNMENT_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=/
+
+const normalizeCommandName = (value: string) => {
+  let name = value.trim().replace(/^['"]|['"]$/g, "")
+  if (!name) return ""
+  name = name.replaceAll("\\", "/").replace(/\/+$/g, "")
+  name = path.basename(name).toLowerCase()
+  if (name.endsWith(".exe")) name = name.slice(0, -4)
+  return name
+}
+
+const getBashBlacklistConfig = async (): Promise<{
+  rules: string[]
+  blockMessage: string
+}> => {
+  const cfg = await Config.get()
+  const bash = (cfg as { bash?: BashBlacklistConfig }).bash
+  const rawRules = bash?.command_black_list ?? bash?.commandBlacklist ?? bash?.command_blacklist ?? []
+  const seen = new Set<string>()
+  const rules = rawRules
+    .map((item) => normalizeCommandName(item))
+    .filter((item) => {
+      if (!item || seen.has(item)) return false
+      seen.add(item)
+      return true
+    })
+  return {
+    rules,
+    blockMessage: bash?.block_message ?? bash?.blockMessage ?? DEFAULT_BLOCK_MESSAGE,
+  }
+}
+
+const matchesBlacklistRule = (command: string, rule: string) => {
+  if (!rule.includes("*") && !rule.includes("?")) return command === rule
+  const escaped = rule.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")
+  return new RegExp(`^${escaped}$`).test(command)
+}
+
+const assertNotBlacklisted = (command: string, rules: string[], blockMessage: string) => {
+  const commandName = normalizeCommandName(command)
+  if (!commandName) return
+  const rule = rules.find((item) => matchesBlacklistRule(commandName, item))
+  if (!rule) return
+  throw new Error(blockMessage.replaceAll("{command}", commandName))
+}
+
+const findWrappedCommand = (args: string[]) => {
+  for (const arg of args) {
+    if (arg === "--") continue
+    if (arg.startsWith("-")) continue
+    if (ASSIGNMENT_PATTERN.test(arg)) continue
+    return arg
+  }
+}
+
+const findExecutableCommand = (command: string[]) => {
+  for (const item of command) {
+    if (ASSIGNMENT_PATTERN.test(item)) continue
+    return item
+  }
+}
+
+const assertCommandNotBlacklisted = (command: string[], rules: string[], blockMessage: string) => {
+  const executable = findExecutableCommand(command)
+  if (!executable) return
+  assertNotBlacklisted(executable, rules, blockMessage)
+  if (!COMMAND_WRAPPERS.has(normalizeCommandName(executable))) return
+  const executableIndex = command.indexOf(executable)
+  const wrapped = findWrappedCommand(command.slice(executableIndex + 1))
+  if (wrapped) assertNotBlacklisted(wrapped, rules, blockMessage)
+}
 
 const resolveWasm = (asset: string) => {
   if (asset.startsWith("file://")) return fileURLToPath(asset)
@@ -88,6 +171,7 @@ export const BashTool = Tool.define("bash", async () => {
       if (!Instance.containsPath(cwd)) directories.add(cwd)
       const patterns = new Set<string>()
       const always = new Set<string>()
+      const blacklist = await getBashBlacklistConfig()
 
       for (const node of tree.rootNode.descendantsOfType("command")) {
         if (!node) continue
@@ -106,6 +190,8 @@ export const BashTool = Tool.define("bash", async () => {
           }
           command.push(child.text)
         }
+
+        assertCommandNotBlacklisted(command, blacklist.rules, blacklist.blockMessage)
 
         // not an exhaustive list, but covers most common cases
         if (["cd", "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown"].includes(command[0])) {

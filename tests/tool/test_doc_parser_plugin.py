@@ -46,14 +46,57 @@ def test_default_output_path_uses_workspace_outputs(tmp_path, monkeypatch, doc_p
     previous_instance = WorkspaceManager._instance
     WorkspaceManager._instance = None
     monkeypatch.setenv("FLOCKS_WORKSPACE_DIR", str(tmp_path / "workspace"))
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr("flocks.workspace.manager._user_home_dir", lambda: home)
     try:
-        output_path = doc_parser_module._default_output_path(Path("/tmp/合同 Final.docx"))
+        output_path = doc_parser_module._default_output_path(
+            Path("/tmp/合同 Final.docx"),
+            session_id="ses_doc_parser",
+        )
     finally:
         WorkspaceManager._instance = previous_instance
 
-    expected_dir = tmp_path / "workspace" / "outputs" / dt.date.today().isoformat()
+    expected_dir = (
+        home
+        / ".flocks"
+        / "workspace"
+        / "outputs"
+        / dt.date.today().isoformat()
+        / "ses_doc_parser"
+    )
     assert output_path.parent == expected_dir
     assert output_path.name == "Final_docx.md"
+
+
+def test_relative_outputs_path_rewritten_to_output_session(tmp_path, monkeypatch, doc_parser_module):
+    previous_instance = WorkspaceManager._instance
+    WorkspaceManager._instance = None
+    project_workspace = tmp_path / "project" / ".flocks" / "workspace"
+    home = tmp_path / "home"
+    project_workspace.mkdir(parents=True)
+    home.mkdir()
+    monkeypatch.setenv("FLOCKS_WORKSPACE_DIR", str(project_workspace))
+    monkeypatch.setattr("flocks.workspace.manager._user_home_dir", lambda: home)
+    try:
+        output_path = doc_parser_module._resolve_output_path(
+            Path("/tmp/report.docx"),
+            "outputs/2026-05-07/child-session/report.md",
+            session_id="root-session",
+        )
+    finally:
+        WorkspaceManager._instance = previous_instance
+
+    assert output_path == (
+        home
+        / ".flocks"
+        / "workspace"
+        / "outputs"
+        / "2026-05-07"
+        / "root-session"
+        / "child-session"
+        / "report.md"
+    )
 
 
 def test_resolve_input_path_uses_workspace_dir_for_relative_paths(tmp_path, monkeypatch, doc_parser_module):

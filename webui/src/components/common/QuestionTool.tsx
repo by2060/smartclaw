@@ -50,7 +50,7 @@ export interface QuestionItem {
 
 export interface QuestionToolProps {
   questions: QuestionItem[];
-  onAnswer: (answers: string[][]) => Promise<void>;
+  onAnswer: (answers: string[][], remember?: boolean | boolean[]) => Promise<void>;
   onReject?: () => Promise<void>;
   /** Use compact sizing (for SessionChat) vs full sizing (for Session page) */
   compact?: boolean;
@@ -82,6 +82,10 @@ function isQuestionAnswered(q: QuestionItem, answer: string[]): boolean {
   if (type === 'number') return (answer[0] ?? '').trim().length > 0;
   if (type === 'file') return answer.length > 0;
   return false;
+}
+function isRememberableQuestion(q: QuestionItem): boolean {
+  const type = resolveType(q);
+  return type !== 'password' && type !== 'file';
 }
 
 // ============================================================================
@@ -390,6 +394,7 @@ function ConfirmInput({
 export function QuestionTool({ questions, onAnswer, onReject, compact = false }: QuestionToolProps) {
   const { t } = useTranslation('common');
   const [answers, setAnswers] = useState<string[][]>(() => questions.map(() => []));
+  const [rememberFlags, setRememberFlags] = useState<boolean[]>(() => questions.map(() => false));
   const [submitting, setSubmitting] = useState(false);
 
   const setAnswer = (idx: number, value: string[]) => {
@@ -399,12 +404,22 @@ export function QuestionTool({ questions, onAnswer, onReject, compact = false }:
       return next;
     });
   };
+  const setRemember = (idx: number, value: boolean) => {
+    setRememberFlags(prev => {
+      const next = [...prev];
+      next[idx] = value;
+      return next;
+    });
+  };
 
   const canSubmit = questions.every((q, i) => isQuestionAnswered(q, answers[i] ?? []));
 
   const handleSubmit = async () => {
+    const remembered = rememberFlags.some(Boolean)
+      ? (questions.length === 1 ? rememberFlags[0] : rememberFlags)
+      : undefined;
     setSubmitting(true);
-    try { await onAnswer(answers); } finally { setSubmitting(false); }
+    try { await onAnswer(answers, remembered); } finally { setSubmitting(false); }
   };
 
   const handleReject = async () => {
@@ -447,6 +462,19 @@ export function QuestionTool({ questions, onAnswer, onReject, compact = false }:
               {type === 'password' && <PasswordInput {...inputProps} />}
               {type === 'file'     && <FileInput     {...inputProps} />}
               {type === 'confirm'  && <ConfirmInput  answer={answer} onChange={v => setAnswer(qIdx, v)} disabled={submitting} compact={compact} />}
+
+              {isRememberableQuestion(q) && (
+                <label className={`mt-2 inline-flex items-center gap-2 ${compact ? 'text-[11px]' : 'text-xs'} text-gray-500`}>
+                  <input
+                    type="checkbox"
+                    checked={rememberFlags[qIdx] ?? false}
+                    onChange={e => setRemember(qIdx, e.target.checked)}
+                    disabled={submitting}
+                    className="h-3.5 w-3.5 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                  />
+                  <span>{t('question.rememberAnswer')}</span>
+                </label>
+              )}
             </div>
           );
         })}

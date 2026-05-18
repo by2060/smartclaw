@@ -137,10 +137,10 @@
 
 ## 6. 文件输出规则
 
-节点有任何文件输出时，统一写入 `~/.flocks/workspace/outputs/<YYYY-MM-DD>/` 目录下。
+节点有任何文件输出时，统一写入 `~/.flocks/workspace/outputs/<YYYY-MM-DD>/<session_id>/` 目录下。
 
 - 日期在**执行时**动态取（`datetime.date.today().isoformat()`），不依赖 session 启动时的注入值
-- 目录通过 `WorkspaceManager.get_instance().get_workspace_dir() / 'outputs' / date_str` 构造
+- 目录通过 `WorkspaceManager.get_instance().get_outputs_dir(session_id, day=date_str)` 构造
 - **禁止**使用项目相对路径（如裸 `artifacts/`），会落到项目根目录污染代码仓库
 
 ---
@@ -214,7 +214,7 @@
       "id": "summarize",
       "type": "python",
       "description": "使用 LLM 生成摘要并落盘",
-      "code": "import os, datetime\nfrom flocks.workspace.manager import WorkspaceManager\nsearch_text = inputs.get('search_text', '')\nprompt = f'请总结以下内容：\\n{search_text}'\nsummary = llm.ask(prompt)\nws = WorkspaceManager.get_instance()\noutput_dir = str(ws.get_workspace_dir() / 'outputs' / datetime.date.today().isoformat())\nos.makedirs(output_dir, exist_ok=True)\ntool.run('write', filePath=os.path.join(output_dir, 'summarize_output.md'), content=summary)\noutputs['summary'] = summary"
+      "code": "import os, datetime\nfrom flocks.workspace.manager import WorkspaceManager\nsearch_text = inputs.get('search_text', '')\nprompt = f'请总结以下内容：\\n{search_text}'\nsummary = llm.ask(prompt)\nws = WorkspaceManager.get_instance()\nsession_id = inputs.get('_session_id') or inputs.get('session_id')\noutput_dir = str(ws.get_outputs_dir(session_id, day=datetime.date.today()))\nos.makedirs(output_dir, exist_ok=True)\ntool.run('write', filePath=os.path.join(output_dir, 'summarize_output.md'), content=summary)\noutputs['summary'] = summary"
     },
     {
       "id": "fallback",

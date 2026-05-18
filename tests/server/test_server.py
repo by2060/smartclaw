@@ -553,3 +553,214 @@ async def test_question_pending_route_lists_session_requests(client):
         clear_request_state(req2["id"])
 
 
+@pytest.mark.asyncio
+async def test_question_reply_remember_saves_account_answer(client):
+    """Question replies can remember answers for exact future matches."""
+    from flocks.memory.question_memory import QuestionMemoryService
+    from flocks.server.routes.question import clear_request_state, store_question_request
+    from flocks.session import Session
+
+    session = await Session.create(
+        project_id="proj_question_memory",
+        directory=".",
+        title="question memory",
+        user_context={"currentUserId": "user_question_memory"},
+        memory_enabled=False,
+    )
+    question = {
+        "question": "Choose a plan?",
+        "type": "choice",
+        "options": [{"label": "Plan A"}, {"label": "Plan B"}],
+        "multiple": False,
+    }
+    request = {
+        "id": "question_remember_req",
+        "sessionID": session.id,
+        "questions": [question],
+        "tool": {"callID": "call_remember", "messageID": "msg_remember"},
+    }
+    store_question_request(request["id"], request)
+
+    try:
+        response = await client.post(
+            f"/api/question/{request['id']}/reply",
+            json={"answers": [["Plan A"]], "remember": True},
+        )
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() == {"success": True}
+
+        matched = await QuestionMemoryService.match_batch(
+            session_id=session.id,
+            questions=[question],
+        )
+        assert matched == [["Plan A"]]
+
+        auth_question = {
+            "question": "Enter API token",
+            "type": "password",
+            "options": [],
+        }
+        partial = await QuestionMemoryService.match_questions(
+            session_id=session.id,
+            questions=[question, auth_question],
+        )
+        assert partial == [["Plan A"], None]
+    finally:
+        clear_request_state(request["id"])
+
+
+@pytest.mark.asyncio
+async def test_question_remember_reuses_contextual_text_answer_across_new_session(client):
+    """Remembered text answers should survive related sessions and wording changes."""
+    from flocks.memory.question_memory import QuestionMemoryService
+    from flocks.server.routes.question import clear_request_state, store_question_request
+    from flocks.session import Session
+
+    first_session = await Session.create(
+        project_id="proj_question_memory",
+        directory=".",
+        title="skills synchronization setup",
+        user_context={"currentUserId": "user_question_memory_text"},
+        memory_enabled=False,
+    )
+    second_session = await Session.create(
+        project_id="proj_question_memory",
+        directory=".",
+        title="skills synchronization follow up",
+        user_context={"currentUserId": "user_question_memory_text"},
+        memory_enabled=False,
+    )
+    endpoint_question = {
+        "question": "Enter the service endpoint used for skills synchronization",
+        "header": "Integration configuration",
+        "type": "text",
+        "options": [],
+    }
+    auth_question = {
+        "question": "Enter the API authentication token",
+        "header": "API authentication",
+        "type": "password",
+        "options": [],
+    }
+    request = {
+        "id": "question_remember_context_text_req",
+        "sessionID": first_session.id,
+        "questions": [endpoint_question, auth_question],
+        "tool": {"callID": "call_remember_api", "messageID": "msg_remember_api"},
+    }
+    store_question_request(request["id"], request)
+
+    try:
+        response = await client.post(
+            f"/api/question/{request['id']}/reply",
+            json={
+                "answers": [["https://skills.example.test/api"], ["secret-token"]],
+                "remember": [True, False],
+            },
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        next_endpoint_question = {
+            "question": "Provide the endpoint used by the skills synchronization service",
+            "header": "Integration settings",
+            "type": "text",
+            "options": [],
+        }
+        next_auth_question = {
+            "question": "请输入 API 认证信息",
+            "header": "认证",
+            "type": "password",
+            "options": [],
+        }
+        partial = await QuestionMemoryService.match_questions(
+            session_id=second_session.id,
+            questions=[next_endpoint_question, next_auth_question],
+        )
+        assert partial == [["https://skills.example.test/api"], None]
+    finally:
+        clear_request_state(request["id"])
+
+
+@pytest.mark.asyncio
+async def test_question_remember_refuses_sensitive_text_answers(client):
+    from flocks.memory.question_memory import QuestionMemoryService
+    from flocks.server.routes.question import clear_request_state, store_question_request
+    from flocks.session import Session
+
+    session = await Session.create(
+        project_id="proj_question_memory",
+        directory=".",
+        title="sensitive question memory",
+        user_context={"currentUserId": "user_question_memory_sensitive"},
+        memory_enabled=False,
+    )
+    question = {
+        "question": "Enter the API key",
+        "type": "text",
+        "options": [],
+    }
+    request = {
+        "id": "question_remember_sensitive_req",
+        "sessionID": session.id,
+        "questions": [question],
+        "tool": {"callID": "call_remember_sensitive", "messageID": "msg_remember_sensitive"},
+    }
+    store_question_request(request["id"], request)
+
+    try:
+        response = await client.post(
+            f"/api/question/{request['id']}/reply",
+            json={"answers": [["should-not-persist"]], "remember": True},
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        matched = await QuestionMemoryService.match_batch(
+            session_id=session.id,
+            questions=[question],
+        )
+        assert matched is None
+    finally:
+        clear_request_state(request["id"])
+
+
+@pytest.mark.asyncio
+async def test_question_reply_without_remember_does_not_save(client):
+    from flocks.memory.question_memory import QuestionMemoryService
+    from flocks.server.routes.question import clear_request_state, store_question_request
+    from flocks.session import Session
+
+    session = await Session.create(
+        project_id="proj_question_memory",
+        directory=".",
+        title="question memory",
+        user_context={"currentUserId": "user_question_memory_no_save"},
+        memory_enabled=False,
+    )
+    question = {
+        "question": "Choose a color?",
+        "type": "choice",
+        "options": [{"label": "Blue"}, {"label": "Green"}],
+        "multiple": False,
+    }
+    request = {
+        "id": "question_no_remember_req",
+        "sessionID": session.id,
+        "questions": [question],
+        "tool": {"callID": "call_no_remember", "messageID": "msg_no_remember"},
+    }
+    store_question_request(request["id"], request)
+
+    try:
+        response = await client.post(
+            f"/api/question/{request['id']}/reply",
+            json={"answers": [["Blue"]]},
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        matched = await QuestionMemoryService.match_batch(
+            session_id=session.id,
+            questions=[question],
+        )
+        assert matched is None
+    finally:
+        clear_request_state(request["id"])

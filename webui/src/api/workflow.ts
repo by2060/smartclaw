@@ -180,6 +180,9 @@ export const workflowAPI = {
     inputs?: Record<string, any>;
     timeoutS?: number;
     trace?: boolean;
+    sessionId?: string;
+    messageId?: string;
+    agent?: string;
   }) =>
     client.post<WorkflowExecution>(`/api/workflow/${id}/run`, data, { timeout: 0 }),
   
@@ -239,8 +242,14 @@ export const workflowAPI = {
       outputTopic?: string;
     } | null>(`/api/workflow/${id}/kafka-config`),
 
-  runNode: (id: string, data: { nodeId: string; inputs?: Record<string, any> }) =>
-    client.post<WorkflowNodeExecution>(`/api/workflow/${id}/run-node`, { node_id: data.nodeId, inputs: data.inputs ?? {} }),
+  runNode: (id: string, data: { nodeId: string; inputs?: Record<string, any>; sessionId?: string; messageId?: string; agent?: string }) =>
+    client.post<WorkflowNodeExecution>(`/api/workflow/${id}/run-node`, {
+      node_id: data.nodeId,
+      inputs: data.inputs ?? {},
+      sessionId: data.sessionId,
+      messageId: data.messageId,
+      agent: data.agent,
+    }),
 
   getSampleInputs: (id: string) =>
     client.get<{ sampleInputs: Record<string, any> }>(`/api/workflow/${id}/sample-inputs`),

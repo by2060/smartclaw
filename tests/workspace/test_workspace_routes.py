@@ -585,6 +585,32 @@ class TestMemoryView:
         assert r.status_code == 200
         assert r.json()["content"] == "daily note"
 
+    def test_member_memory_view_is_account_scoped(self, workspace_client):
+        from flocks.auth.context import AuthUser, reset_current_auth_user, set_current_auth_user
+
+        mem = _mem(workspace_client)
+        (mem / "users" / "user_a").mkdir(parents=True)
+        (mem / "users" / "user_b").mkdir(parents=True)
+        (mem / "users" / "user_a" / "alice.md").write_text("alice note")
+        (mem / "users" / "user_b" / "bob.md").write_text("bob note")
+
+        token = set_current_auth_user(
+            AuthUser(id="user_a", username="alice", role="member", status="active")
+        )
+        try:
+            listing = _client(workspace_client).get("/api/workspace/memory/list")
+            assert listing.status_code == 200
+            assert {n["path"] for n in listing.json()} == {"alice.md"}
+
+            own = _client(workspace_client).get("/api/workspace/memory/file?path=alice.md")
+            assert own.status_code == 200
+            assert own.json()["content"] == "alice note"
+
+            other = _client(workspace_client).get("/api/workspace/memory/file?path=users/user_b/bob.md")
+            assert other.status_code == 403
+        finally:
+            reset_current_auth_user(token)
+
     def test_memory_write_not_allowed(self, workspace_client):
         """Memory directory has no write endpoint — PUT /file with memory path is confined to workspace."""
         # Trying to write to memory via workspace file endpoint should be rejected

@@ -156,6 +156,9 @@ def _sanitize_stem(path: Path) -> str:
     return stem or "document"
 
 
+# 输出按会话隔离修改
+# 删除
+'''
 def _default_output_path(input_file: Path) -> Path:
     workspace = WorkspaceManager.get_instance()
     workspace.ensure_dirs()
@@ -164,6 +167,24 @@ def _default_output_path(input_file: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     suffix = input_file.suffix.lower().lstrip(".") or "file"
     return output_dir / f"{_sanitize_stem(input_file)}_{suffix}.md"
+'''
+# 新增
+def _default_output_path(input_file: Path, session_id: str | None = None) -> Path:
+    workspace = WorkspaceManager.get_instance()
+    workspace.ensure_dirs()
+    output_dir = workspace.get_outputs_dir(session_id, day=dt.date.today())
+    suffix = input_file.suffix.lower().lstrip(".") or "file"
+    return output_dir / f"{_sanitize_stem(input_file)}_{suffix}.md"
+# --------------end----------------------------
+
+
+def _effective_output_session_id(ctx: ToolContext) -> str | None:
+    extra = ctx.extra if isinstance(ctx.extra, dict) else {}
+    for key in ("output_session_id", "main_session_key"):
+        value = extra.get(key)
+        if value:
+            return str(value)
+    return ctx.session_id
 
 
 def _resolve_input_path(input_path: str) -> Path:
@@ -176,9 +197,18 @@ def _resolve_input_path(input_path: str) -> Path:
     return workspace.resolve_workspace_path(str(path))
 
 
-def _resolve_output_path(input_file: Path, output_path: str | None) -> Path:
+def _resolve_output_path(
+    input_file: Path,
+    output_path: str | None,
+    # 输出按会话隔离新增
+    session_id: str | None = None,
+) -> Path:
     if not output_path:
-        return _default_output_path(input_file)
+        # 输出按会话隔离修改
+        # 删除
+        # return _default_output_path(input_file)
+        # 新增
+        return _default_output_path(input_file, session_id)
 
     path = Path(output_path).expanduser()
     if not path.is_absolute():
@@ -187,8 +217,20 @@ def _resolve_output_path(input_file: Path, output_path: str | None) -> Path:
         path = workspace.get_workspace_dir() / output_path
     if path.suffix.lower() != ".md":
         path = path.with_suffix(".md")
-    return path.resolve()
 
+    # 输出按会话隔离修改
+    # 删除
+    # return path.resolve()
+    # 新增
+    path = path.resolve()
+    workspace = WorkspaceManager.get_instance()
+    rewritten = workspace.rewrite_legacy_output_path(
+        path,
+        session_id,
+        source_dir=workspace.get_workspace_dir(),
+    )
+    return rewritten.resolve() if rewritten is not None else path
+    # -------------------------------end----------------------------------
 
 def _extract_with_markitdown(file_path: Path) -> str:
     markitdown = importlib.import_module("markitdown")
@@ -700,8 +742,13 @@ async def doc_parser(
             success=False,
             error=f"Unsupported file type: {input_file.suffix or '(none)'}. Supported: {supported}",
         )
-
-    output_file = _resolve_output_path(input_file, output_path)
+    # 输出按会话隔离
+    # output_file = _resolve_output_path(input_file, output_path)
+    output_file = _resolve_output_path(
+        input_file,
+        output_path,
+        _effective_output_session_id(ctx),
+    )
     if output_file.exists() and not overwrite:
         return ToolResult(success=False, error=f"Output file already exists: {output_file}")
 

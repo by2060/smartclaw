@@ -34,7 +34,7 @@
     }
   },
   "sandbox": {
-    "mode": "off",
+    "mode": "on",
     "scope": "agent",
     "workspace_access": "rw",
     "docker": {
@@ -61,5 +61,22 @@
     "gitee_token": null,
     "archive_format": "auto",
     "backup_retain_count": 5
+  },
+  "memory": {
+      "enabled": true,
+      "sources": ["memory"],
+      "hooks": {
+        "session_memory": {
+          "enabled": true,
+          "message_count": 15,
+          "use_llm_slug": true,
+          "slug_timeout": 15
+        }
+      }
   }
+  "bash": {
+    "command_black_list": ["rm", "sudo", "shutdown", "reboot"],
+    "block_message": "没有执行，黑名单命令已被拒绝：{command}"
+  }
+
 }

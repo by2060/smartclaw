@@ -132,18 +132,21 @@ class TestAgentDeclaresTool:
     def test_agent_without_tools_defaults_to_deny(self):
         runner = _make_runner()
         agent = _make_agent(name="plan", tools=None)
-        assert runner._agent_declares_tool(agent, "bash") is False
+        assert runner._agent_declares_tool(agent, "bash") is True
+        assert runner._agent_declares_tool(agent, "any_tool") is False
 
-    def test_agent_with_empty_tools_allows_nothing(self):
+    def test_agent_with_empty_tools_keeps_always_load_tools(self):
         runner = _make_runner()
         agent = _make_agent(name="explore", tools=[])
-        assert runner._agent_declares_tool(agent, "bash") is False
+        assert runner._agent_declares_tool(agent, "bash") is True
+        assert runner._agent_declares_tool(agent, "websearch") is False
 
     def test_non_rex_agent_defaults_to_deny(self):
         runner = _make_runner()
         agent = _make_agent(name="custom_agent", tools=None)
         # Without an explicit tools list, only always-load tools remain available.
-        assert runner._agent_declares_tool(agent, "read") is False
+        assert runner._agent_declares_tool(agent, "read") is True
+        assert runner._agent_declares_tool(agent, "websearch") is False
 
 
 # ---------------------------------------------------------------------------
@@ -411,6 +414,32 @@ class TestBuildTools:
         assert event_callback.await_args.args[1]["enabledToolCount"] == 3
 
     @pytest.mark.asyncio
+    async def test_list_callable_tools_uses_current_session_id(self):
+        runner = _make_runner("ses_child_agent")
+        agent = _make_agent(name="baseline-check", tools=["read", "write"])
+        event_callback = AsyncMock()
+        runner.callbacks.event_publish_callback = event_callback
+
+        selector_mock = AsyncMock(return_value=SimpleNamespace(
+            tool_infos=[],
+            metadata={"callableToolCount": 2},
+        ))
+        with patch(
+            "flocks.session.runner.list_session_callable_tool_infos",
+            selector_mock,
+        ):
+            tool_infos, metadata = await runner._list_callable_tool_infos_for_turn(agent, [])
+
+        assert tool_infos == []
+        assert metadata == {"callableToolCount": 2}
+        selector_mock.assert_awaited_once_with(
+            session_id="ses_child_agent",
+            declared_tool_names=["read", "write"],
+            step=0,
+            event_publish_callback=event_callback,
+        )
+
+    @pytest.mark.asyncio
     async def test_build_tools_rewrites_skill_description(self):
         runner = _make_runner()
         agent = _make_agent(name="rex")
@@ -507,6 +536,46 @@ class TestBuildSystemPrompts:
         assert sandbox_mock.await_count == 2
         assert channel_mock.await_count == 2
 
+    @pytest.mark.asyncio
+    async def test_build_system_prompts_labels_memory_as_human_user_memory(self):
+        session = _make_session("ses_prompts_memory")
+        session.user_context = {"currentUserId": "zhh_test_001"}
+        runner = SessionRunner(
+            session=session,
+            memory_bootstrap_data={
+                "instructions": "memory instructions",
+                "main_memory": {
+                    "path": "MEMORY.md",
+                    "content": "- User hobbies: hiking, travel, food",
+                    "inject": True,
+                },
+            },
+        )
+        agent = _make_agent(name="rex")
+        agent.prompt = "agent identity prompt"
+
+        with patch("flocks.session.runner.SystemPrompt.provider", return_value=[]), \
+             patch("flocks.session.runner.SystemPrompt.environment", AsyncMock(return_value=[])), \
+             patch("flocks.session.runner.SystemPrompt.custom", AsyncMock(return_value=[])), \
+             patch.object(SessionRunner, "_build_sandbox_prompt", AsyncMock(return_value="")), \
+             patch.object(SessionRunner, "_build_channel_context_prompt", AsyncMock(return_value="")), \
+             patch.object(SessionRunner, "_get_tool_instructions", return_value="tool instructions"), \
+             patch.object(SessionRunner, "_build_tool_catalog_prompt", return_value=""):
+            prompts = await runner._build_system_prompts(agent)
+
+        memory_prompt = next(p for p in prompts if "Current Human User Memory" in p)
+        assert "Current human user id: `zhh_test_001`" in memory_prompt
+        assert "not the assistant" in memory_prompt
+        assert "\"my hobbies\"" in memory_prompt
+        assert "- User hobbies: hiking, travel, food" in memory_prompt
+
+        answer_rule_prompt = next(p for p in prompts if "Current Human User Profile Answering Rule" in p)
+        agent_prompt_index = prompts.index(agent.prompt)
+        answer_rule_index = prompts.index(answer_rule_prompt)
+        assert answer_rule_index > agent_prompt_index
+        assert "answer directly from the account-scoped memory" in answer_rule_prompt
+        assert "do not have personal hobbies" in answer_rule_prompt
+
     def test_build_tool_catalog_prompt_for_rex(self):
         runner = _make_runner()
         agent = _make_agent(name="rex")
@@ -600,7 +669,7 @@ class TestBuildSystemPrompts:
         with patch("flocks.session.runner.list_tool_catalog_infos", return_value=tool_infos):
             infos = runner._list_catalog_tool_infos(agent)
 
-        assert [tool.name for tool in infos] == ["read"]
+        assert [tool.name for tool in infos] == ["bash", "read"]
 
 
 class TestMiniMaxTextToolMode:

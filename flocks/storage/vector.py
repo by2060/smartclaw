@@ -24,6 +24,8 @@ VECTOR_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS memory_files (
     path TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,
+    current_user_id TEXT,
+    session_id TEXT,
     source TEXT NOT NULL,  -- 'memory' | 'session'
     hash TEXT NOT NULL,
     mtime REAL NOT NULL,
@@ -36,6 +38,8 @@ CREATE TABLE IF NOT EXISTS memory_chunks (
     id TEXT PRIMARY KEY,
     path TEXT NOT NULL,
     project_id TEXT NOT NULL,
+    current_user_id TEXT,
+    session_id TEXT,
     source TEXT NOT NULL,
     start_line INTEGER NOT NULL,
     end_line INTEGER NOT NULL,
@@ -79,6 +83,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
     path UNINDEXED,
     source UNINDEXED,
     project_id UNINDEXED,
+    current_user_id UNINDEXED,
+    session_id UNINDEXED,
     start_line UNINDEXED,
     end_line UNINDEXED,
     tokenize = 'porter unicode61'
@@ -103,6 +109,7 @@ async def ensure_vector_tables(db_path: Path) -> Dict[str, Any]:
         async with Storage.connect(db_path) as db:
             # Create vector tables
             await db.executescript(VECTOR_SCHEMA_SQL)
+            await _ensure_memory_scope_columns(db)
             await db.commit()
             status["vector_tables"] = True
             log.info("vector.tables.created")
@@ -110,6 +117,7 @@ async def ensure_vector_tables(db_path: Path) -> Dict[str, Any]:
             # Try to create FTS5 table
             try:
                 await db.executescript(FTS5_SCHEMA_SQL)
+                await _ensure_memory_fts_scope_columns(db)
                 await db.commit()
                 status["fts5"] = True
                 log.info("vector.fts5.created")
@@ -121,6 +129,59 @@ async def ensure_vector_tables(db_path: Path) -> Dict[str, Any]:
     except Exception as e:
         log.error("vector.tables.failed", {"error": str(e)})
         raise
+
+
+async def _ensure_memory_scope_columns(db: aiosqlite.Connection) -> None:
+    """Add memory account-scope columns for databases created before isolation."""
+    additions = {
+        "memory_files": [
+            ("current_user_id", "ALTER TABLE memory_files ADD COLUMN current_user_id TEXT"),
+            ("session_id", "ALTER TABLE memory_files ADD COLUMN session_id TEXT"),
+        ],
+        "memory_chunks": [
+            ("current_user_id", "ALTER TABLE memory_chunks ADD COLUMN current_user_id TEXT"),
+            ("session_id", "ALTER TABLE memory_chunks ADD COLUMN session_id TEXT"),
+        ],
+    }
+
+    for table, statements in additions.items():
+        async with db.execute(f"PRAGMA table_info({table})") as cursor:
+            existing = {row[1] for row in await cursor.fetchall()}
+        for column, statement in statements:
+            if column not in existing:
+                await db.execute(statement)
+
+    for statement in (
+        "CREATE INDEX IF NOT EXISTS idx_memory_files_current_user ON memory_files(current_user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_memory_files_session ON memory_files(session_id)",
+        "CREATE INDEX IF NOT EXISTS idx_memory_chunks_current_user ON memory_chunks(current_user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_memory_chunks_session ON memory_chunks(session_id)",
+    ):
+        await db.execute(statement)
+
+
+async def _ensure_memory_fts_scope_columns(db: aiosqlite.Connection) -> None:
+    """Best-effort migration for the FTS mirror table."""
+    try:
+        async with db.execute("PRAGMA table_info(memory_fts)") as cursor:
+            existing = {row[1] for row in await cursor.fetchall()}
+    except Exception:
+        return
+
+    rebuild = False
+    for column in ("current_user_id", "session_id"):
+        if column in existing:
+            continue
+        try:
+            await db.execute(f"ALTER TABLE memory_fts ADD COLUMN {column} UNINDEXED")
+        except Exception as e:
+            log.warn("vector.fts5.scope_column_failed", {"column": column, "error": str(e)})
+            rebuild = True
+
+    if rebuild:
+        await db.execute("DROP TABLE IF EXISTS memory_fts")
+        await db.executescript(FTS5_SCHEMA_SQL)
+        log.info("vector.fts5.rebuilt_for_scope")
 
 
 def cosine_similarity(a: List[float], b: List[float]) -> float:
@@ -168,6 +229,8 @@ async def vector_search(
     max_results: int = 10,
     min_score: float = 0.0,
     sources: Optional[List[str]] = None,
+    current_user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Perform vector similarity search
@@ -187,7 +250,6 @@ async def vector_search(
         List of search results
     """
     results = []
-    
     try:
         async with Storage.connect(db_path) as db:
             # Build query
@@ -197,6 +259,14 @@ async def vector_search(
                 WHERE project_id = ? AND embedding IS NOT NULL
             """
             params = [project_id]
+
+            if current_user_id is not None:
+                query += " AND current_user_id = ?"
+                params.append(current_user_id)
+
+            if session_id is not None:
+                query += " AND session_id = ?"
+                params.append(session_id)
             
             if sources:
                 placeholders = ",".join("?" * len(sources))
@@ -282,6 +352,8 @@ async def fts_search(
     query: str,
     max_results: int = 10,
     sources: Optional[List[str]] = None,
+    current_user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Perform FTS5 full-text search
@@ -297,7 +369,6 @@ async def fts_search(
         List of search results with BM25 scores
     """
     results = []
-    
     try:
         async with Storage.connect(db_path) as db:
             # Build FTS query
@@ -320,6 +391,14 @@ async def fts_search(
                     AND f.project_id = ?
             """
             params = [fts_query, project_id]
+
+            if current_user_id is not None:
+                sql += " AND f.current_user_id = ?"
+                params.append(current_user_id)
+
+            if session_id is not None:
+                sql += " AND f.session_id = ?"
+                params.append(session_id)
             
             if sources:
                 placeholders = ",".join("?" * len(sources))
@@ -377,14 +456,17 @@ async def insert_chunks(
             # Insert into chunks table
             await db.executemany("""
                 INSERT OR REPLACE INTO memory_chunks
-                (id, path, project_id, source, start_line, end_line, hash, text,
+                (id, path, project_id, current_user_id, session_id,
+                 source, start_line, end_line, hash, text,
                  embedding, embedding_model, embedding_dims, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, [
                 (
                     chunk["id"],
                     chunk["path"],
                     chunk["project_id"],
+                    chunk.get("current_user_id"),
+                    chunk.get("session_id"),
                     chunk["source"],
                     chunk["start_line"],
                     chunk["end_line"],
@@ -403,14 +485,17 @@ async def insert_chunks(
             try:
                 await db.executemany("""
                     INSERT OR REPLACE INTO memory_fts
-                    (chunk_id, path, source, project_id, start_line, end_line, text)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (chunk_id, path, source, project_id, current_user_id,
+                     session_id, start_line, end_line, text)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, [
                     (
                         chunk["id"],
                         chunk["path"],
                         chunk["source"],
                         chunk["project_id"],
+                        chunk.get("current_user_id"),
+                        chunk.get("session_id"),
                         chunk["start_line"],
                         chunk["end_line"],
                         chunk["text"],

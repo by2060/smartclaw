@@ -32,6 +32,9 @@ class MemoryIndexer:
         provider_id: str,
         embedding_model: str,
         config: MemoryConfig,
+        # 记忆按账号隔离新增
+        current_user_id: Optional[str] = None,
+        # ------end--------
     ):
         """
         Initialize indexer
@@ -42,12 +45,16 @@ class MemoryIndexer:
             provider_id: Embedding provider ID
             embedding_model: Embedding model name
             config: Memory configuration
+            current_user_id: User ID
         """
         self.project_id = project_id
         self.workspace_dir = Path(workspace_dir)
         self.provider_id = provider_id
         self.embedding_model = embedding_model
         self.config = config
+        # 记忆按账号隔离新增
+        self.current_user_id = current_user_id
+        # ------end--------
         self.chunker = TextChunker(config.chunking)
     
     async def sync(
@@ -137,17 +144,37 @@ class MemoryIndexer:
         reuse in ``_index_file``.
         """
         from flocks.config import Config
-        
+        from flocks.memory.manager import _safe_scope_segment
+        # 记忆按账号隔离修改
+        # 删除
+        '''
         data_dir = Config.get_data_path()
         memory_root = data_dir / "memory"
         extra_paths = list(self.config.extra_paths)
+        '''
+        # 新增
+        data_dir = Config.get_data_path()
+        memory_root = data_dir / "memory"
+        scan_root = memory_root / "users" / _safe_scope_segment(
+            self.current_user_id or "__shared__"
+        )
+        extra_paths = list(self.config.extra_paths)
+        # -----------end----------------------------
 
         def _scan_sync() -> List[MemoryFileEntry]:
             files: List[MemoryFileEntry] = []
             seen: set[str] = set()
 
+            # 记忆按账号隔离修改
+            # 删除
+            '''
             if not memory_root.exists():
                 return files
+            '''
+            # 新增
+            if not scan_root.exists():
+                return files
+            # ---------------end-----------------
 
             def _add(fp: Path) -> None:
                 resolved = str(fp.resolve())
@@ -156,6 +183,9 @@ class MemoryIndexer:
                 seen.add(resolved)
                 files.append(self._create_file_entry(fp, memory_root, _content_cache=_content_cache))
 
+            # 记忆按账号隔离
+            # 删除
+            '''
             for fp in memory_root.glob("**/*.md"):
                 if fp.is_file():
                     _add(fp)
@@ -169,12 +199,30 @@ class MemoryIndexer:
                         for fp in full.glob("**/*.md"):
                             if fp.is_file():
                                 _add(fp)
+            '''
+            # 新增
+            for fp in scan_root.glob("**/*.md"):
+                if fp.is_file():
+                    _add(fp)
+
+            for ep in extra_paths:
+                full = scan_root / ep
+                if full.exists():
+                    if full.is_file():
+                        _add(full)
+                    elif full.is_dir():
+                        for fp in full.glob("**/*.md"):
+                            if fp.is_file():
+                                _add(fp)
             return files
+
+            # ---------end----------------
 
         files = await asyncio.to_thread(_scan_sync)
 
         if not files:
-            log.debug("indexer.memory_root.not_found", {"path": str(memory_root)})
+            # log.debug("indexer.memory_root.not_found", {"path": str(memory_root)})
+            log.debug("indexer.memory_root.not_found", {"path": str(scan_root)})
         else:
             log.debug("indexer.files.scanned", {"count": len(files)})
         return files
@@ -223,12 +271,29 @@ class MemoryIndexer:
         
         try:
             async with Storage.connect(Storage.get_db_path()) as db:
+
+                # 记忆按账号隔离修改
+                # 删除
+                '''
                 cursor = await db.execute("""
                     SELECT path, hash, mtime, size
                     FROM memory_files
                     WHERE project_id = ?
                 """, (self.project_id,))
-                
+                '''
+                # 新增
+                query = """
+                    SELECT path, hash, mtime, size
+                    FROM memory_files
+                    WHERE project_id = ?
+                """
+                params = [self.project_id]
+                if self.current_user_id is not None:
+                    query += " AND current_user_id = ?"
+                    params.append(self.current_user_id)
+
+                cursor = await db.execute(query, params)
+                # -------------end----------------------
                 rows = await cursor.fetchall()
                 for path, hash_val, mtime, size in rows:
                     indexed[path] = {
@@ -400,6 +465,10 @@ class MemoryIndexer:
             "id": str(uuid.uuid4()),
             "path": file_entry.path,
             "project_id": self.project_id,
+            # 记忆按账号隔离新增
+            "current_user_id": self.current_user_id,
+			"session_id": None,
+			# ---------------end-----------------
             "source": "memory",
             "start_line": chunk.start_line,
             "end_line": chunk.end_line,
@@ -451,8 +520,12 @@ class MemoryIndexer:
         try:
             async with Storage.connect(Storage.get_db_path()) as db:
                 await db.execute(
-                    "DELETE FROM memory_chunks WHERE project_id = ? AND path = ?",
-                    (self.project_id, path),
+                    "DELETE FROM memory_chunks WHERE project_id = ? AND path = ? AND current_user_id = ?",
+                    (self.project_id, path, self.current_user_id),
+                )
+                await db.execute(
+                    "DELETE FROM memory_fts WHERE project_id = ? AND path = ? AND current_user_id = ?",
+                    (self.project_id, path, self.current_user_id),
                 )
                 await db.commit()
         except Exception as e:
@@ -466,7 +539,10 @@ class MemoryIndexer:
         
         try:
             async with Storage.connect(Storage.get_db_path()) as db:
-                await db.execute("""
+                # 记忆按账号隔离修改
+                # 删除
+                '''
+                 await db.execute("""
                     INSERT OR REPLACE INTO memory_files
                     (path, project_id, source, hash, mtime, size, indexed_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -475,6 +551,21 @@ class MemoryIndexer:
                     self.project_id,
                     "memory",
                     file_entry.hash,
+                '''
+                # 新增
+                await db.execute("""
+                    INSERT OR REPLACE INTO memory_files
+                    (path, project_id, current_user_id, session_id,
+                     source, hash, mtime, size, indexed_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    file_entry.path,
+                    self.project_id,
+                    self.current_user_id,
+                    None,
+                    "memory",
+                    file_entry.hash,
+                    # -----------end----------------
                     file_entry.mtime_ms / 1000,
                     file_entry.size,
                     now,
@@ -497,10 +588,24 @@ class MemoryIndexer:
         
         try:
             async with Storage.connect(Storage.get_db_path()) as db:
+                # 记忆按账号隔离修改
+                # 删除
+                '''
                 cursor = await db.execute("""
                     SELECT path FROM memory_files WHERE project_id = ?
                 """, (self.project_id,))
-                
+                '''
+                # 新增
+                query = """
+                    SELECT path FROM memory_files WHERE project_id = ?
+                """
+                params = [self.project_id]
+                if self.current_user_id is not None:
+                    query += " AND current_user_id = ?"
+                    params.append(self.current_user_id)
+
+                cursor = await db.execute(query, params)
+                # -------------end------------------------
                 indexed_paths = [row[0] for row in await cursor.fetchall()]
                 
                 # Find deleted files
@@ -510,16 +615,22 @@ class MemoryIndexer:
                     return 0
                 
                 placeholders = ",".join("?" * len(deleted))
-                params = (self.project_id, *deleted)
+
+                params = [self.project_id, self.current_user_id, *deleted]
                 
                 await db.execute(f"""
                     DELETE FROM memory_chunks
-                    WHERE project_id = ? AND path IN ({placeholders})
+                    WHERE project_id = ? AND current_user_id = ? AND path IN ({placeholders})
+                """, params)
+
+                await db.execute(f"""
+                    DELETE FROM memory_fts
+                    WHERE project_id = ? AND current_user_id = ? AND path IN ({placeholders})
                 """, params)
                 
                 await db.execute(f"""
                     DELETE FROM memory_files
-                    WHERE project_id = ? AND path IN ({placeholders})
+                    WHERE project_id = ? AND current_user_id = ? AND path IN ({placeholders})
                 """, params)
                 
                 await db.commit()

@@ -25,6 +25,12 @@ from flocks.session.message import Message, MessageRole
 from flocks.session.session_loop import SessionLoop
 # 使用轻量级元数据查询，避免循环依赖
 from flocks.agent.registry import is_delegatable
+from flocks.agent.controls import (
+    agent_allowed_skills,
+    agent_allowed_subagents,
+    agent_allows_skill,
+    agent_allows_subagent,
+)
 from flocks.skill.skill import Skill
 from flocks.config.config import Config
 from flocks.tool.subagent_result import format_sync_subagent_result
@@ -288,6 +294,19 @@ async def delegate_task_tool(
             })
             return prev
 
+    # skills权限控制新增
+    blocked_skills = [skill for skill in load_skills if not await agent_allows_skill(ctx.agent, skill)]
+    if blocked_skills:
+        allowed = await agent_allowed_skills(ctx.agent)
+        allowed_text = ", ".join(allowed) or "none"
+        return ToolResult(
+            success=False,
+            error=(
+                f'Agent "{ctx.agent}" is not allowed to load skills: {", ".join(blocked_skills)}. '
+                f"Allowed skills: {allowed_text}"
+            ),
+        )
+
     skill_result = await _resolve_skill_content(load_skills)
     if skill_result["error"]:
         return ToolResult(success=False, error=skill_result["error"])
@@ -380,6 +399,18 @@ async def delegate_task_tool(
                 )
         agent_to_use = subagent_type
 
+    # subagents权限控制新增
+    if agent_to_use and not await agent_allows_subagent(ctx.agent, agent_to_use):
+        allowed = await agent_allowed_subagents(ctx.agent)
+        allowed_text = ", ".join(allowed) or "none"
+        return ToolResult(
+            success=False,
+            error=(
+                f'Agent "{ctx.agent}" is not allowed to delegate to "{agent_to_use}". '
+                f"Allowed sub_agents: {allowed_text}"
+            ),
+        )
+
     system_parts = []
     if skill_result["content"]:
         system_parts.append(skill_result["content"])
@@ -427,6 +458,10 @@ async def delegate_task_tool(
         agent=agent_to_use,
         permission=[{"permission": "question", "action": "deny", "pattern": "*"}],
         category="task",
+        metadata=parent_session.metadata if isinstance(parent_session.metadata, dict) else None,
+        # 澄清选择答案记忆新增
+        owner_user_id=parent_session.owner_user_id,
+        owner_username=parent_session.owner_username,
     )
     await Message.create(
         session_id=created.id,

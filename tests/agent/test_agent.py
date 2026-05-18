@@ -191,8 +191,8 @@ class TestAgentPermissions:
         assert await Agent.has_tool("explore", "list") is True
         assert await Agent.has_tool("explore", "read") is True
         assert await Agent.has_tool("explore", "websearch") is True
-        # write tools denied
-        assert await Agent.has_tool("explore", "write") is False
+        # Always-load tools remain available to every agent.
+        assert await Agent.has_tool("explore", "write") is True
         assert await Agent.has_tool("explore", "edit") is False
         assert await Agent.has_tool("explore", "bash") is True
 

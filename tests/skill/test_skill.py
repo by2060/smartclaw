@@ -537,13 +537,18 @@ def test_parse_skill_md_nonexistent_file_returns_none():
 
 @pytest.mark.asyncio
 async def test_create_skill_writes_to_plugins_path(tmp_path, monkeypatch):
-    """POST /skills should write to ~/.flocks/plugins/skills/, not ~/.flocks/skills/."""
+    """POST /skills should write to project .flocks/plugins/skills/, not ~/.flocks/skills/."""
     from httpx import AsyncClient, ASGITransport
     from flocks.server.app import app
 
-    # Redirect home directory to tmp_path so we don't pollute real ~/.flocks
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(os.path, "expanduser", lambda p: str(tmp_path) if p == "~" else p.replace("~", str(tmp_path)))
+    monkeypatch.setattr(
+        "flocks.project.instance.Instance.get_directory",
+        classmethod(lambda cls: str(project_dir)),
+    )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/api/skills", json={
@@ -554,8 +559,8 @@ async def test_create_skill_writes_to_plugins_path(tmp_path, monkeypatch):
 
     assert resp.status_code == 201
     data = resp.json()
-    # Write path must be under plugins/skills/, NOT skills/
-    assert "plugins/skills" in data["location"]
-    assert "/skills/write-path-test/SKILL.md" in data["location"]
-    # Canonical path check: must NOT be directly under .flocks/skills/
-    assert "/.flocks/skills/" not in data["location"].replace("plugins/skills", "")
+    assert data["location"] == str(
+        project_dir / ".flocks" / "plugins" / "skills" / "write-path-test" / "SKILL.md"
+    )
+    assert data["source"] == "project"
+    assert not (tmp_path / ".flocks" / "plugins" / "skills" / "write-path-test" / "SKILL.md").exists()

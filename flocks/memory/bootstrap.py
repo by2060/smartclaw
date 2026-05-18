@@ -26,12 +26,23 @@ MEMORY_INSTRUCTIONS = """
 ## Memory System
 
 You have access to a persistent memory system for continuity across sessions.
-Memory is stored in a global location and accessible across all your sessions.
+Memory is stored in the current human user's account-scoped memory directory
+and accessible across that user's sessions. This memory describes the human
+user, not the assistant's personal identity.
 
 ### Files Available:
-1. `MEMORY.md` - Your long-term curated memory (already injected above)
-2. `daily/{today}.md` - Today's notes (read using memory tools if needed)
-3. `daily/{yesterday}.md` - Yesterday's notes (read using memory tools if needed)
+1. `MEMORY.md` - The current human user's long-term curated memory (already injected above)
+2. `daily/{today}.md` - Today's notes for the current human user (read using memory tools if needed)
+3. `daily/{yesterday}.md` - Yesterday's notes for the current human user (read using memory tools if needed)
+
+### User Identity Binding:
+- Current human user id: `{current_user_id}`
+- When the user asks about "I", "me", "my", or equivalent first-person phrasing,
+  interpret that as the current human user for this session.
+- If `MEMORY.md` contains facts such as user preferences, hobbies, names, or
+  recurring context, use them to answer questions about the current human user.
+- Do not reject user-profile questions by answering from the assistant's own
+  identity; distinguish the assistant's identity from the current human user's memory.
 
 ### When to Write Memory:
 - **Daily notes**: Use path `daily/YYYY-MM-DD.md` - Raw logs of what happened today
@@ -49,7 +60,6 @@ Memory is stored in a global location and accessible across all your sessions.
 ### Available Tools:
 - `memory_search` - Search all memories semantically
 - `memory_write` - Write to memory files (daily or MEMORY.md)
-- Standard `read`/`write` tools also work with memory paths
 """.strip()
 
 
@@ -57,21 +67,27 @@ class MemoryBootstrap:
     """
     Bootstrap memory files at session start
     
-    Uses Flocks' global memory storage: ~/.flocks/data/memory/
+    Uses account-scoped storage: ~/.flocks/data/memory/users/<currentUserId>/
     """
     
-    def __init__(self):
-        """Initialize memory bootstrap using global storage"""
+    def __init__(
+        self,
+        current_user_id: Optional[str] = None,
+    ):
+        """Initialize memory bootstrap using account-scoped storage."""
         from flocks.config import Config
+        from flocks.memory.manager import _safe_scope_segment
         
-        # Use global data directory (matching Flocks' architecture)
         data_dir = Config.get_data_path()
-        self.memory_dir = data_dir / "memory"
+        self.memory_root = data_dir / "memory"
+        self.current_user_id = str(current_user_id or "__shared__")
+        self.user_scope = _safe_scope_segment(self.current_user_id)
+        self.memory_dir = self.memory_root / "users" / self.user_scope
         self.daily_dir = self.memory_dir / "daily"
     
     async def load_main_memory(self) -> Optional[Dict[str, Any]]:
         """
-        Load main MEMORY.md file from .flocks/memory/
+        Load main MEMORY.md file from the current user's memory directory.
         
         Returns:
             Dict with path and content, or None if not found
@@ -145,7 +161,7 @@ class MemoryBootstrap:
         today: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Load daily memory files from .flocks/memory/daily/
+        Load daily memory files from the current user's memory directory.
         
         Args:
             days_back: Number of days back to load
@@ -195,9 +211,9 @@ class MemoryBootstrap:
         Create memory directory structure if it doesn't exist
         
         Creates:
-        - .flocks/memory/
-        - .flocks/memory/daily/
-        - .flocks/memory/MEMORY.md (if not exists)
+        - memory/users/<currentUserId>/
+        - memory/users/<currentUserId>/daily/
+        - memory/users/<currentUserId>/MEMORY.md (if not exists)
         """
         try:
             # Create directories
@@ -265,6 +281,7 @@ This is your curated long-term memory file. Store important information here:
         
         instructions = MEMORY_INSTRUCTIONS.replace("{today}", today)
         instructions = instructions.replace("{yesterday}", yesterday)
+        instructions = instructions.replace("{current_user_id}", self.current_user_id)
         
         return instructions
     

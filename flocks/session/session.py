@@ -113,6 +113,11 @@ class SessionInfo(BaseModel):
     
     # Memory system
     memory_enabled: bool = Field(True, description="Enable memory system for this session")
+    user_context: Dict[str, Any] = Field(
+        default_factory=dict,
+        alias="userContext",
+        description="Runtime user context for memory and tool scoping",
+    )
 
     # Session category: "user" for human-initiated conversations, "task" for task-triggered sessions
     category: str = Field("user", description="Session category: user or task")
@@ -272,11 +277,34 @@ class Session:
                 log.warn("session.memory.default.error", {"error": str(e)})
 
         # Bind ownership from current auth context unless explicitly provided.
+        current_user = get_current_auth_user()
         if "owner_user_id" not in kwargs or "owner_username" not in kwargs:
-            current_user = get_current_auth_user()
             if current_user:
                 kwargs.setdefault("owner_user_id", current_user.id)
                 kwargs.setdefault("owner_username", current_user.username)
+
+        # Runtime userContext.currentUserId is the source of truth for
+        # user-scoped memory. Child sessions inherit it by default.
+        raw_user_context = kwargs.pop("userContext", None)
+        if "user_context" in kwargs:
+            raw_user_context = kwargs.get("user_context")
+
+        parent_for_user_context = await cls.get_by_id(parent_id) if parent_id else None
+        if isinstance(raw_user_context, dict):
+            effective_user_context = dict(raw_user_context)
+        elif parent_id:
+            parent_context = (
+                getattr(parent_for_user_context, "user_context", None)
+                if parent_for_user_context
+                else None
+            )
+            effective_user_context = dict(parent_context) if isinstance(parent_context, dict) else {}
+        else:
+            effective_user_context = {}
+
+        if not effective_user_context.get("currentUserId") and current_user:
+            effective_user_context["currentUserId"] = str(current_user.id)
+        kwargs["user_context"] = effective_user_context
         
         session = SessionInfo(
             project_id=project_id,
@@ -305,6 +333,7 @@ class Session:
                 session.id,
                 base_tools,
                 always_load_tool_names=get_always_load_tool_names(),
+                agent_name=session.agent,
             )
         except Exception as e:
             log.warn("session.callable_tools.init_error", {"id": session.id, "error": str(e)})
@@ -512,6 +541,7 @@ class Session:
             "parent_id": "parentID",
             "owner_user_id": "ownerUserID",
             "owner_username": "ownerUsername",
+            "user_context": "userContext",
         }
         
         # Update fields.
@@ -960,12 +990,16 @@ class Session:
             return None
         
         from flocks.session.features.memory import SessionMemory
+
+        user_context = session.user_context if isinstance(session.user_context, dict) else {}
+        current_user_id = user_context.get("currentUserId")
         
         memory = SessionMemory(
             session_id=session_id,
             project_id=project_id,
             workspace_dir=session.directory,
             enabled=session.memory_enabled,
+            current_user_id=str(current_user_id) if current_user_id else None,
         )
         
         # Auto-initialize if enabled

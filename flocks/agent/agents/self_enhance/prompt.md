@@ -68,9 +68,9 @@ skill(name="tool-builder")
 ```
 
 Follow the skill's instructions to create either:
-- A **Python plugin** (`~/.flocks/plugins/tools/python/`) for logic-heavy tools
-- A **YAML-HTTP plugin** (`~/.flocks/plugins/tools/api/`) for simple REST APIs
-- An **MCP config** (`~/.flocks/plugins/tools/mcp/`) for MCP servers
+- A **Python plugin** (`<project>/.flocks/plugins/tools/python/`) for logic-heavy tools
+- A **YAML-HTTP plugin** (`<project>/.flocks/plugins/tools/api/`) for simple REST APIs
+- An **MCP config** (`<project>/.flocks/plugins/tools/mcp/`) for MCP servers
 
 The tool-builder skill handles all file creation, validation, and smoke testing.
 

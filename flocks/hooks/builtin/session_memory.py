@@ -127,11 +127,23 @@ class SessionMemoryHook:
         )
         
         # 4. Write to memory file (via MemoryManager)
+        # 记忆添加账号隔离修改
+        # 删除以下代码
+        '''
         await SessionMemoryHook._write_to_memory(
             content=content,
             slug=slug,
             project_id=context.get("project_id", "default"),
             workspace_dir=context.get("workspace_dir", "."),
+            config=config,
+        )'''
+        # 添加以下代码
+        await SessionMemoryHook._write_to_memory(
+            content=content,
+            slug=slug,
+            project_id=context.get("project_id", "default"),
+            workspace_dir=context.get("workspace_dir", "."),
+            current_user_id=context.get("current_user_id"),
             config=config,
         )
     
@@ -314,6 +326,10 @@ class SessionMemoryHook:
         slug: str,
         project_id: str,
         workspace_dir: str,
+        # 记忆添加账号隔离新增
+        # -----
+        current_user_id: Optional[str],
+        # -----
         config: Any,
     ) -> None:
         """
@@ -321,8 +337,9 @@ class SessionMemoryHook:
         
         File path: ~/.flocks/data/memory/YYYY-MM-DD-slug.md
         
-        Note: Flocks uses global path, different from OpenClaw's project-relative path.
-        This design enables cross-project memory sharing and access.
+        Note: Flocks stores memory under the global data directory. When
+        currentUserId is available, MemoryManager scopes the file under
+        users/<currentUserId>/.
         """
         try:
             # Ensure config is a proper MemoryConfig instance
@@ -337,6 +354,10 @@ class SessionMemoryHook:
                 project_id=project_id,
                 workspace_dir=workspace_dir,
                 config=memory_config,
+                # 记忆添加账号隔离新增
+                # -----
+                current_user_id=current_user_id,
+                # ----------
             )
             
             await memory_manager.initialize()
@@ -344,14 +365,10 @@ class SessionMemoryHook:
             date_str = datetime.now().strftime("%Y-%m-%d")
             filename = f"{date_str}-{slug}.md"
             
-            from flocks.config import Config as _Cfg
-            _mem_root = _Cfg.get_data_path() / "memory"
-            file_exists = (_mem_root / filename).exists()
-            
             written_path = await memory_manager.write_memory(
                 content=content,
                 path=filename,
-                append=file_exists,
+                append=True,
             )
             
             log.info("session_memory.saved", {

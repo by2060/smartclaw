@@ -345,6 +345,54 @@ class TestToolCallExecution:
         assert state.status == "error"
 
     @pytest.mark.asyncio
+    async def test_tool_call_rejects_non_callable_tool_for_agent_without_tool_search(self):
+        proc = _make_processor(session_id="ses_tool_search_blocked")
+        proc.agent.name = "restricted-agent"
+        proc.agent.tools = []
+
+        execute_mock = AsyncMock(return_value=ToolResult(success=True, output="should not run"))
+        with (
+            patch("flocks.session.streaming.stream_processor.Message.store_part", new=AsyncMock()) as mock_store,
+            patch("flocks.session.streaming.stream_processor.Message.update_part", new=AsyncMock()),
+            patch("flocks.session.streaming.stream_processor.ToolRegistry.execute", new=execute_mock),
+            patch("flocks.agent.registry.Agent.get", new=AsyncMock(return_value=proc.agent)),
+        ):
+            await proc.process_event(ToolInputStartEvent(id="tc_block", tool_name="tool_search"))
+            await proc.process_event(
+                ToolCallEvent(tool_call_id="tc_block", tool_name="tool_search", input={"query": "web"})
+            )
+
+        execute_mock.assert_not_awaited()
+        completed_part = mock_store.await_args_list[-1].args[2]
+        assert completed_part.state.status == "error"
+        assert "not callable" in completed_part.state.error
+        assert completed_part.state.metadata["blocked_by_callable_schema"] is True
+
+    @pytest.mark.asyncio
+    async def test_non_rex_agent_can_execute_declared_tool_search(self, monkeypatch: pytest.MonkeyPatch):
+        proc = _make_processor(session_id="ses_tool_search_allowed")
+        proc.agent.name = "self-enhance"
+        proc.agent.tools = ["tool_search"]
+
+        monkeypatch.setattr(
+            "flocks.session.callable_state.get_session_callable_tools",
+            AsyncMock(return_value={"tool_search"}),
+        )
+        execute_mock = AsyncMock(return_value=ToolResult(success=True, output={"matches": []}))
+
+        with (
+            patch("flocks.session.streaming.stream_processor.Message.store_part", new=AsyncMock()),
+            patch("flocks.session.streaming.stream_processor.Message.update_part", new=AsyncMock()),
+            patch("flocks.session.streaming.stream_processor.ToolRegistry.execute", new=execute_mock),
+        ):
+            await proc.process_event(ToolInputStartEvent(id="tc_allowed", tool_name="tool_search"))
+            await proc.process_event(
+                ToolCallEvent(tool_call_id="tc_allowed", tool_name="tool_search", input={"query": "web"})
+            )
+
+        execute_mock.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_tool_start_callback_called(self):
         callback = AsyncMock()
         proc = _make_processor()

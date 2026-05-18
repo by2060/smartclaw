@@ -630,9 +630,9 @@ export default function SessionChat({
   );
 
   const handleQuestionAnswer = useCallback(
-    async (callID: string, requestId: string, answers: string[][]) => {
+    async (callID: string, requestId: string, answers: string[][], remember?: boolean | boolean[]) => {
       try {
-        await submitAnswer(callID, requestId, answers);
+        await submitAnswer(callID, requestId, answers, remember);
       } catch (err: unknown) {
         alert(`Submit failed: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -1865,7 +1865,7 @@ export interface ChatMessageBubbleProps {
   message: MergedMessage;
   isActive?: boolean;
   pendingQuestions?: Record<string, PendingQuestion>;
-  onQuestionAnswer?: (callID: string, requestId: string, answers: string[][]) => Promise<void>;
+  onQuestionAnswer?: (callID: string, requestId: string, answers: string[][], remember?: boolean | boolean[]) => Promise<void>;
   onQuestionReject?: (callID: string, requestId: string) => Promise<void>;
   showActions?: boolean;
   showTimestamp?: boolean;
@@ -2088,7 +2088,7 @@ function ChatMessageBubbleInner({
                   part={part}
                   pendingQuestion={part.callID ? pendingQuestions?.[part.callID] : undefined}
                   onAnswer={onQuestionAnswer && part.callID
-                    ? (answers) => onQuestionAnswer(part.callID!, pendingQuestions![part.callID!].requestId, answers)
+                    ? (answers, remember) => onQuestionAnswer(part.callID!, pendingQuestions![part.callID!].requestId, answers, remember)
                     : undefined}
                   onReject={onQuestionReject && part.callID
                     ? () => onQuestionReject(part.callID!, pendingQuestions![part.callID!].requestId)
@@ -2262,7 +2262,7 @@ function ChatMessageBubbleInner({
 export interface ChatToolPartProps {
   part: MessagePart;
   pendingQuestion?: PendingQuestion;
-  onAnswer?: (answers: string[][]) => Promise<void>;
+  onAnswer?: (answers: string[][], remember?: boolean | boolean[]) => Promise<void>;
   onReject?: () => Promise<void>;
 }
 

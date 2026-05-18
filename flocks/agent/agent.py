@@ -139,6 +139,16 @@ class AgentInfo(BaseModel):
 
     # Concrete callable tool names resolved from agent.yaml.
     tools: Optional[List[str]] = Field(default=None)
+    # 解析skills和subagents，权限控制新增
+    # Skills this agent is allowed to load via the `skill` tool.
+    # None means unrestricted for backward compatibility with existing agents.
+    # An explicit empty list means no skills are allowed.
+    skills: Optional[List[str]] = None
+
+    # Subagents this agent is allowed to delegate to.
+    # None means unrestricted for backward compatibility with existing agents.
+    # An explicit empty list means no subagents are allowed.
+    sub_agents: Optional[List[str]] = None
 
     model: Optional[AgentModel] = None
     prompt: Optional[str] = None

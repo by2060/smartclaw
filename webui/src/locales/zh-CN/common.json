@@ -145,7 +145,8 @@
     "no": "✗ 否",
     "needsAnswer": "需要你的回答",
     "confirm": "确认",
-    "skip": "跳过"
+    "skip": "跳过",
+    "rememberAnswer": "记住这个答案"
   },
   "onboarding": {
     "title": "欢迎使用 Flocks",

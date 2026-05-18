@@ -198,6 +198,8 @@ class SystemPrompt:
         cls,
         directory: Optional[str] = None,
         vcs: Optional[str] = None,
+        # 输出按会话隔离新增
+        session_id: Optional[str] = None,
     ) -> List[str]:
         """
         Generate environment information for system prompt
@@ -205,6 +207,7 @@ class SystemPrompt:
         Args:
             directory: Working directory
             vcs: Version control system type ("git" or None)
+            session_id: Current session ID for output isolation
             
         Returns:
             List of environment info strings
@@ -214,8 +217,14 @@ class SystemPrompt:
 
         from flocks.workspace.manager import WorkspaceManager
         ws = WorkspaceManager.get_instance()
+        # 输出按会话隔离修改
+        # 删除
+        '''
         today = datetime.now().strftime("%Y-%m-%d")
         outputs_dir = str(ws.get_workspace_dir() / "outputs" / today)
+        '''
+        # 新增
+        outputs_dir = str(ws.get_outputs_dir(session_id, create=False))
 
         env_info = [
             "Here is some useful information about the environment you are running in:",
@@ -584,6 +593,8 @@ class SessionPrompt:
         include_memory: bool = True,
         session_memory: Optional["SessionMemory"] = None,
         user_message: Optional[str] = None,
+        # 输出按会话隔离新增
+        session_id: Optional[str] = None,
     ) -> str:
         """
         Build complete system prompt with all components
@@ -599,6 +610,7 @@ class SessionPrompt:
             include_memory: Whether to include memory context (NEW)
             session_memory: SessionMemory instance (NEW)
             user_message: Current user message for memory search (NEW)
+            session_id: Current session ID for output isolation
             
         Returns:
             Complete system prompt
@@ -619,7 +631,15 @@ class SessionPrompt:
         if include_environment:
             directory = context.project_path if context else None
             vcs = context.vcs if context else None
-            env_parts = await SystemPrompt.environment(directory=directory, vcs=vcs)
+            # 输出按会话隔离修改
+            # 删除
+            #env_parts = await SystemPrompt.environment(directory=directory, vcs=vcs)
+            # 新增
+            env_parts = await SystemPrompt.environment(
+                directory=directory,
+                vcs=vcs,
+                session_id=session_id,
+            )
             parts.extend(env_parts)
         
         # Context injection

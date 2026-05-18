@@ -689,11 +689,23 @@ class StreamProcessor:
 
                         _cb.mark_finished = lambda: _finished.__setitem__(0, True)
                         return _cb
+                    extra = {
+                        "main_session_key": self._main_session_key,
+                        "output_session_id": self._main_session_key,
+                    }
+                    if self._workspace_dir:
+                        extra["workspace_dir"] = self._workspace_dir
+                    extra.update(sandbox_meta["extra"])
 
-                    extra = dict(sandbox_meta["extra"])
                     try:
-                        from flocks.session.user_context import get_session_user_context
-                        user_context = get_session_user_context(self.session_id)
+                        from flocks.session import Session
+
+                        session = await Session.get_by_id(self.session_id)
+                        user_context = (
+                            dict(session.user_context)
+                            if session and isinstance(session.user_context, dict)
+                            else {}
+                        )
                         if user_context:
                             extra["user_context"] = user_context
                     except Exception as exc:
@@ -710,11 +722,15 @@ class StreamProcessor:
                         event_publish_callback=self.event_publish_callback,
                     )
                     
-                    result = await ToolRegistry.execute(
-                        tool_name=tool_name,
-                        ctx=ctx,
-                        **tool_input
-                    )
+                    callable_error = await self._validate_tool_callable(tool_name)
+                    if callable_error is not None:
+                        result = callable_error
+                    else:
+                        result = await ToolRegistry.execute(
+                            tool_name=tool_name,
+                            ctx=ctx,
+                            **tool_input
+                        )
 
                     # Mark metadata callback as finished so pending async persist
                     # tasks won't overwrite the upcoming completed/error state
@@ -923,6 +939,37 @@ class StreamProcessor:
                     await self.tool_end_callback(tool_name, error_result)
                 except Exception as e2:
                     log.error("stream.tool_end_callback.error", {"error": str(e2)})
+
+    async def _validate_tool_callable(self, tool_name: str) -> Optional[ToolResult]:
+        """Reject tool calls that are not exposed for the current session."""
+        from flocks.session.callable_state import (
+            get_session_callable_tools,
+            initialize_session_callable_tools,
+        )
+        from flocks.tool.catalog import get_always_load_tool_names
+
+        callable_tools = await get_session_callable_tools(self.session_id)
+        if not callable_tools:
+            declared_tools = getattr(self.agent, "tools", None)
+            base_tools = list(declared_tools) if isinstance(declared_tools, (list, tuple, set)) else []
+            callable_tools = await initialize_session_callable_tools(
+                self.session_id,
+                base_tools,
+                always_load_tool_names=get_always_load_tool_names(),
+            )
+
+        if tool_name in callable_tools:
+            return None
+
+        from flocks.agent.controls import agent_allows_tool
+        if await agent_allows_tool(getattr(self.agent, "name", None), tool_name):
+            return None
+
+        return ToolResult(
+            success=False,
+            error=f"Tool is not callable in this session: {tool_name}",
+            metadata={"blocked_by_callable_schema": True},
+        )
 
     async def _load_config_data(self) -> Dict[str, Any]:
         """Load and cache config as plain dict."""

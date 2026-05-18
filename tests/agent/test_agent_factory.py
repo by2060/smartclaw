@@ -24,6 +24,7 @@ from flocks.agent.agent_factory import (
     scan_and_load,
     inject_dynamic_prompts,
     yaml_to_agent_info,
+    create_yaml_agent,
     delete_yaml_agent,
     _parse_prompt_metadata,
 )
@@ -238,6 +239,23 @@ class TestLoadAgent:
         assert agent.prompt_metadata is not None
         assert agent.prompt_metadata.category == "security"
 
+    def test_missing_skills_is_unrestricted_marker(self, tmp_path):
+        agent_dir = _write_agent_dir(tmp_path, """
+            name: no_skills_agent
+        """)
+        agent = load_agent(agent_dir)
+        assert agent is not None
+        assert agent.skills is None
+
+    def test_explicit_empty_skills_is_deny_all_marker(self, tmp_path):
+        agent_dir = _write_agent_dir(tmp_path, """
+            name: empty_skills_agent
+            skills: []
+        """)
+        agent = load_agent(agent_dir)
+        assert agent is not None
+        assert agent.skills == []
+
     def test_permission_dict_deny_all_with_allowlist(self, tmp_path):
         """load_agent() should expand old-style permission dict to concrete tools."""
         agent_dir = _write_agent_dir(tmp_path, """
@@ -276,6 +294,18 @@ class TestLoadAgent:
         agent = load_agent(agent_dir)
         assert agent is not None
         assert agent.tools == ["read"]
+
+    def test_non_rex_agent_can_declare_tool_search(self, tmp_path):
+        agent_dir = _write_agent_dir(tmp_path, """
+            name: search_enabled_subagent
+            mode: subagent
+            tools:
+              - read
+              - tool_search
+        """)
+        agent = load_agent(agent_dir)
+        assert agent is not None
+        assert agent.tools == ["read", "tool_search"]
 
 
 # ===========================================================================
@@ -699,6 +729,26 @@ class TestProjectLevelAgentScan:
         assert "web-hunter" in result
         assert "cloud-security" in result
         assert result["web-hunter"].native is True
+
+    def test_create_yaml_agent_uses_project_plugin_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.chdir(tmp_path)
+
+        path = create_yaml_agent(
+            {
+                "name": "created-agent",
+                "description": "Created in project plugins",
+                "mode": "subagent",
+                "tools": ["read"],
+            },
+            prompt="You are a created test agent.",
+        )
+
+        expected = tmp_path / ".flocks" / "plugins" / "agents" / "created-agent" / "agent.yaml"
+        assert path == expected
+        assert expected.exists()
+        assert (expected.parent / "prompt.md").read_text(encoding="utf-8") == "You are a created test agent."
 
     def test_user_plugin_agent_is_not_native(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

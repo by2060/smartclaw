@@ -19,8 +19,7 @@ class ToolCatalogMetadata(BaseModel):
 
 
 ALWAYS_LOAD_TOOL_NAMES: Set[str] = {
-    "question",
-    "tool_search",
+    "question"
 }
 
 

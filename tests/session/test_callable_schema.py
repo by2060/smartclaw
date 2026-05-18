@@ -41,7 +41,7 @@ async def test_callable_schema_returns_session_callable_tools(monkeypatch: pytes
     assert "read" in names
     assert "bash" in names
     assert "question" in names
-    assert "tool_search" in names
+    assert "tool_search" not in names
     assert result.metadata["callableToolCount"] == 2
 
 
@@ -50,9 +50,12 @@ async def test_callable_schema_initializes_from_declared_tools_when_session_empt
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tools = [
+        _tool("bash", ToolCategory.CODE),
         _tool("read", ToolCategory.FILE),
         _tool("question", ToolCategory.SYSTEM),
+        _tool("skill", ToolCategory.SYSTEM),
         _tool("tool_search", ToolCategory.SYSTEM),
+        _tool("write", ToolCategory.FILE),
         _tool("websearch", ToolCategory.BROWSER),
     ]
 
@@ -61,7 +64,7 @@ async def test_callable_schema_initializes_from_declared_tools_when_session_empt
         "flocks.session.callable_schema.get_session_callable_tools",
         AsyncMock(return_value=set()),
     )
-    initialize_mock = AsyncMock(return_value={"read", "websearch", "question", "tool_search"})
+    initialize_mock = AsyncMock(return_value={"bash", "read", "websearch", "question", "skill", "write"})
     monkeypatch.setattr(
         "flocks.session.callable_schema.initialize_session_callable_tools",
         initialize_mock,
@@ -94,7 +97,8 @@ async def test_callable_schema_does_not_expand_empty_declared_tools_to_all_enabl
         "flocks.session.callable_schema.get_session_callable_tools",
         AsyncMock(return_value=set()),
     )
-    initialize_mock = AsyncMock(return_value={"question", "tool_search"})
+    always_load_names = {"bash", "question", "read", "skill", "write"}
+    initialize_mock = AsyncMock(return_value=always_load_names)
     monkeypatch.setattr(
         "flocks.session.callable_schema.initialize_session_callable_tools",
         initialize_mock,
@@ -106,13 +110,13 @@ async def test_callable_schema_does_not_expand_empty_declared_tools_to_all_enabl
     )
 
     names = [tool.name for tool in result.tool_infos]
-    assert names == ["question", "tool_search"]
+    assert names == ["bash", "read", "question", "skill", "write"]
     initialize_mock.assert_awaited_once_with(
         "session-always-load-only",
         [],
-        always_load_tool_names={"question", "tool_search"},
+        always_load_tool_names=always_load_names,
     )
-    assert result.metadata["callableToolCount"] == 2
+    assert result.metadata["callableToolCount"] == 5
 
 
 @pytest.mark.asyncio

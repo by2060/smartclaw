@@ -30,19 +30,22 @@ async def _get_session_memory(ctx: ToolContext) -> tuple[Optional[SessionMemory]
     Returns (memory, None) on success, or (None, error_result) on failure.
     Reuses cached SessionMemory instances keyed by session_id.
     """
-    cached = _session_memory_cache.get(ctx.session_id)
-    if cached and cached._initialized:
-        return cached, None
-
     session = await Session.get_by_id(ctx.session_id)
     if not session:
         return None, ToolResult(success=False, error="Session not found")
+    user_context = session.user_context if isinstance(session.user_context, dict) else {}
+    current_user_id = user_context.get("currentUserId")
+    cache_key = f"{ctx.session_id}:{current_user_id or '__shared__'}"
+    cached = _session_memory_cache.get(cache_key)
+    if cached and cached._initialized:
+        return cached, None
 
     memory = SessionMemory(
         session_id=session.id,
         project_id=session.project_id,
         workspace_dir=session.directory,
         enabled=session.memory_enabled,
+        current_user_id=str(current_user_id) if current_user_id else None,
     )
 
     if not memory.enabled:
@@ -52,13 +55,15 @@ async def _get_session_memory(ctx: ToolContext) -> tuple[Optional[SessionMemory]
     if not ok:
         return None, ToolResult(success=False, error="Memory initialization failed")
 
-    _session_memory_cache[ctx.session_id] = memory
+    _session_memory_cache[cache_key] = memory
     return memory, None
 
 
 def evict_session_memory(session_id: str) -> None:
     """Remove a cached SessionMemory entry (call on session close)."""
-    _session_memory_cache.pop(session_id, None)
+    for key in list(_session_memory_cache):
+        if key == session_id or key.startswith(f"{session_id}:"):
+            _session_memory_cache.pop(key, None)
 
 
 @ToolRegistry.register_function(

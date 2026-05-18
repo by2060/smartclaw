@@ -8,6 +8,8 @@ from typing import Optional, List, Dict, Any, Callable
 from pathlib import Path
 import asyncio
 import os
+# 记忆账号隔离添加
+import re
 
 from flocks.provider import Provider
 from flocks.storage import Storage
@@ -25,7 +27,6 @@ from flocks.utils.log import Log
 
 log = Log.create(service="memory.manager")
 
-
 def _safe_resolve_memory_path(memory_root: Path, rel_path: str) -> Path:
     """Resolve *rel_path* under *memory_root* and reject path-traversal attempts."""
     resolved = (memory_root / rel_path).resolve()
@@ -34,6 +35,17 @@ def _safe_resolve_memory_path(memory_root: Path, rel_path: str) -> Path:
         raise ValueError(f"Path traversal detected: {rel_path}")
     return resolved
 
+# 记忆添加账号隔离新增
+def _safe_scope_segment(value: str) -> str:
+    """Return a filesystem-safe scope segment for local ids."""
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())
+    return cleaned or "unknown"
+# ---------------end-----------------------------------
+
+
+def _resolve_current_user_id(current_user_id: Optional[str] = None) -> str:
+    """Return the currentUserId used for memory isolation."""
+    return str(current_user_id or "__shared__")
 
 class MemoryManager:
     """
@@ -44,8 +56,12 @@ class MemoryManager:
     - Hybrid search (vector + keyword)
     - Memory file operations
     """
-    
+    # 记忆按账号隔离修改
+    # 记忆按账号隔离删除
     # Singleton cache by project_id
+    # _instances: Dict[str, "MemoryManager"] = {}
+    # 记忆按账号隔离新增
+    # Singleton cache by project_id + currentUserId
     _instances: Dict[str, "MemoryManager"] = {}
     
     def __init__(
@@ -53,6 +69,8 @@ class MemoryManager:
         project_id: str,
         workspace_dir: str,
         config: MemoryConfig,
+        current_user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
     ):
         """
         Initialize memory manager
@@ -65,7 +83,9 @@ class MemoryManager:
         self.project_id = project_id
         self.workspace_dir = Path(workspace_dir)
         self.config = config
-        
+        self.current_user_id = _resolve_current_user_id(current_user_id)
+        self.session_id = session_id
+        self.user_scope = _safe_scope_segment(self.current_user_id)
         # Provider configuration
         self.provider_id = config.embedding.provider
         if self.provider_id == "auto":
@@ -90,6 +110,8 @@ class MemoryManager:
         project_id: str,
         workspace_dir: str,
         config: "MemoryConfig | dict",
+        current_user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> "MemoryManager":
         """
         Get or create singleton instance for project.
@@ -102,13 +124,16 @@ class MemoryManager:
             project_id: Project ID
             workspace_dir: Workspace directory
             config: Memory configuration (MemoryConfig or dict)
-            
+            current_user_id : Current User id
         Returns:
             MemoryManager instance
         """
         if isinstance(config, dict):
             config = MemoryConfig(**config)
-
+        current_user_id = _resolve_current_user_id(current_user_id)
+        # 记忆按账号隔离修改
+        # 删除
+        '''
         if project_id in cls._instances:
             instance = cls._instances[project_id]
             old_provider = instance.provider_id
@@ -116,7 +141,20 @@ class MemoryManager:
 
             instance.config = config
             instance.workspace_dir = Path(workspace_dir)
+        '''
+        # 新增
+        instance_key = cls._make_instance_key(project_id, current_user_id)
 
+        if instance_key in cls._instances:
+            instance = cls._instances[instance_key]
+            old_provider = instance.provider_id
+            old_model = instance.embedding_model
+
+            instance.config = config
+            instance.workspace_dir = Path(workspace_dir)
+            instance.current_user_id = current_user_id
+            instance.session_id = session_id
+            instance.user_scope = _safe_scope_segment(current_user_id)
             new_provider = config.embedding.provider
             if new_provider == "auto":
                 new_provider = "openai"
@@ -138,13 +176,36 @@ class MemoryManager:
 
             return instance
 
-        cls._instances[project_id] = cls(
+        cls._instances[instance_key] = cls(
             project_id=project_id,
             workspace_dir=workspace_dir,
             config=config,
+            current_user_id=current_user_id,
+            session_id=session_id,
         )
-        return cls._instances[project_id]
-    
+        return cls._instances[instance_key]
+
+    # 记忆按账号隔离新增
+    @staticmethod
+    def _make_instance_key(project_id: str, current_user_id: Optional[str]) -> str:
+        return f"{project_id}:{current_user_id or '__shared__'}"
+
+    def _scope_path(self, rel_path: str) -> str:
+        """Map a user-facing memory path to the account-scoped storage path."""
+        normalized = rel_path.replace("\\", "/").lstrip("/")
+        if not self.user_scope:
+            return normalized
+
+        own_prefix = f"users/{self.user_scope}/"
+        if normalized == f"users/{self.user_scope}":
+            return own_prefix.rstrip("/")
+        if normalized.startswith(own_prefix):
+            return normalized
+        if normalized.startswith("users/"):
+            raise ValueError("Memory path belongs to a different account scope")
+        return f"{own_prefix}{normalized}"
+    # ---------------------end-------------------------------------------------------
+
     async def initialize(self) -> None:
         """Initialize memory system (concurrency-safe)."""
         if self._initialized:
@@ -182,6 +243,10 @@ class MemoryManager:
                     provider_id=self.provider_id,
                     embedding_model=self.embedding_model,
                     config=self.config.query,
+                    # 记忆按账号隔离新增
+                    current_user_id=self.current_user_id,
+                    session_id=None,
+                    # -------end--------
                 )
                 
                 self.indexer = MemoryIndexer(
@@ -190,6 +255,9 @@ class MemoryManager:
                     provider_id=self.provider_id,
                     embedding_model=self.embedding_model,
                     config=self.config,
+                    # 记忆按账号隔离新增
+                    current_user_id=self.current_user_id,
+                    # ---------end---------
                 )
                 
                 self._initialized = True
@@ -263,11 +331,19 @@ class MemoryManager:
             Dict with path and text
         """
         from flocks.config import Config
-        
+        # 记忆按账号隔离修改
+        # 删除
+        '''
         data_dir = Config.get_data_path()
         memory_root = data_dir / "memory"
         file_path = _safe_resolve_memory_path(memory_root, rel_path)
-        
+        '''
+        # 新增
+        data_dir = Config.get_data_path()
+        memory_root = data_dir / "memory"
+        scoped_path = self._scope_path(rel_path)
+        file_path = _safe_resolve_memory_path(memory_root, scoped_path)
+        # -----------------end-------------------------
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {rel_path}")
         
@@ -280,9 +356,18 @@ class MemoryManager:
             start = max(0, from_line - 1)
             end = start + lines if lines else len(lines_list)
             lines_list = lines_list[start:end]
-        
+
+        # 记忆按账号隔离修改
+        # 删除
+        '''
         return {
             "path": rel_path,
+            "text": "\n".join(lines_list),
+        }
+        '''
+        # 新增
+        return {
+            "path": scoped_path,
             "text": "\n".join(lines_list),
         }
     
@@ -309,12 +394,22 @@ class MemoryManager:
         if path is None:
             date_str = datetime.now().strftime("%Y-%m-%d")
             path = f"{date_str}.md"
-        
+
+        # 记忆按账号隔离修改
+        # 删除
+        '''
         data_dir = Config.get_data_path()
         memory_root = data_dir / "memory"
         file_path = _safe_resolve_memory_path(memory_root, path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        
+        '''
+        # 新增
+        data_dir = Config.get_data_path()
+        memory_root = data_dir / "memory"
+        scoped_path = self._scope_path(path)
+        file_path = _safe_resolve_memory_path(memory_root, scoped_path)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        # --------------end-------------------------------
         async with self._write_lock:
             if append:
                 needs_separator = file_path.exists() and file_path.stat().st_size > 0
@@ -328,10 +423,17 @@ class MemoryManager:
         
         # Mark as dirty for next sync
         self._dirty = True
-        
+        # 记忆按账号隔离修改
+        # 删除
+        '''
         log.info("manager.write", {"path": path, "append": append, "length": len(content)})
         
         return path
+        '''
+        # 新增
+        log.info("manager.write", {"path": scoped_path, "append": append, "length": len(content)})
+
+        return scoped_path
     
     async def sync(
         self,
@@ -401,9 +503,17 @@ class MemoryManager:
         self._initialized = False
         self.search_engine = None
         self.indexer = None
+        # 记忆按账号隔离修改
+        # 删除
+        '''
         self._instances.pop(self.project_id, None)
         log.info("manager.closed", {"project_id": self.project_id})
-    
+        '''
+        # 新增
+        self._instances.pop(self._make_instance_key(self.project_id, self.current_user_id), None)
+        log.info("manager.closed", {"project_id": self.project_id})
+        # ------------end-----------------------
+
     def mark_dirty(self) -> None:
         """Mark as needing sync"""
         self._dirty = True

@@ -117,6 +117,7 @@ flocks stop
 - 后端 API：默认 `http://127.0.0.1:8000`
 - WebUI：默认 `http://127.0.0.1:5173`
 - 远程访问修改 `flocks start --server-host <ip> --webui-host <ip>`
+-            `flocks start --server-host 0.0.0.0 --server-port 5174 --webui-host 0.0.0.0`
 
 更多 CLI 命令使用 `flocks --help`
 

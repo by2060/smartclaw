@@ -37,6 +37,11 @@ log = Log.create(service="plugin")
 
 DEFAULT_PLUGIN_ROOT = Path.home() / ".flocks" / "plugins"
 
+# 项目插件路径
+def get_project_plugin_root(project_dir: Optional[Path] = None) -> Path:
+    """Return the project-level plugin root used for newly created plugins."""
+    return (project_dir or Path.cwd()) / ".flocks" / "plugins"
+
 
 # ---------------------------------------------------------------------------
 # Low-level helpers (extracted from agent/plugin_loader.py)

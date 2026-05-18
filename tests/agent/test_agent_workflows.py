@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from flocks.agent.agent import AgentInfo, AvailableWorkflow
+from flocks.agent.agent import AgentInfo, AvailableSkill, AvailableWorkflow
 from flocks.agent.agent_factory import inject_dynamic_prompts
 
 
@@ -177,6 +177,34 @@ def inject(agent_info, available_agents, tools, skills, categories, workflows=No
             inject_dynamic_prompts({"wf_agent": agent}, [], [], [], [], workflows)
             assert "ndr_triage" in agent.prompt
             assert "global_scan" in agent.prompt
+        finally:
+            sys.path.pop(0)
+
+    def test_skills_are_filtered_per_agent_before_prompt_injection(self, tmp_path):
+        """inject() receives only skills allowed by the agent's YAML config."""
+        builder_code = """
+def inject(agent_info, available_agents, tools, skills, categories, workflows=None):
+    agent_info.prompt = ",".join(skill.name for skill in skills)
+"""
+        builder_path = tmp_path / "skill_filter_builder.py"
+        builder_path.write_text(textwrap.dedent(builder_code), encoding="utf-8")
+
+        import sys
+        sys.path.insert(0, str(tmp_path.parent))
+        try:
+            agent = AgentInfo(
+                name="filtered_agent",
+                mode="subagent",
+                native=False,
+                skills=["allowed"],
+                prompt_builder=f"{tmp_path.name}.skill_filter_builder:inject",
+            )
+            skills = [
+                AvailableSkill(name="allowed", description="Allowed skill", location="project"),
+                AvailableSkill(name="blocked", description="Blocked skill", location="project"),
+            ]
+            inject_dynamic_prompts({"filtered_agent": agent}, [], [], skills, [], None)
+            assert agent.prompt == "allowed"
         finally:
             sys.path.pop(0)
 

@@ -655,7 +655,15 @@ class SessionLoop:
             if ctx.step == 1 and ctx.session.memory_enabled and ctx.memory_bootstrap_data is None:
                 try:
                     from flocks.memory.bootstrap import MemoryBootstrap
-                    ctx.memory_bootstrap_data = await MemoryBootstrap().bootstrap()
+                    user_context = (
+                        ctx.session.user_context
+                        if isinstance(ctx.session.user_context, dict)
+                        else {}
+                    )
+                    current_user_id = user_context.get("currentUserId")
+                    ctx.memory_bootstrap_data = await MemoryBootstrap(
+                        current_user_id=str(current_user_id) if current_user_id else None,
+                    ).bootstrap()
                     log.info("loop.memory_bootstrap_done", {
                         "session_id": ctx.session.id,
                         "has_main": ctx.memory_bootstrap_data.get("main_memory") is not None,

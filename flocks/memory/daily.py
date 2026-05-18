@@ -19,22 +19,28 @@ class DailyMemory:
     """
     Daily memory file manager
     
-    Manages daily/YYYY-MM-DD.md files in global memory storage.
-    Uses Flocks' global storage: ~/.flocks/data/memory/daily/
+    Manages daily/YYYY-MM-DD.md files in account-scoped memory storage.
+    Uses ~/.flocks/data/memory/users/<currentUserId>/daily/.
     """
     
-    def __init__(self):
-        """Initialize daily memory manager using global storage"""
+    def __init__(
+        self,
+        current_user_id: Optional[str] = None,
+    ):
+        """Initialize daily memory manager using account-scoped storage."""
         from flocks.config import Config
+        from flocks.memory.manager import _safe_scope_segment
         
-        # Use global data directory (matching Flocks' architecture)
         data_dir = Config.get_data_path()
-        self.memory_dir = data_dir / "memory"
+        self.memory_root = data_dir / "memory"
+        self.current_user_id = str(current_user_id or "__shared__")
+        self.user_scope = _safe_scope_segment(self.current_user_id)
+        self.memory_dir = self.memory_root / "users" / self.user_scope
         self.daily_dir = self.memory_dir / "daily"
     
     async def ensure_structure(self) -> None:
         """
-        Ensure daily/ directory structure exists in global memory storage
+        Ensure daily/ directory structure exists in account-scoped storage.
         
         Creates necessary directories if they don't exist.
         """
