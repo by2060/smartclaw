@@ -332,6 +332,8 @@ class Agent:
                     item.steps = value.steps
                 if value.delegatable is not None:
                     item.delegatable = value.delegatable
+                if value.kb is not None:
+                    item.kb = value.kb
                 item.options.update(value.options)
                 if value.permission:
                     item.permission = merge(item.permission, from_config(value.permission), cli_overrides)

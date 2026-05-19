@@ -72,6 +72,7 @@ def _agent_overlay(
     skills: Optional[List[str]] = None,
     tools: Optional[List[str]] = None,
     sub_agents: Optional[List[str]] = None,
+    kb: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     overlay: Dict[str, Any] = {}
     if delegatable is not None:
@@ -82,6 +83,8 @@ def _agent_overlay(
         overlay["tools"] = _dedupe_strings(tools)
     if sub_agents is not None:
         overlay["sub_agents"] = _dedupe_strings(sub_agents)
+    if kb is not None:
+        overlay["kb"] = _dedupe_strings(kb)
     return overlay
 
 
@@ -115,6 +118,7 @@ class AgentResponse(BaseModel):
     skills: List[str] = Field(default_factory=list)
     tools: List[str] = Field(default_factory=list)
     sub_agents: List[str] = Field(default_factory=list)
+    kb: List[str] = Field(default_factory=list)
     tags: List[str] = Field(default_factory=list)
 
 
@@ -129,6 +133,7 @@ def agent_to_response(
     skills: Optional[List[str]] = None,
     tools: Optional[List[str]] = None,
     sub_agents: Optional[List[str]] = None,
+    kb: Optional[List[str]] = None,
     delegatable_override: Optional[bool] = None,
 ) -> AgentResponse:
     """Convert internal AgentInfo to API response format."""
@@ -169,6 +174,7 @@ def agent_to_response(
         skills=skills if skills is not None else (getattr(agent, "skills", None) or []),
         tools=tools if tools is not None else (agent.tools or []),
         sub_agents=sub_agents if sub_agents is not None else (getattr(agent, "sub_agents", None) or []),
+        kb=kb if kb is not None else (getattr(agent, "kb", None) or []),
         tags=agent.tags,
     )
 
@@ -196,6 +202,7 @@ def _agent_data_to_info(agent_data: Dict[str, Any]) -> AgentInfoModel:
         tools=agent_data.get("tools", []),
         skills=agent_data.get("skills") if "skills" in agent_data else None,
         sub_agents=agent_data.get("sub_agents") if "sub_agents" in agent_data else None,
+        kb=agent_data.get("kb") if "kb" in agent_data else agent_data.get("knowledge_base"),
         delegatable=agent_data.get("delegatable"),
     )
 
@@ -220,6 +227,7 @@ def _custom_agent_data_to_response(agent_data: Dict[str, Any]) -> AgentResponse:
         skills=agent_data.get("skills", []),
         tools=agent_data.get("tools", []),
         sub_agents=agent_data.get("sub_agents", []),
+        kb=agent_data.get("kb", agent_data.get("knowledge_base", [])),
         tags=agent_data.get("tags", []),
         delegatable=agent_data.get("delegatable", True),
     )
@@ -279,6 +287,11 @@ async def _build_single_agent_response(
         skills = overlay.get("skills", getattr(agent, "skills", []))
         tools = overlay.get("tools", agent.tools or [])
     sub_agents = overlay.get("sub_agents") if "sub_agents" in overlay else getattr(agent, "sub_agents", [])
+    kb = (
+        overlay.get("kb") if "kb" in overlay
+        else overlay.get("knowledge_base") if "knowledge_base" in overlay
+        else getattr(agent, "kb", [])
+    )
     delegatable = overlay.get("delegatable") if "delegatable" in overlay else None
     override = overrides.get(agent.name, {})
     model_override = {k: override[k] for k in ("modelID", "providerID") if k in override} or None
@@ -290,6 +303,7 @@ async def _build_single_agent_response(
         skills=skills,
         tools=tools,
         sub_agents=sub_agents,
+        kb=kb,
         delegatable_override=delegatable,
     )
 
@@ -369,6 +383,8 @@ async def get_agent_prompt(name: str):
 
 class AgentCreateRequest(BaseModel):
     """Request to create a custom agent"""
+    model_config = {"populate_by_name": True}
+
     name: str = Field(..., description="Agent name")
     description: Optional[str] = Field(None, description="Agent description (English; used for delegation)")
     descriptionCn: Optional[str] = Field(None, description="Chinese UI description")
@@ -381,10 +397,12 @@ class AgentCreateRequest(BaseModel):
     skills: Optional[List[str]] = Field(None, description="Enabled skill names")
     tools: List[str] = Field(default_factory=list, description="Enabled tool names")
     sub_agents: Optional[List[str]] = Field(None, description="Allowed L1 execution agent names")
+    kb: Optional[List[str]] = Field(None, alias="knowledge_base", description="Allowed knowledge base dataset IDs")
 
 
 class AgentUpdateRequest(BaseModel):
     """Request to update a custom agent"""
+    model_config = {"populate_by_name": True}
     description: Optional[str] = Field(None, description="Agent description (English; used for delegation)")
     descriptionCn: Optional[str] = Field(None, description="Chinese UI description")
     prompt: Optional[str] = Field(None, description="System prompt")
@@ -395,6 +413,7 @@ class AgentUpdateRequest(BaseModel):
     skills: Optional[List[str]] = Field(None, description="Enabled skill names")
     tools: Optional[List[str]] = Field(None, description="Enabled tool names")
     sub_agents: Optional[List[str]] = Field(None, description="Allowed L1 execution agent names")
+    kb: Optional[List[str]] = Field(None, alias="knowledge_base", description="Allowed knowledge base dataset IDs")
 
 
 class AgentModelUpdateRequest(BaseModel):
@@ -420,6 +439,7 @@ async def create_agent(req: AgentCreateRequest):
             skills=req.skills,
             tools=req.tools,
             sub_agents=req.sub_agents,
+            kb=req.kb,
         )
         agent_data: Dict[str, Any] = {
             "name": req.name,
@@ -457,6 +477,7 @@ async def create_agent(req: AgentCreateRequest):
             skills=overlay.get("skills"),
             tools=overlay.get("tools"),
             sub_agents=overlay.get("sub_agents"),
+            kb=overlay.get("kb"),
         )
     except HTTPException:
         raise
@@ -508,6 +529,10 @@ async def update_agent(name: str, req: AgentUpdateRequest):
                     req.sub_agents if req.sub_agents is not None
                     else agent_data.get("sub_agents") if "sub_agents" in agent_data else None
                 ),
+                kb=(
+                    req.kb if req.kb is not None
+                    else agent_data.get("kb") if "kb" in agent_data else agent_data.get("knowledge_base")
+                ),
             )
             agent_data.update(overlay)
 
@@ -547,6 +572,10 @@ async def update_agent(name: str, req: AgentUpdateRequest):
                     req.sub_agents if req.sub_agents is not None
                     else yaml_data.get("sub_agents") if "sub_agents" in yaml_data else None
                 ),
+                kb=(
+                    req.kb if req.kb is not None
+                    else yaml_data.get("kb") if "kb" in yaml_data else yaml_data.get("knowledge_base")
+                ),
             ))
 
             if not update_yaml_agent(name, updates):
@@ -556,7 +585,7 @@ async def update_agent(name: str, req: AgentUpdateRequest):
             # The entry intentionally omits "name" so it is not mistaken for a
             # full Storage-based custom agent on subsequent updates.
             extras: Dict[str, Any] = agent_data if isinstance(agent_data, dict) else {}
-            for key in ("delegatable", "skills", "tools", "sub_agents"):
+            for key in ("delegatable", "skills", "tools", "sub_agents", "kb"):
                 if key in updates:
                     extras[key] = updates[key]
             await Storage.write(agent_key, extras)
@@ -587,6 +616,8 @@ async def update_agent(name: str, req: AgentUpdateRequest):
                     agent.tools = updates["tools"]
                 if "sub_agents" in updates:
                     agent.sub_agents = updates["sub_agents"]
+                if "kb" in updates:
+                    agent.kb = updates["kb"]
                 overrides = await _load_model_overrides()
                 all_tool_names = _get_all_tool_names()
                 return await _build_single_agent_response(agent, overrides, all_tool_names)

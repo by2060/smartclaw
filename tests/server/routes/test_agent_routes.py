@@ -29,6 +29,18 @@ _AGENT_PAYLOAD = {
 }
 
 
+@pytest.fixture(autouse=True)
+async def _cleanup_test_agent(_server_isolated_env):
+    from flocks.agent.agent_factory import delete_yaml_agent
+    from flocks.storage.storage import Storage
+
+    delete_yaml_agent(_AGENT_PAYLOAD["name"])
+    await Storage.remove(f"agent/custom/{_AGENT_PAYLOAD['name']}")
+    yield
+    delete_yaml_agent(_AGENT_PAYLOAD["name"])
+    await Storage.remove(f"agent/custom/{_AGENT_PAYLOAD['name']}")
+
+
 # ===========================================================================
 # List
 # ===========================================================================
@@ -126,6 +138,7 @@ class TestAgentCreate:
             "delegatable": True,
             "skills": ["skill1", "skill2"],
             "sub_agents": ["agent1", "agent2"],
+            "kb": ["kb_a", "kb_b"],
         }
 
         delete_yaml_agent(name)
@@ -136,6 +149,7 @@ class TestAgentCreate:
             data = resp.json()
             assert data["delegatable"] is True
             assert data["sub_agents"] == ["agent1", "agent2"]
+            assert data["kb"] == ["kb_a", "kb_b"]
             assert data["tools"] == ["read", "skill"]
             for tool in ("read", "skill"):
                 assert tool in data["tools"]
@@ -146,6 +160,7 @@ class TestAgentCreate:
             assert raw["delegatable"] is True
             assert raw["skills"] == ["skill1", "skill2"]
             assert raw["sub_agents"] == ["agent1", "agent2"]
+            assert raw["kb"] == ["kb_a", "kb_b"]
             assert raw["tools"] == ["read", "skill"]
             for tool in ("read", "skill"):
                 assert tool in raw["tools"]
@@ -154,6 +169,7 @@ class TestAgentCreate:
             assert overlay["delegatable"] is True
             assert overlay["skills"] == ["skill1", "skill2"]
             assert overlay["sub_agents"] == ["agent1", "agent2"]
+            assert overlay["kb"] == ["kb_a", "kb_b"]
             assert overlay["tools"] == ["read", "skill"]
             for tool in ("read", "skill"):
                 assert tool in overlay["tools"]
@@ -209,6 +225,7 @@ class TestAgentUpdate:
                     "tools": ["write"],
                     "skills": ["skill2"],
                     "sub_agents": ["agent2"],
+                    "kb": ["kb_c"],
                 },
             )
             assert resp.status_code == status.HTTP_200_OK, resp.text
@@ -216,6 +233,7 @@ class TestAgentUpdate:
             assert data["delegatable"] is True
             assert data["skills"] == ["skill2"]
             assert data["sub_agents"] == ["agent2"]
+            assert data["kb"] == ["kb_c"]
             assert data["tools"] == ["write"]
             for tool in ("write",):
                 assert tool in data["tools"]
@@ -227,6 +245,7 @@ class TestAgentUpdate:
             assert raw["delegatable"] is True
             assert raw["skills"] == ["skill2"]
             assert raw["sub_agents"] == ["agent2"]
+            assert raw["kb"] == ["kb_c"]
             assert raw["tools"] == ["write"]
             for tool in ("write",):
                 assert tool in raw["tools"]
@@ -235,6 +254,7 @@ class TestAgentUpdate:
             assert overlay["delegatable"] is True
             assert overlay["skills"] == ["skill2"]
             assert overlay["sub_agents"] == ["agent2"]
+            assert overlay["kb"] == ["kb_c"]
             assert overlay["tools"] == ["write"]
             for tool in ("write",):
                 assert tool in overlay["tools"]

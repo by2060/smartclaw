@@ -585,7 +585,7 @@ class WorkflowEngine:
         if node.type in {"branch", "loop"}:
             return {}, ""
         if node.type == "tool":
-            return self._execute_tool_node(node, inputs)
+            return self._execute_tool_node(node, inputs, _runtime=_runtime)
         if node.type == "llm":
             return self._execute_llm_node(node, inputs)
         if node.type == "http_request":
@@ -596,12 +596,20 @@ class WorkflowEngine:
             node_id=node_id, message=f"Unsupported node.type={node.type!r}"
         )
 
-    def _execute_tool_node(self, node: Node, inputs: Dict[str, Any]) -> Tuple[Dict[str, Any], str]:
+    def _execute_tool_node(
+        self,
+        node: Node,
+        inputs: Dict[str, Any],
+        *,
+        _runtime: Optional[Runtime] = None,
+    ) -> Tuple[Dict[str, Any], str]:
         """Execute a tool node by calling the named tool from the tool registry."""
         assert node.tool_name, "tool node requires tool_name"
         from .tools import ToolFacade, get_tool_registry
-        reg = get_tool_registry()
-        facade = ToolFacade(reg)
+        runtime = _runtime or self.runtime
+        reg = getattr(runtime, "tool_registry", None) if runtime is not None else None
+        reg = reg or get_tool_registry()
+        facade = reg if isinstance(reg, ToolFacade) else ToolFacade(reg)
         merged_args = {**(node.tool_args or {}), **inputs}
         try:
             result = facade.run(node.tool_name, **merged_args)

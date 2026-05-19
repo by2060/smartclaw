@@ -303,7 +303,7 @@ async def create_session(http_request: Request, request: Optional[SessionCreateR
             effective_user_context = _session_user_context(parent_for_context)
     if not effective_user_context.get("currentUserId"):
         effective_user_context["currentUserId"] = str(current_user.id)
-    
+
     # Trigger command:new hook if creating from parent (like /new command)
     if request.parentID:
         try:
@@ -2150,7 +2150,7 @@ async def _process_session_message(
         "content_length": len(text_content),
         "has_non_text_parts": has_non_text_parts,
     })
-    
+
     # ------------------------------------------------------------------
     # 2. Resolve agent and model (5-level priority)
     # ------------------------------------------------------------------

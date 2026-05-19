@@ -161,6 +161,7 @@ def load_agent(agent_dir: Path, native: bool = False) -> Optional[AgentInfo]:
         # 权限控制新增
         skills=raw.get("skills") if "skills" in raw else None,
         sub_agents=raw.get("sub_agents") if "sub_agents" in raw else None,
+        kb=_read_agent_kb(raw),
         options=raw.get("options", {}),
         steps=raw.get("steps"),
         delegatable=raw.get("delegatable"),
@@ -328,6 +329,14 @@ def _read_yaml_raw(yaml_path: Path) -> Dict[str, Any]:
     return yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
 
 
+def _read_agent_kb(raw: Dict[str, Any]) -> Optional[List[str]]:
+    if "kb" in raw:
+        return raw.get("kb")
+    if "knowledge_base" in raw:
+        return raw.get("knowledge_base")
+    return None
+
+
 def _write_yaml(yaml_path: Path, data: Dict[str, Any]) -> None:
     yaml_path.parent.mkdir(parents=True, exist_ok=True)
     content = yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False)
@@ -406,6 +415,7 @@ def yaml_to_agent_info(raw: dict, yaml_path: Path) -> AgentInfo:
         # skill和sub_agents权限控制新增
         skills=raw.get("skills") if "skills" in raw else None,
         sub_agents=raw.get("sub_agents") if "sub_agents" in raw else None,
+        kb=_read_agent_kb(raw),
         model=model,
         prompt=prompt,
         prompt_builder=raw.get("prompt_builder"),

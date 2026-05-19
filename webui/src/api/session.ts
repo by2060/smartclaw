@@ -13,6 +13,8 @@ export interface SessionMessagePartPayload {
   metadata?: Record<string, unknown>;
 }
 
+export type SessionUserContext = Record<string, unknown>;
+
 export interface SessionListParams {
   limit?: number;
   offset?: number;
@@ -21,6 +23,25 @@ export interface SessionListParams {
   start?: number;
   search?: string;
   category?: string;
+}
+
+export interface SessionCreatePayload {
+  title?: string;
+  parentID?: string;
+  userContext?: SessionUserContext;
+}
+
+export interface SessionUpdatePayload {
+  title?: string;
+  userContext?: SessionUserContext;
+}
+
+export interface SessionMessagePayload {
+  role?: string;
+  parts: Array<{ type: string; text?: string; url?: string; mime?: string; filename?: string }>;
+  agent?: string;
+  noReply?: boolean;
+  mockReply?: string;
 }
 
 export const sessionApi = {
@@ -51,7 +72,7 @@ export const sessionApi = {
   /**
    * 创建会话
    */
-  create: async (data?: { title?: string; parentID?: string }) => {
+  create: async (data?: SessionCreatePayload) => {
     const response = await client.post('/api/session', data || {});
     return response.data;
   },
@@ -67,7 +88,7 @@ export const sessionApi = {
   /**
    * 更新会话
    */
-  update: async (sessionId: string, data: { title?: string }) => {
+  update: async (sessionId: string, data: SessionUpdatePayload) => {
     const response = await client.patch(`/api/session/${sessionId}`, data);
     return response.data;
   },
@@ -91,12 +112,7 @@ export const sessionApi = {
   /**
    * 发送消息
    */
-  sendMessage: async (sessionId: string, data: {
-    role?: string;
-    parts: Array<{ type: string; text: string }>;
-    noReply?: boolean;
-    mockReply?: string;
-  }) => {
+  sendMessage: async (sessionId: string, data: SessionMessagePayload) => {
     const response = await client.post(`/api/session/${sessionId}/message`, data, { timeout: 0 });
     return response.data;
   },

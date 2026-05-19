@@ -307,6 +307,17 @@ class TestLoadAgent:
         assert agent is not None
         assert agent.tools == ["read", "tool_search"]
 
+    def test_loads_kb_field(self, tmp_path):
+        agent_dir = _write_agent_dir(tmp_path, """
+            name: kb_agent
+            kb:
+              - kb_a
+              - kb_b
+        """)
+        agent = load_agent(agent_dir)
+        assert agent is not None
+        assert agent.kb == ["kb_a", "kb_b"]
+
 
 # ===========================================================================
 # scan_and_load
@@ -563,6 +574,12 @@ class TestYamlToAgentInfo:
         raw2 = {"name": "bilingual2", "descriptionCn": "界面"}
         agent2 = yaml_to_agent_info(raw2, yaml_path)
         assert agent2.description_cn == "界面"
+
+    def test_knowledge_base_alias_maps_to_kb(self, tmp_path):
+        yaml_path = self._make_yaml_path(tmp_path)
+        raw = {"name": "kb_plugin", "knowledge_base": ["kb_a", "kb_c"]}
+        agent = yaml_to_agent_info(raw, yaml_path)
+        assert agent.kb == ["kb_a", "kb_c"]
 
 
 # ===========================================================================

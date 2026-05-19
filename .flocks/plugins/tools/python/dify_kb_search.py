@@ -138,18 +138,48 @@ def _resolve_user_context_knowledge_base_ids(ctx: ToolContext) -> List[str]:
     return _normalize_dataset_ids(user_context.get("knowledgeBaseIds"))
 
 
-def _resolve_effective_dataset_scope(ctx: ToolContext) -> tuple[List[str], Dict[str, Any]]:
+async def _resolve_agent_knowledge_base_ids(ctx: ToolContext) -> Optional[List[str]]:
+    agent_name = str(getattr(ctx, "agent", "") or "").strip()
+    if not agent_name:
+        return None
+
+    try:
+        from flocks.agent.registry import Agent
+
+        agent = await Agent.get(agent_name)
+    except Exception as exc:
+        log.warn("dify_kb_search.agent_kb_resolve_failed", {"agent": agent_name, "error": str(exc)})
+        return None
+
+    if agent is None:
+        return None
+
+    agent_kb = getattr(agent, "kb", None)
+    if agent_kb is None:
+        return None
+    return _normalize_dataset_ids(agent_kb)
+
+
+async def _resolve_effective_dataset_scope(ctx: ToolContext) -> tuple[List[str], Dict[str, Any]]:
     knowledge_base_ids = _resolve_user_context_knowledge_base_ids(ctx)
+    agent_kb_ids = await _resolve_agent_knowledge_base_ids(ctx)
     missing_required_scopes: List[str] = []
 
     if not knowledge_base_ids:
         missing_required_scopes.append("session.userContext.knowledgeBaseIds")
+    if agent_kb_ids is None:
+        missing_required_scopes.append("agent.kb")
+
+    agent_kb_set = set(agent_kb_ids or [])
+    effective_dataset_ids = [dataset_id for dataset_id in knowledge_base_ids if dataset_id in agent_kb_set]
 
     scope_metadata = {
         "knowledge_base_count": len(knowledge_base_ids),
+        "agent_kb_count": len(agent_kb_ids or []),
+        "effective_dataset_count": len(effective_dataset_ids),
         "missing_required_scopes": missing_required_scopes,
     }
-    return knowledge_base_ids, scope_metadata
+    return effective_dataset_ids, scope_metadata
 
 
 def _http_json_request(
@@ -217,7 +247,7 @@ async def retrieve_from_dify_kb(
 
     requested_dataset_ids = _normalize_dataset_ids(dataset_ids)
     if not requested_dataset_ids:
-        raise ValueError("No Dify dataset IDs were provided from userContext.knowledgeBaseIds.")
+        raise ValueError("No Dify dataset IDs were provided.")
 
     all_records: List[Dict[str, Any]] = []
     errors: List[Dict[str, str]] = []
@@ -261,8 +291,8 @@ async def retrieve_from_dify_kb(
     name="dify_kb_search",
     description=(
         "Query Dify knowledge bases and return retrieved records. "
-        "The dataset scope comes only from the current session's "
-        "userContext.knowledgeBaseIds."
+        "The dataset scope is the intersection of the current session's "
+        "userContext.knowledgeBaseIds and the current agent's kb field."
     ),
     category=ToolCategory.SEARCH,
     tags=["dify", "knowledge-base", "rag", "retrieval"],
@@ -289,7 +319,7 @@ async def dify_kb_search(
 ) -> ToolResult:
     api_url, api_key, resolved_top_k = _load_runtime_config(top_k=top_k)
     del api_key
-    resolved_dataset_ids, scope_metadata = _resolve_effective_dataset_scope(ctx)
+    resolved_dataset_ids, scope_metadata = await _resolve_effective_dataset_scope(ctx)
 
     if not query or not query.strip():
         return ToolResult(success=False, error="Parameter 'query' is required.")
@@ -318,8 +348,8 @@ async def dify_kb_search(
         return ToolResult(
             success=False,
             error=(
-                "No Dify knowledge bases are queryable from the current session's "
-                "userContext.knowledgeBaseIds."
+                "No Dify knowledge bases are queryable after intersecting the current "
+                "agent kb field with session userContext.knowledgeBaseIds."
             ),
             metadata=scope_metadata,
             title="Dify knowledge base query",

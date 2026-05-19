@@ -149,6 +149,7 @@ class AgentInfo(BaseModel):
     # None means unrestricted for backward compatibility with existing agents.
     # An explicit empty list means no subagents are allowed.
     sub_agents: Optional[List[str]] = None
+    kb: Optional[List[str]] = Field(default=None, alias="knowledge_base")
 
     model: Optional[AgentModel] = None
     prompt: Optional[str] = None

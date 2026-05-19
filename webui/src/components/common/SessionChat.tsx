@@ -363,6 +363,10 @@ export default function SessionChat({
   const showTimestamp = display?.showTimestamp ?? false;
   const effectivePlaceholder = placeholder ?? t('chat.placeholder');
   const effectiveEmptyText = emptyText ?? t('chat.emptyText');
+  const activeAgentName = useMemo(() => {
+    const name = agentName || 'rex';
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  }, [agentName]);
   // Restore any persisted draft on first mount so navigating away (e.g.
   // sidebar → Agents → back to Sessions) doesn't wipe the user's half-typed
   // message. Subsequent session changes are re-hydrated by the effect below.
@@ -1569,8 +1573,8 @@ export default function SessionChat({
               <div className={`flex justify-start ${!compact ? 'group w-full' : ''}`}>
                 <div className={`${compact ? 'max-w-[90%] px-4 py-3 rounded-xl' : 'max-w-2xl w-full px-6 py-4 rounded-2xl'} shadow-sm bg-white border border-gray-200 text-sm`}>
                   <div className="text-xs font-medium mb-1.5 opacity-70 flex items-center gap-1.5">
-                    <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-600 text-white text-[9px] font-bold">R</span>
-                    Rex
+                    <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-600 text-white text-[9px] font-bold">{activeAgentName.charAt(0)}</span>
+                    {activeAgentName}
                   </div>
                   <div className="flex items-center gap-2 text-sm text-gray-500">
                     <div className="flex gap-0.5">

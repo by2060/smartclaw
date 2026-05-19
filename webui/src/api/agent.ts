@@ -23,6 +23,7 @@ export interface Agent {
   skills: string[];
   tools: string[];
   sub_agents?: string[];
+  kb?: string[];
   tags?: string[];
 }
 

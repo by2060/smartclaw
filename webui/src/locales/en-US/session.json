@@ -33,6 +33,10 @@
   "loading": "Loading...",
   "noAgents": "No agents available",
   "smartAssistant": "AI Smart Assistant",
+  "agentSelector": {
+    "primaryAgent": "Primary",
+    "subAgent": "Sub-agent"
+  },
   "welcome": {
     "title": "Start a new conversation",
     "description": "AI-native security operations assistant — threat analysis, incident response, and security orchestration",

@@ -85,6 +85,7 @@ class AgentConfig(BaseModel):
     permission: Optional[Union[PermissionConfig, Dict[str, Any]]] = None
     disable: Optional[bool] = None
     delegatable: Optional[bool] = Field(None, description="Whether this agent can be called via delegate_task")
+    kb: Optional[List[str]] = Field(None, alias="knowledge_base", description="Allowed knowledge base dataset IDs")
     strategy: Optional[Literal["react", "plan_and_execute", "read_only", "explore"]] = None
     tools: Optional[Dict[str, bool]] = Field(None, description="@deprecated Use 'permission'")
     

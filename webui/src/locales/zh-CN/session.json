@@ -33,6 +33,10 @@
   "loading": "加载中...",
   "noAgents": "暂无可用的Agent",
   "smartAssistant": "智能AI助手",
+  "agentSelector": {
+    "primaryAgent": "主 Agent",
+    "subAgent": "子 Agent"
+  },
   "welcome": {
     "title": "开始新的对话",
     "description": "AI 原生的安全运营助手，帮您进行威胁分析、应急响应、安全编排等任务",

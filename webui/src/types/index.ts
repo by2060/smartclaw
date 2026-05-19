@@ -19,6 +19,7 @@ export interface Session {
   category?: string;
   ownerUserID?: string;
   ownerUsername?: string;
+  userContext?: Record<string, unknown>;
   canDelete?: boolean;
 }
 

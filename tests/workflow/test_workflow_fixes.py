@@ -36,8 +36,10 @@ class _MockToolAdapter(FlocksToolAdapter):
         self._ctx = None
         self._executor = None
         self._outputs = outputs or {}
+        self.calls = []
 
     def run(self, name: str, /, **kwargs: Any) -> Any:
+        self.calls.append((name, dict(kwargs)))
         if name in self._outputs:
             val = self._outputs[name]
             if isinstance(val, Exception):
@@ -124,6 +126,37 @@ class TestRunSafe:
         assert result["success"] is True
         assert result["obj"] == [1, 2, 3]
         assert result["text"] == "[1, 2, 3]"
+
+
+class TestToolNodeRegistry:
+    """Tests for workflow tool nodes using the runtime registry."""
+
+    def test_tool_node_uses_runtime_tool_registry(self):
+        adapter = _MockToolAdapter(outputs={"context_tool": "ok"})
+        wf = Workflow.from_dict({
+            "name": "tool_node_registry",
+            "start": "call_tool",
+            "nodes": [
+                {
+                    "id": "call_tool",
+                    "type": "tool",
+                    "tool_name": "context_tool",
+                    "tool_args": {"static": "node"},
+                    "output_key": "value",
+                },
+            ],
+            "edges": [],
+        })
+        engine = WorkflowEngine(
+            wf,
+            runtime=PythonExecRuntime(tool_registry=adapter),
+        )
+
+        result = engine.run_node("call_tool", {"dynamic": "input"})
+
+        assert result.error is None
+        assert result.outputs == {"value": "ok"}
+        assert adapter.calls == [("context_tool", {"static": "node", "dynamic": "input"})]
 
 
 # ===================================================================

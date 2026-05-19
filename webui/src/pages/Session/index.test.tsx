@@ -14,6 +14,7 @@ const {
   refetchSessions,
   useSessions,
   useAgents,
+  useAuth,
   toast,
 } = vi.hoisted(() => ({
   sessionApi: {
@@ -29,6 +30,7 @@ const {
   refetchSessions: vi.fn(),
   useSessions: vi.fn(),
   useAgents: vi.fn(),
+  useAuth: vi.fn(),
   toast: {
     error: vi.fn(),
     info: vi.fn(),
@@ -49,6 +51,14 @@ vi.mock('@/hooks/useAgents', () => ({
   useAgents,
 }));
 
+vi.mock('@/contexts/AuthContext', () => ({
+  useAuth,
+}));
+
+vi.mock('@/hooks/useDefaultModelVision', () => ({
+  useDefaultModelVision: () => true,
+}));
+
 vi.mock('@/components/common/Toast', () => ({
   useToast: () => toast,
 }));
@@ -59,8 +69,8 @@ vi.mock('@/components/common/LoadingSpinner', () => ({
 
 vi.mock('@/components/common/SessionChat', () => ({
   __esModule: true,
-  default: ({ sessionId }: { sessionId?: string | null }) => (
-    <div data-testid="session-chat">{sessionId ?? 'no-session'}</div>
+  default: ({ sessionId, agentName }: { sessionId?: string | null; agentName?: string }) => (
+    <div data-testid="session-chat" data-agent-name={agentName}>{sessionId ?? 'no-session'}</div>
   ),
 }));
 
@@ -128,6 +138,10 @@ describe('SessionPage session actions menu', () => {
       loading: false,
       error: null,
       refetch: vi.fn(),
+    });
+
+    useAuth.mockReturnValue({
+      user: { id: 'user-1', username: 'tester' },
     });
 
     sessionApi.update.mockResolvedValue({ ...session, title: 'Renamed Session' });
@@ -268,6 +282,30 @@ describe('SessionPage session actions menu', () => {
     renderSessionPage();
 
     expect(screen.getByTestId('session-chat')).toHaveTextContent('no-session');
+  });
+
+  it('allows selecting a visible subagent for chat', async () => {
+    const user = userEvent.setup();
+    useAgents.mockReturnValue({
+      agents: [
+        { name: 'rex', mode: 'primary', permission: [], options: {}, skills: [], tools: [] },
+        { name: 'threat-hunter', mode: 'subagent', permission: [], options: {}, skills: [], tools: [], tags: [] },
+        { name: 'internal-worker', mode: 'subagent', permission: [], options: {}, skills: [], tools: [], tags: ['system'] },
+      ],
+      loading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderSessionPage();
+
+    await user.click(screen.getByRole('button', { name: /Rex/i }));
+    expect(screen.getByRole('button', { name: /Threat-hunter/i })).toBeInTheDocument();
+    expect(screen.queryByText('Internal-worker')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /Threat-hunter/i }));
+
+    expect(screen.getByTestId('session-chat')).toHaveAttribute('data-agent-name', 'threat-hunter');
   });
 
   it('syncs selected session when query param changes after mount', async () => {

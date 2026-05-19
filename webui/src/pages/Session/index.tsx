@@ -12,11 +12,12 @@ import { useSearchParams } from 'react-router-dom';
 import LoadingSpinner from '@/components/common/LoadingSpinner';
 import { useToast } from '@/components/common/Toast';
 import SessionChat, { type SSEChatEvent, type SSEConnectionStatus } from '@/components/common/SessionChat';
-import { sessionApi } from '@/api/session';
+import { sessionApi, type SessionUserContext } from '@/api/session';
 import { useSessions } from '@/hooks/useSessions';
 import { useAgents } from '@/hooks/useAgents';
 import client from '@/api/client';
 import { useDefaultModelVision } from '@/hooks/useDefaultModelVision';
+import { useAuth } from '@/contexts/AuthContext';
 import { buildPromptParts, type ImagePartData } from '@/utils/imageUpload';
 import { getAgentDisplayDescription } from '@/utils/agentDisplay';
 import { formatSessionDate } from '@/utils/time';
@@ -28,6 +29,17 @@ function sanitizeSessionExportName(value: string) {
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '') || 'session';
+}
+
+function buildSessionUserContext(
+  user: { id?: string; username?: string } | null,
+  knowledgeBaseIds?: string[],
+): SessionUserContext {
+  const userContext: SessionUserContext = {};
+  if (user?.id) userContext.currentUserId = user.id;
+  if (user?.username) userContext.currentUserName = user.username;
+  if (knowledgeBaseIds?.length) userContext.knowledgeBaseIds = knowledgeBaseIds;
+  return userContext;
 }
 
 export default function SessionPage() {
@@ -49,16 +61,29 @@ export default function SessionPage() {
   const [renameSubmitting, setRenameSubmitting] = useState(false);
   const [downloadingSessionId, setDownloadingSessionId] = useState<string | null>(null);
   const supportsVision = useDefaultModelVision();
+  const { user } = useAuth();
   const renameInputRef = useRef<HTMLInputElement | null>(null);
   const renameSubmitInFlightRef = useRef(false);
   const toast = useToast();
 
   const { sessions, loading: loadingSessions, refetch: refetchSessions, updateSessionTitle, removeSession, removeSessions, addSession } = useSessions();
   const { agents, loading: loadingAgents } = useAgents();
-  const rexAgents = useMemo(() => agents.filter(a => a.name.toLowerCase() === 'rex'), [agents]);
+  const selectableAgents = useMemo(
+    () => agents.filter((agent) => !agent.hidden && !(agent.mode !== 'primary' && (agent.tags ?? []).includes('system'))),
+    [agents],
+  );
+  const selectedAgentInfo = useMemo(
+    () => selectableAgents.find((agent) => agent.name === selectedAgent) ?? null,
+    [selectableAgents, selectedAgent],
+  );
+  const selectedAgentName = selectedAgentInfo?.name ?? selectedAgent;
   const selectedSession = useMemo(
     () => sessions.find(s => s.id === selectedSessionId) ?? null,
     [sessions, selectedSessionId],
+  );
+  const sessionUserContext = useMemo(
+    () => buildSessionUserContext(user, selectedAgentInfo?.kb),
+    [user, selectedAgentInfo],
   );
 
   // Handle SSE events for session-level updates (title changes, etc.)
@@ -98,6 +123,13 @@ export default function SessionPage() {
       setSearchParams({}, { replace: true });
     }
   }, [searchParams, selectedSessionId, setSearchParams]);
+
+  useEffect(() => {
+    if (loadingAgents || selectableAgents.length === 0) return;
+    if (!selectableAgents.some((agent) => agent.name === selectedAgent)) {
+      setSelectedAgent(selectableAgents[0].name);
+    }
+  }, [loadingAgents, selectableAgents, selectedAgent]);
 
   // Close agent dropdown on outside click
   useEffect(() => {
@@ -139,7 +171,10 @@ export default function SessionPage() {
     if (creating) return;
     setCreating(true);
     try {
-      const response = await client.post('/api/session', { title: 'New Session' });
+      const response = await client.post('/api/session', {
+        title: 'New Session',
+        userContext: sessionUserContext,
+      });
       addSession(response.data);
       setSelectedSessionId(response.data.id);
     } catch (err: any) {
@@ -147,14 +182,17 @@ export default function SessionPage() {
     } finally {
       setCreating(false);
     }
-  }, [creating, addSession, toast, t]);
+  }, [creating, sessionUserContext, addSession, toast, t]);
 
   const handleCreateAndSend = useCallback(async (
     text: string,
     imageParts?: ImagePartData[],
   ) => {
     try {
-      const response = await client.post('/api/session', { title: 'New Session' });
+      const response = await client.post('/api/session', {
+        title: 'New Session',
+        userContext: sessionUserContext,
+      });
       const newSessionId = response.data.id;
 
       addSession(response.data);
@@ -170,7 +208,7 @@ export default function SessionPage() {
     } catch (err: any) {
       toast.error(t('createFailed'), err.message);
     }
-  }, [addSession, selectedAgent, toast, t]);
+  }, [addSession, selectedAgent, sessionUserContext, toast, t]);
 
   const handleDeleteSession = useCallback(async (sessionId: string) => {
     const target = sessions.find((s) => s.id === sessionId);
@@ -563,7 +601,7 @@ export default function SessionPage() {
             >
               <Bot className="w-4 h-4 text-purple-600" />
               <span className="font-medium text-purple-600">
-                {selectedAgent.charAt(0).toUpperCase() + selectedAgent.slice(1)}
+                {selectedAgentName.charAt(0).toUpperCase() + selectedAgentName.slice(1)}
               </span>
               <ChevronDown className={`w-4 h-4 transition-transform ${showAgentOptions ? 'rotate-180' : ''}`} />
             </button>
@@ -573,8 +611,8 @@ export default function SessionPage() {
                 <div className="p-2 space-y-1 max-h-80 overflow-y-auto">
                   {loadingAgents ? (
                     <div className="p-4 text-center text-sm text-gray-500">{t('loading')}</div>
-                  ) : rexAgents.length > 0 ? (
-                    rexAgents.map((agent) => (
+                  ) : selectableAgents.length > 0 ? (
+                    selectableAgents.map((agent) => (
                       <button
                         key={agent.name}
                         onClick={() => { setSelectedAgent(agent.name); setShowAgentOptions(false); }}
@@ -586,11 +624,20 @@ export default function SessionPage() {
                       >
                         <div className="flex items-center gap-2">
                           <Bot className="w-4 h-4 text-purple-600" />
-                          <div className="flex-1">
-                            <div className="font-medium text-sm">
-                              {agent.name.charAt(0).toUpperCase() + agent.name.slice(1)}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-sm truncate">
+                                {agent.name.charAt(0).toUpperCase() + agent.name.slice(1)}
+                              </span>
+                              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
+                                agent.mode === 'primary'
+                                  ? 'bg-sky-50 text-sky-700'
+                                  : 'bg-purple-50 text-purple-700'
+                              }`}>
+                                {agent.mode === 'primary' ? t('agentSelector.primaryAgent') : t('agentSelector.subAgent')}
+                              </span>
                             </div>
-                            <div className="text-xs text-gray-500 mt-0.5">
+                            <div className="text-xs text-gray-500 mt-0.5 truncate">
                               {getAgentDisplayDescription(agent, i18n.language) || t('smartAssistant')}
                             </div>
                           </div>
