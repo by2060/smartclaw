@@ -1,5 +1,37 @@
 {
-  "provider": {},
+  "provider": {
+    "custom-glm-4.7-fp8": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "apiKey": "{secret:custom-glm-4.7-fp8_llm_key}",
+        "baseURL": "http://192.168.186.114/v1"
+      },
+      "models": {
+        "GLM-4.7-FP8": {
+          "name": "GLM-4.7-FP8",
+          "context_window": 128000,
+          "max_output_tokens": 128000,
+          "supports_vision": false,
+          "supports_tools": true,
+          "supports_streaming": true,
+          "supports_reasoning": false,
+          "input_price": 0.0,
+          "output_price": 0.0,
+          "currency": "USD",
+          "created_at": "2026-05-19T07:01:12.097038+00:00"
+        }
+      },
+      "name": "GLM-4.7-FP8",
+      "description": "Any OpenAI-compatible API endpoint (private deployments, proxies, etc.)",
+      "created_at": "2026-05-19T07:00:53.993000+00:00"
+    }
+  },
+  "default_models": {
+    "llm": {
+      "provider_id": "custom-glm-4.7-fp8",
+      "model_id": "GLM-4.7-FP8"
+    }
+  },
   "mcp": {},
   "channels": {},
   "api_services": {
@@ -75,7 +107,9 @@
       }
   }
   "bash": {
-    "command_black_list": ["rm", "sudo", "shutdown", "reboot"],
+    "command_black_list": ["rm", "sudo", "su","doas","run0","pkexec","rmdir","shred","wipe","sdelete","dd","mkfs",
+    "fdisk","parted","diskpart","mount","umount","chmod","chown","chgrp","passwd","useradd","userdel","groupadd",
+    "groupdel","systemctl","service","launchctl","sc","bcdedit","reg","netsh","halt","poweroff","shutdown", "reboot"],
     "block_message": "没有执行，黑名单命令已被拒绝：{command}"
   }
 

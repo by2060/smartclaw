@@ -682,6 +682,60 @@ async def test_question_remember_reuses_contextual_text_answer_across_new_sessio
 
 
 @pytest.mark.asyncio
+async def test_question_remember_matches_similar_chinese_choice_question(client):
+    from flocks.memory.question_memory import QuestionMemoryService
+    from flocks.session import Session
+
+    first_session = await Session.create(
+        project_id="proj_question_memory",
+        directory=".",
+        title="用户颜色答案记忆测试",
+        user_context={"currentUserId": "user_question_memory_color"},
+        memory_enabled=False,
+    )
+    second_session = await Session.create(
+        project_id="proj_question_memory",
+        directory=".",
+        title="新的简单偏好表单",
+        user_context={"currentUserId": "user_question_memory_color"},
+        memory_enabled=False,
+    )
+
+    first_question = {
+        "question": "你最喜欢哪种颜色？让我来帮你选择！",
+        "type": "choice",
+        "options": ["蓝色", "绿色", "红色", "紫色", "橙色"],
+        "multiple": False,
+    }
+    await QuestionMemoryService.save_remembered_answers(
+        session_id=first_session.id,
+        question_request={"questions": [first_question]},
+        answers=[["红色"]],
+        remember_flags=[True],
+    )
+
+    next_question = {
+        "question": "请选择你最喜欢的颜色：",
+        "type": "choice",
+        "options": ["蓝色", "绿色", "红色", "紫色", "橙色"],
+        "multiple": False,
+    }
+    unrelated_question = {
+        "question": "请选择你偏好的风险等级：",
+        "type": "choice",
+        "options": ["低", "中", "高"],
+        "multiple": False,
+    }
+
+    partial = await QuestionMemoryService.match_questions(
+        session_id=second_session.id,
+        questions=[next_question, unrelated_question],
+    )
+
+    assert partial == [["红色"], None]
+
+
+@pytest.mark.asyncio
 async def test_question_remember_refuses_sensitive_text_answers(client):
     from flocks.memory.question_memory import QuestionMemoryService
     from flocks.server.routes.question import clear_request_state, store_question_request

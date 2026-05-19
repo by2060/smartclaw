@@ -27,6 +27,7 @@ _SENSITIVE_PROMPT_RE = re.compile(
     re.IGNORECASE,
 )
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]+", re.UNICODE)
+_CJK_RE = re.compile(r"^[\u4e00-\u9fff]+$", re.UNICODE)
 _GENERIC_SEMANTIC_TOKENS = {
     "api", "url", "uri", "endpoint", "base", "host", "http", "https",
     "configuration", "config", "task", "user", "the", "for", "used", "enter",
@@ -76,8 +77,8 @@ class QuestionMemoryService:
         return None
 
     @classmethod
-    def _user_scope(session: Any) -> str:
-        return str(QuestionMemoryService._current_user_id(session) or "__shared__")
+    def _user_scope(cls, session: Any) -> str:
+        return str(cls._current_user_id(session) or "__shared__")
 
     @staticmethod
     def _storage_key(user_scope: str, context_key: str, fingerprint: str) -> str:
@@ -143,8 +144,26 @@ class QuestionMemoryService:
 
     @staticmethod
     def _semantic_tokens(text: str) -> set[str]:
-        tokens = {tok.lower() for tok in _TOKEN_RE.findall(text or "") if tok.strip()}
-        return {tok for tok in tokens if tok not in _GENERIC_SEMANTIC_TOKENS and len(tok) > 1}
+        tokens: set[str] = set()
+        for raw_token in _TOKEN_RE.findall(text or ""):
+            token = raw_token.strip().lower()
+            if not token or token in _GENERIC_SEMANTIC_TOKENS:
+                continue
+            if _CJK_RE.fullmatch(token):
+                if len(token) <= 1:
+                    continue
+                tokens.add(token)
+                for size in (2, 3):
+                    if len(token) < size:
+                        continue
+                    tokens.update(
+                        token[idx:idx + size]
+                        for idx in range(0, len(token) - size + 1)
+                    )
+                continue
+            if len(token) > 1:
+                tokens.add(token)
+        return tokens
 
     @classmethod
     def _question_tokens(cls, question: dict[str, Any]) -> set[str]:
@@ -171,6 +190,39 @@ class QuestionMemoryService:
             return 0.0
         return len(overlap) / max(len(current_tokens), len(stored_tokens))
 
+    @staticmethod
+    def _token_containment_score(current_tokens: set[str], stored_tokens: set[str]) -> float:
+        if not current_tokens or not stored_tokens:
+            return 0.0
+        overlap = current_tokens & stored_tokens
+        if not overlap:
+            return 0.0
+        return len(overlap) / min(len(current_tokens), len(stored_tokens))
+
+    @classmethod
+    def _option_overlap_score(
+        cls,
+        current_question: dict[str, Any],
+        stored_record: dict[str, Any],
+    ) -> float:
+        current_options = set(cls._normalize_question(current_question).get("options") or [])
+        stored_normalized = stored_record.get("normalized")
+        if isinstance(stored_normalized, dict):
+            stored_options = set(stored_normalized.get("options") or [])
+        else:
+            stored_question = stored_record.get("question")
+            stored_options = (
+                set(cls._normalize_question(stored_question).get("options") or [])
+                if isinstance(stored_question, dict)
+                else set()
+            )
+        if not current_options or not stored_options:
+            return 0.0
+        overlap = current_options & stored_options
+        if not overlap:
+            return 0.0
+        return len(overlap) / max(len(current_options), len(stored_options))
+
     @classmethod
     def _semantic_match_score(
         cls,
@@ -185,17 +237,28 @@ class QuestionMemoryService:
         if not stored_question_tokens:
             stored_question_tokens = cls._semantic_tokens(stored_summary)
 
-        question_score = cls._token_overlap_score(current_question_tokens, stored_question_tokens)
+        question_score = max(
+            cls._token_overlap_score(current_question_tokens, stored_question_tokens),
+            cls._token_containment_score(current_question_tokens, stored_question_tokens) * 0.9,
+        )
         if question_score <= 0:
             return 0.0
 
+        option_score = cls._option_overlap_score(current_question, stored_record)
         stored_context_tokens = set(stored_record.get("context_tokens") or [])
         context_score = cls._token_overlap_score(current_context_tokens, stored_context_tokens)
         if current_context_tokens or stored_context_tokens:
-            if context_score < 0.25:
+            strong_form_match = question_score >= 0.15 and option_score >= 0.8
+            if context_score < 0.25 and not strong_form_match:
                 return 0.0
 
-        return min(1.0, (question_score * 0.7) + ((context_score or 1.0) * 0.3))
+        context_component = context_score if (current_context_tokens or stored_context_tokens) else 1.0
+        return min(
+            1.0,
+            (question_score * 0.55)
+            + (option_score * 0.25)
+            + (context_component * 0.2),
+        )
 
     @classmethod
     def _can_auto_recall(cls, question: dict[str, Any]) -> bool:

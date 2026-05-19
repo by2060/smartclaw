@@ -19,7 +19,10 @@ class ToolCatalogMetadata(BaseModel):
 
 
 ALWAYS_LOAD_TOOL_NAMES: Set[str] = {
-    "question"
+    "question",
+    "memory_search",
+    "memory_get",
+    "memory_write"
 }
 
 
