@@ -174,7 +174,7 @@ async def run_slash_command_tool(ctx: ToolContext, command: str) -> ToolResult:
         except Exception as e:
             return ToolResult(success=False, error=f"Failed to scan workflows: {e}")
         if not entries:
-            return ToolResult(success=True, output="No workflows found in .flocks/workflow/ directories.")
+            return ToolResult(success=True, output="No workflows found in .flocks/plugins/workflows/ directories.")
         body = format_workflow_entries(entries, markdown=True)
         output = (
             "Available Workflows:\n\n"

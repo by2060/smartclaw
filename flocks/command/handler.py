@@ -229,7 +229,7 @@ async def handle_slash_command(
         if not entries:
             await send_text(
                 "No workflows found.\n"
-                "Create a workflow.json in .flocks/workflow/<name>/ to get started."
+                "Create a workflow.json in .flocks/plugins/workflows/<name>/ to get started."
             )
             return True
 

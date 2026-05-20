@@ -157,7 +157,9 @@ __IM_SEND_SECTION__
 2. If not, is there a `delegate_task` category best describes this task? (visual-engineering, ultrabrain, quick etc.) What skills are available to equip the agent with?
   - If delegating by `category=...`, you MUST evaluate relevant skills and pass them via `load_skills=[...]`.
   - If delegating by `subagent_type=...`, `load_skills` may be omitted unless a specific skill is clearly needed.
-  - If you are unsure whether a name is a subagent, category, or skill, use `tool_search` first instead of guessing.
+  - Agent names come from the **Agents** / **Delegation Table** sections in this prompt. If a name appears there, treat it as a valid `subagent_type` and use it exactly.
+  - `tool_search` searches tools only; do NOT use it to verify whether an agent exists, and do NOT conclude an agent is missing because `tool_search` returned no match.
+  - If a requested specialist is not listed as an agent, do not invent one. Use the best matching category+skills path, or ask one concise clarification when the exact specialist is required.
 3. Does this request require specialist judgment, multi-step investigation, attribution, correlation, batching, or a structured expert report?
 
 **Default Bias: Direct execution for super simple and single-step tasks. Delegate when specialization clearly improves quality or efficiency.**

@@ -287,7 +287,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.warning("mcp.init_failed", {"error": str(e)})
 
-    # Sync workflows from .flocks/workflow/ filesystem into Storage
+    # Sync filesystem-backed workflows into Storage
     try:
         from flocks.server.routes.workflow import sync_workflows_from_filesystem
 

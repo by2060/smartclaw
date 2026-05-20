@@ -98,10 +98,10 @@ export const hubAPI = {
     client.get<HubFileContent>(`/api/hub/plugins/${type}/${id}/files/content`, { params: { path } }),
 
   install: (type: HubPluginType, id: string, scope = 'global') =>
-    client.post(`/api/hub/plugins/${type}/${id}/install`, { scope }),
+    client.post(`/api/hub/plugins/${type}/${id}/install`, { scope: type === 'workflow' ? 'project' : scope }),
 
   update: (type: HubPluginType, id: string, scope = 'global') =>
-    client.post(`/api/hub/plugins/${type}/${id}/update`, { scope }),
+    client.post(`/api/hub/plugins/${type}/${id}/update`, { scope: type === 'workflow' ? 'project' : scope }),
 
   uninstall: (type: HubPluginType, id: string) =>
     client.delete(`/api/hub/plugins/${type}/${id}`),

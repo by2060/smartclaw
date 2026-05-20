@@ -125,7 +125,7 @@ def make_record(
         source=source,
         installedAt=int(time.time() * 1000),
         enabled=enabled,
-        scope="project" if scope == "project" else "global",
+        scope="project" if plugin_type == "workflow" or scope == "project" else "global",
         installPath=str(install_path),
     )
 

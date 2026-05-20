@@ -26,7 +26,7 @@ log = Log.create(service="hub-routes")
 
 
 class HubInstallRequest(BaseModel):
-    scope: str = Field(default="global", description="'global' only")
+    scope: str = Field(default="global", description="Install scope; workflow installs are forced to project scope")
 
 
 def _split_csv(value: Optional[str | list[str]]) -> Optional[list[str]]:

@@ -5,6 +5,7 @@ Remaining route tests: Workflow, Provider, Task, Config, Permission
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -82,7 +83,6 @@ def isolated_workflow_filesystem(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(workflow_routes, "_workspace_root", workspace_root, raising=False)
     monkeypatch.setattr(workflow_routes, "_find_workspace_root", lambda: workspace_root)
     monkeypatch.setattr(workflow_routes, "_workflow_dir", lambda workflow_id: project_root / workflow_id)
-    monkeypatch.setattr(workflow_routes, "_global_workflow_dir", lambda workflow_id: global_root / workflow_id)
     monkeypatch.setattr(fs_store, "_workspace_root", workspace_root, raising=False)
     monkeypatch.setattr(fs_store, "find_workspace_root", lambda: workspace_root)
     monkeypatch.setattr(
@@ -148,18 +148,18 @@ class TestWorkflowRoutes:
         data = resp.json()
         assert data["name"] == "test-workflow"
         assert "id" in data
-        assert data["source"] == "global"
-        assert (isolated_workflow_filesystem["global_root"] / data["id"] / "workflow.json").is_file()
-        assert not (isolated_workflow_filesystem["project_root"] / data["id"] / "workflow.json").exists()
+        assert data["source"] == "project"
+        assert (isolated_workflow_filesystem["project_root"] / data["id"] / "workflow.json").is_file()
+        assert not (isolated_workflow_filesystem["global_root"] / data["id"] / "workflow.json").exists()
 
     @pytest.mark.asyncio
-    async def test_import_workflow_defaults_to_global_storage(
+    async def test_import_workflow_defaults_to_project_storage(
         self,
         client: AsyncClient,
         isolated_workflow_filesystem,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        """POST /api/workflow/import stores imported workflows under global user storage by default."""
+        """POST /api/workflow/import stores imported workflows under project storage."""
         from flocks.server import auth as auth_module
 
         class _SecretManagerStub:
@@ -191,9 +191,69 @@ class TestWorkflowRoutes:
 
         data = resp.json()
         assert data["name"] == "imported-workflow"
-        assert data["source"] == "global"
-        assert (isolated_workflow_filesystem["global_root"] / data["id"] / "workflow.json").is_file()
-        assert not (isolated_workflow_filesystem["project_root"] / data["id"] / "workflow.json").exists()
+        assert data["source"] == "project"
+        assert (isolated_workflow_filesystem["project_root"] / data["id"] / "workflow.json").is_file()
+        assert not (isolated_workflow_filesystem["global_root"] / data["id"] / "workflow.json").exists()
+
+    @pytest.mark.asyncio
+    async def test_create_workflow_ignores_global_source(
+        self,
+        client: AsyncClient,
+        isolated_workflow_filesystem,
+    ):
+        """Explicit global source requests are still stored under the project workflow root."""
+        resp = await client.post(
+            "/api/workflow",
+            json={**_WORKFLOW_PAYLOAD, "source": "global"},
+        )
+        assert resp.status_code in (
+            status.HTTP_200_OK,
+            status.HTTP_201_CREATED,
+        ), resp.text
+
+        data = resp.json()
+        assert data["source"] == "project"
+        assert (isolated_workflow_filesystem["project_root"] / data["id"] / "workflow.json").is_file()
+        assert not (isolated_workflow_filesystem["global_root"] / data["id"] / "workflow.json").exists()
+
+    @pytest.mark.asyncio
+    async def test_update_global_workflow_creates_project_overlay(
+        self,
+        client: AsyncClient,
+        isolated_workflow_filesystem,
+    ):
+        """Updating a read-compatible global workflow writes a project-level copy."""
+        workflow_id = "legacy-global"
+        global_dir = isolated_workflow_filesystem["global_root"] / workflow_id
+        global_dir.mkdir(parents=True)
+        (global_dir / "workflow.json").write_text(json.dumps(_WORKFLOW_JSON), encoding="utf-8")
+
+        resp = await client.put(
+            f"/api/workflow/{workflow_id}",
+            json={"name": "project-overlay"},
+        )
+        assert resp.status_code == status.HTTP_200_OK, resp.text
+        data = resp.json()
+        assert data["source"] == "project"
+        assert data["name"] == "project-overlay"
+        assert (isolated_workflow_filesystem["project_root"] / workflow_id / "workflow.json").is_file()
+        assert (isolated_workflow_filesystem["global_root"] / workflow_id / "workflow.json").is_file()
+
+    @pytest.mark.asyncio
+    async def test_delete_global_workflow_is_forbidden(
+        self,
+        client: AsyncClient,
+        isolated_workflow_filesystem,
+    ):
+        """Read-compatible global workflows are not mutated by delete."""
+        workflow_id = "legacy-global"
+        global_dir = isolated_workflow_filesystem["global_root"] / workflow_id
+        global_dir.mkdir(parents=True)
+        (global_dir / "workflow.json").write_text(json.dumps(_WORKFLOW_JSON), encoding="utf-8")
+
+        resp = await client.delete(f"/api/workflow/{workflow_id}")
+        assert resp.status_code == status.HTTP_403_FORBIDDEN
+        assert (global_dir / "workflow.json").is_file()
 
     @pytest.mark.asyncio
     async def test_get_workflow(self, client: AsyncClient):

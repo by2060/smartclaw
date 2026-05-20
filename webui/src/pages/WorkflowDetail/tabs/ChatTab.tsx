@@ -78,9 +78,7 @@ export default function ChatTab({
   workflowIdRef.current = workflow.id;
   const historyBtnRef = useRef<HTMLDivElement>(null);
 
-  const workflowDir = workflow.source === 'global'
-    ? `~/.flocks/plugins/workflows/${workflow.id}/`
-    : `.flocks/plugins/workflows/${workflow.id}/`;
+  const workflowDir = `.flocks/plugins/workflows/${workflow.id}/`;
 
   const {
     sessionId: hookSessionId,
@@ -379,9 +377,7 @@ function WorkflowWelcome({
   onRetry: () => void;
 }) {
   const { t } = useTranslation('workflow');
-  const workflowDir = workflow.source === 'global'
-    ? `~/.flocks/plugins/workflows/${workflow.id}/`
-    : `.flocks/plugins/workflows/${workflow.id}/`;
+  const workflowDir = `.flocks/plugins/workflows/${workflow.id}/`;
 
   return (
     <div className="w-full max-w-md space-y-4 text-left">

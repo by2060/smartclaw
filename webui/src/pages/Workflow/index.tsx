@@ -127,7 +127,7 @@ export default function WorkflowPage() {
 }
 
 function isUserManaged(workflow: Workflow): boolean {
-  return workflow.source !== 'project';
+  return workflow.source === 'project';
 }
 
 const BUILTIN_PALETTES: { bg: string; border: string; icon: string; name: string }[] = [

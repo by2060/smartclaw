@@ -116,7 +116,7 @@ def resolve_global_workflow_roots() -> list[Path]:
     return [
         home / "plugins" / "workflow",   # legacy compat (read-only)
         home / "workflow",               # legacy compat (read-only)
-        home / "plugins" / "workflows",  # new canonical (read + write)
+        home / "plugins" / "workflows",  # user-level compat (read-only)
     ]
 
 

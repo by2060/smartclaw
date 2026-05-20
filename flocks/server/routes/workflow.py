@@ -89,8 +89,8 @@ class WorkflowCreateRequest(BaseModel):
     workflow_json: Dict[str, Any] = Field(..., alias="workflowJson", description="Workflow JSON definition")
     created_by: Optional[str] = Field(None, alias="createdBy", description="Creator")
     source: Optional[Literal["project", "global"]] = Field(
-        "global",
-        description="Storage location: 'project' or 'global'; defaults to global user storage",
+        "project",
+        description="Storage location. Workflow writes are always stored in the project directory.",
     )
 
 
@@ -116,7 +116,7 @@ class WorkflowResponse(BaseModel):
     category: str = Field("default", description="Category")
     workflowJson: Dict[str, Any] = Field(..., description="Workflow JSON")
     status: str = Field("draft", description="Status")
-    source: Optional[str] = Field(None, description="Storage location: 'project' or 'global'")
+    source: Optional[str] = Field(None, description="Storage location: 'project' or read-only 'global'")
     createdBy: Optional[str] = Field(None, description="Creator")
     createdAt: int = Field(..., description="Created timestamp (ms)")
     updatedAt: int = Field(..., description="Updated timestamp (ms)")
@@ -202,11 +202,6 @@ class WorkflowStatsResponse(BaseModel):
 def _workflow_dir(workflow_id: str) -> Path:
     """Return the project-level directory for a workflow."""
     return _find_workspace_root() / ".flocks" / "plugins" / "workflows" / workflow_id
-
-
-def _global_workflow_dir(workflow_id: str) -> Path:
-    """Return the global-level directory for a workflow (~/.flocks/plugins/workflows/<id>/)."""
-    return Path.home() / ".flocks" / "plugins" / "workflows" / workflow_id
 
 
 def _read_workflow_from_fs(workflow_id: str) -> Optional[Dict[str, Any]]:
@@ -305,15 +300,13 @@ def _write_workflow_to_fs(
     workflow_json: Dict[str, Any],
     meta: Dict[str, Any],
     markdown_content: Optional[str] = None,
-    *,
-    global_store: bool = False,
 ) -> None:
     """Write workflow definition and metadata to the filesystem.
 
-    When *global_store* is True the workflow is written under
-    ``~/.flocks/plugins/workflows/<id>/`` instead of the project directory.
+    Workflow definitions are always written to the project-level canonical
+    directory: ``<workspace>/.flocks/plugins/workflows/<id>/``.
     """
-    wf_dir = _global_workflow_dir(workflow_id) if global_store else _workflow_dir(workflow_id)
+    wf_dir = _workflow_dir(workflow_id)
     wf_dir.mkdir(parents=True, exist_ok=True)
 
     with open(wf_dir / "workflow.json", "w", encoding="utf-8") as f:
@@ -329,18 +322,16 @@ def _write_workflow_to_fs(
 
 
 def _delete_workflow_from_fs(workflow_id: str) -> bool:
-    """Remove a workflow directory from all known locations (primary + legacy plugins).
+    """Remove the canonical project-level workflow directory.
 
     Returns True if at least one directory was deleted.
     """
-    deleted = False
-    for root, _source in _all_scan_dirs():
-        wf_dir = root / workflow_id
-        if wf_dir.is_dir():
-            shutil.rmtree(wf_dir)
-            log.info("workflow.fs.deleted", {"id": workflow_id, "dir": str(wf_dir)})
-            deleted = True
-    return deleted
+    wf_dir = _workflow_dir(workflow_id)
+    if not wf_dir.is_dir():
+        return False
+    shutil.rmtree(wf_dir)
+    log.info("workflow.fs.deleted", {"id": workflow_id, "dir": str(wf_dir)})
+    return True
 
 
 def _scan_workflow_base_dir(base_dir: Path, source: str) -> Dict[str, Dict[str, Any]]:
@@ -619,8 +610,8 @@ async def list_workflows(
     """
     Get workflow list
 
-    Reads directly from the filesystem (.flocks/workflow/). Runs a one-time
-    migration on first call to move any Storage-only workflows to the filesystem.
+    Reads directly from the workflow scan roots. Runs a one-time migration on
+    first call to move any Storage-only workflows to the project workflow root.
     """
     try:
         await _migrate_storage_to_filesystem()
@@ -672,7 +663,7 @@ async def create_workflow(req: WorkflowCreateRequest):
         workflow_id = str(uuid.uuid4())
         now_ms = int(time.time() * 1000)
 
-        source = req.source or "global"
+        source = "project"
         meta = {
             "id": workflow_id,
             "name": req.name,
@@ -684,7 +675,7 @@ async def create_workflow(req: WorkflowCreateRequest):
             "updatedAt": now_ms,
         }
 
-        _write_workflow_to_fs(workflow_id, req.workflow_json, meta, global_store=(source == "global"))
+        _write_workflow_to_fs(workflow_id, req.workflow_json, meta)
 
         stats = await _get_workflow_stats(workflow_id)
         data = {
@@ -763,8 +754,8 @@ async def update_workflow(workflow_id: str, req: WorkflowUpdateRequest):
 
         data["updatedAt"] = int(time.time() * 1000)
 
-        is_global = data.get("source") == "global"
-        _write_workflow_to_fs(workflow_id, workflow_json, data, markdown_content, global_store=is_global)
+        _write_workflow_to_fs(workflow_id, workflow_json, data, markdown_content)
+        data["source"] = "project"
 
         stats = await _get_workflow_stats(workflow_id)
         data["workflowJson"] = workflow_json
@@ -792,9 +783,18 @@ async def delete_workflow(workflow_id: str):
         data = _read_workflow_from_fs(workflow_id)
         if not data:
             raise HTTPException(status_code=404, detail=f"Workflow not found: {workflow_id}")
+        if data.get("source") != "project":
+            raise HTTPException(
+                status_code=403,
+                detail="Only project-level workflows can be deleted",
+            )
 
         # Remove from filesystem (source of truth)
-        _delete_workflow_from_fs(workflow_id)
+        if not _delete_workflow_from_fs(workflow_id):
+            raise HTTPException(
+                status_code=403,
+                detail="Only canonical project-level workflows can be deleted",
+            )
 
         from flocks.hub import local as hub_local
 
@@ -975,7 +975,7 @@ async def validate_workflow(workflow_id: str):
 
 @router.post("/workflow-center/scan-workflows")
 async def workflow_center_scan_workflows():
-    """Scan .flocks/workflow and register discovered workflows."""
+    """Scan workflow roots and register discovered workflows."""
     try:
         items = await scan_skill_workflows()
         return {"count": len(items), "items": items}
@@ -1268,7 +1268,7 @@ async def import_workflow(workflow_json: Dict[str, Any]):
             "updatedAt": now_ms,
         }
 
-        _write_workflow_to_fs(workflow_id, workflow_json, meta, global_store=True)
+        _write_workflow_to_fs(workflow_id, workflow_json, meta)
 
         stats = await _get_workflow_stats(workflow_id)
         data = {
@@ -1276,7 +1276,7 @@ async def import_workflow(workflow_json: Dict[str, Any]):
             "workflowJson": workflow_json,
             "markdownContent": None,
             "stats": stats,
-            "source": "global",
+            "source": "project",
         }
 
         log.info("workflow.imported", {"id": workflow_id, "name": name})
@@ -1690,8 +1690,7 @@ async def save_sample_inputs(workflow_id: str, req: SampleInputsRequest):
         meta = {k: v for k, v in data.items() if k not in ("workflowJson", "markdownContent", "stats", "source")}
         meta["updatedAt"] = int(time.time() * 1000)
         markdown_content = data.get("markdownContent")
-        is_global = data.get("source") == "global"
-        _write_workflow_to_fs(workflow_id, workflow_json, meta, markdown_content, global_store=is_global)
+        _write_workflow_to_fs(workflow_id, workflow_json, meta, markdown_content)
 
         log.info("workflow.sample_inputs.saved", {"id": workflow_id})
         return {"ok": True}

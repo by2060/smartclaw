@@ -138,6 +138,8 @@ async def install_plugin(
     *,
     scope: str = "global",
 ) -> InstalledPluginRecord:
+    if plugin_type == "workflow":
+        scope = "project"
     manifest = load_manifest(plugin_type, plugin_id)
     src = plugin_root(plugin_type, plugin_id)
     validate_package(src, manifest)

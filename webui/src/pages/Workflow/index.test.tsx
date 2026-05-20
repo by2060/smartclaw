@@ -108,15 +108,15 @@ describe('WorkflowPage', () => {
     const customRegion = screen.getByRole('region', { name: '自定义工作流' });
     const builtinRegion = screen.getByRole('region', { name: '内置工作流' });
 
-    expect(within(customRegion).getByText('Global Workflow')).toBeInTheDocument();
-    expect(within(customRegion).queryByText('Project Workflow')).not.toBeInTheDocument();
-    expect(within(builtinRegion).getByText('Project Workflow')).toBeInTheDocument();
-    expect(within(builtinRegion).queryByText('Global Workflow')).not.toBeInTheDocument();
+    expect(within(customRegion).getByText('Project Workflow')).toBeInTheDocument();
+    expect(within(customRegion).queryByText('Global Workflow')).not.toBeInTheDocument();
+    expect(within(builtinRegion).getByText('Global Workflow')).toBeInTheDocument();
+    expect(within(builtinRegion).queryByText('Project Workflow')).not.toBeInTheDocument();
   });
 
   it('没有自定义工作流时不渲染空分组', () => {
     mockUseWorkflows.mockReturnValue({
-      workflows: [makeWorkflow({ id: 'wf-project-only', name: 'Project Only', source: 'project' })],
+      workflows: [makeWorkflow({ id: 'wf-global-only', name: 'Global Only', source: 'global' })],
       loading: false,
       error: null,
       refetch: vi.fn(),
