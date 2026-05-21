@@ -38,14 +38,14 @@ tool.run('write', filePath=os.path.join(artifacts_dir, 'payload_analysis.md'), c
 
 - 用户在 prompt 中**明确指定**了输出路径（优先尊重用户指定）
 - workflow 定义文件（`workflow.json`、`workflow.md`）必须写入项目级目录：`<workspace>/.flocks/plugins/workflows/<id>/`；旧路径 `~/.flocks/workflow/`、`~/.flocks/plugins/workflows/` 等仅允许扫描兼容，不允许作为新建或修改目标
-- 插件/工具等系统文件仍写入 `~/.flocks/plugins/`
+- 插件/工具等系统文件必须写入当前项目级目录：`<workspace>/.flocks/plugins/`；旧路径 `~/.flocks/plugins/` 仅允许扫描兼容，除非用户明确要求安装为全局插件，否则不允许作为新建或修改目标
 
 ### ⚠️ 明确禁止
 
 - **禁止**将输出文件写入项目代码目录下的 `artifacts/`（污染代码仓库）
 - **禁止**硬编码任何用户相关绝对路径（如 `/Users/xxx/...`）
 - **禁止**将报告写入 `logs/`、`tests/`、`docs/` 等功能目录
-- **禁止**将新建或修改的 workflow 定义文件写入 `~/.flocks/plugins/workflows/` 或其他用户级 workflow 目录；workflow 必须写入当前项目的 `<workspace>/.flocks/plugins/workflows/<id>/`
+- **禁止**将新建或修改的插件、工具、workflow 定义文件写入 `~/.flocks/plugins/`、`~/.flocks/plugins/workflows/` 或其他用户级目录；插件、工具、workflow 必须写入当前项目的 `<workspace>/.flocks/plugins/`
 
 ---
 
@@ -127,7 +127,7 @@ These constraints apply when acquiring new capabilities:
 |---|---|
 | `source .venv/bin/activate && uv add ...` from PyPI | `sudo`, `su`, elevated privileges |
 | Writing scripts to `/tmp` or project dirs | Downloading binary executables |
-| Creating plugins in `~/.flocks/plugins/` | Installing from non-PyPI sources |
+| Creating plugins in project-level `<workspace>/.flocks/plugins/` | Installing from non-PyPI sources |
 | Installing into the project virtualenv | Modifying system Python or `/usr/` |
 | Storing secrets via `get_secret_manager()` | Hardcoding credentials in code |
 
