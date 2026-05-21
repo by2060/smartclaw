@@ -188,7 +188,7 @@ flowchart TD
 
 ### 2.2 写入文件并展示
 
-1. 将简化 JSON 写入规范目录下的 `workflow.json`（**必须使用绝对路径**，见第 9 节）：用户级为 `~/.flocks/plugins/workflows/<id>/`，项目级为 `<workspace>/.flocks/plugins/workflows/<id>/`
+1. 将简化 JSON 写入当前项目规范目录下的 `workflow.json`（**必须使用绝对路径**，见第 9 节）：`<workspace>/.flocks/plugins/workflows/<id>/`。用户级 `~/.flocks/plugins/workflows/<id>/` 仅允许作为历史兼容扫描路径，不允许作为新建或修改目标。
 2. 在消息中告知用户：「已更新流程图，请在工作流页面查看。对节点名称、描述或流程结构有什么修改建议？」
 
 ### 2.3 用户反馈循环（循环直至满意）
@@ -234,7 +234,7 @@ flowchart TD
 ### ⚠️ 两步交付
 
 1. 先用 `write` 工具将 `workflow.md` **写入文件**（路径与第 9 节一致，例如 `.../plugins/workflows/<id>/workflow.md`）。
-   - **⚠️ 路径必须使用绝对路径**：全局目录可用 `python3 -c "import os; print(os.path.expanduser('~/.flocks/plugins/workflows/<id>'))"`；项目目录可先解析 workspace（从 cwd 向上第一个含 `.flocks` 的目录）再拼接 `/.flocks/plugins/workflows/<id>`。
+   - **⚠️ 路径必须使用绝对路径**：先解析 workspace（从 cwd 向上第一个含 `.flocks` 的目录），再拼接 `/.flocks/plugins/workflows/<id>`。
    - **严禁**使用未展开的相对路径（如 `.flocks/plugins/workflows/<id>/` 相对仓库根随手写入错误位置），否则 WebUI 可能无法从实际扫描目录读到文件。
 2. 写入成功后，用 `Question` 工具向用户展示流程摘要并请求确认（"确认工作流" / "修改工作流"）。确认后进入第四阶段生成 `workflow.json`。
 
@@ -542,9 +542,9 @@ Body: { "inputs": <样例数据> }
 
 ### 创建路径（写入）
 
-新建工作流时，写入路径必须在 用户级（全局）目录下：
+新建或修改工作流时，写入路径必须在当前项目目录下：
 
-- **用户级（全局）**：`~/.flocks/plugins/workflows/<slug-or-folder>/`（`workflow.json`、`workflow.md`、`meta.json` 由 API 写入时可能同目录）
+- **项目级（当前 workspace）**：`<workspace>/.flocks/plugins/workflows/<slug-or-folder>/`（`workflow.json`、`workflow.md`、`meta.json` 由 API 写入时可能同目录）
   - ⚠️ 任务输出（报告、artifacts）**不**写入此目录，统一写入 `~/.flocks/workspace/outputs/<YYYY-MM-DD>/<session_id>/`（见全局文件输出约定）
 
 
@@ -557,24 +557,18 @@ Body: { "inputs": <样例数据> }
 | 优先级（低→高） | 路径 | 说明 |
 |---|---|---|
 | 1 | `~/.flocks/plugins/workflow/` | 全局 legacy |
-| 2 | `~/.flocks/plugins/workflows/` | **全局规范路径（推荐新工作流露地）** |
+| 2 | `~/.flocks/plugins/workflows/` | 全局历史兼容路径，仅允许扫描，不允许作为新建或修改目标 |
 
 **项目（workspace 下）**
 
 | 优先级（低→高） | 路径 | 说明 |
 |---|---|---|
 | 1 | `<workspace>/.flocks/plugins/workflow/` | 项目 legacy |
-| 2 | `<workspace>/.flocks/plugins/workflows/` | **项目规范路径（推荐新工作流露地）** |
+| 2 | `<workspace>/.flocks/plugins/workflows/` | **项目规范路径（新建或修改工作流必须落地于此）** |
 
 ### ⚠️ 绝对路径规范（重要）
 
 **必须使用绝对路径写入文件**。
-
-全局目录示例：
-
-```bash
-python3 -c "import os; print(os.path.expanduser('~/.flocks/plugins/workflows/<folder>'))"
-```
 
 解析项目 workspace 并拼接规范目录示例：
 
@@ -583,11 +577,12 @@ python3 -c "from pathlib import Path; p=Path.cwd(); ws=next((x for x in [p,*p.pa
 ```
 
 **正确示例**：
-- `<HOME_DIR>/.flocks/plugins/workflows/alert_triage/workflow.json` ✅（用户级）
+- `<workspace>/.flocks/plugins/workflows/alert_triage/workflow.json` ✅（项目级）
 
 **错误示例**：
 - `.flocks/plugins/workflows/alert_triage/workflow.json` ❌（未展开相对路径，易写错磁盘位置）
-- 仅因习惯写入 `~/.flocks/workflow/...` 作为**新**工作流首选 ❌（仍可被扫描，但与当前规范及 API 默认落盘不一致）
+- `~/.flocks/plugins/workflows/alert_triage/workflow.json` ❌（用户级路径仅允许历史兼容扫描，不允许作为新建或修改目标）
+- 仅因习惯写入 `~/.flocks/workflow/...` 作为**新**工作流首选 ❌（仍可被扫描，但与当前规范及项目级落盘不一致）
 
 ---
 
