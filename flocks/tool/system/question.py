@@ -91,6 +91,13 @@ Question format:
 
 The user's answers will be returned for you to continue with."""
 
+DESCRIPTION_CN = """向用户提问并等待响应。
+
+用法：
+- 在进行重大更改前需要确认时使用
+- 需要在多个选项间获取用户偏好时使用
+- 需要澄清模糊指令时使用"""
+
 
 async def default_question_handler(
     session_id: str,

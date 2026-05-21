@@ -41,6 +41,14 @@ DESCRIPTION = """- Fast content search tool that works with any codebase size
 - If you need to identify/count the number of matches within files, use the Bash tool with `rg` (ripgrep) directly. Do NOT use `grep`.
 - When you are doing an open-ended search that may require multiple rounds of globbing and grepping, use the Task tool instead"""
 
+DESCRIPTION_CN = """快速内容搜索工具，适用于任何规模的代码库。
+
+用法：
+- 使用正则表达式搜索文件内容
+- 支持完整正则语法
+- 使用 include 参数按模式过滤文件
+- 返回至少有一个匹配的文件路径和行号，按修改时间排序"""
+
 
 def find_ripgrep() -> Optional[str]:
     """

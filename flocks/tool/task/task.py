@@ -148,6 +148,21 @@ Usage notes:
 - run_in_background=false: waits for completion and returns results inline
 - Pass session_id to continue a previous agent with full context"""
 
+DESCRIPTION_CN = """启动新智能体自主处理复杂的多步任务。
+
+用法：
+- 任务需要多个步骤或研究时使用
+- 需要并行探索代码时使用
+- 任务可以委派给专业智能体时使用""",
+
+    "tool_search.py": 按任务意图、关键字、类别或精确名称搜索可用工具。
+
+用法：
+- 当你需要发现当前轮次中尚未暴露的工具时使用此工具
+- 按用户目标、能力或关键字搜索
+- 此处返回的匹配工具立即添加到当前会话可调用工具集
+- 如果你已经知道需要的工具名称，优先使用精确批量查询
+
 
 @ToolRegistry.register_function(
     name="task",

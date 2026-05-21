@@ -56,6 +56,25 @@ Parameters:
 - line: Line number (1-based)
 - character: Character offset (1-based)"""
 
+DESCRIPTION_CN = """执行 LSP（语言服务器协议）操作以实现代码智能。
+
+支持的操作：
+- goToDefinition：跳转到符号定义位置
+- findReferences：查找符号的所有用法
+- hover：获取符号的类型/文档信息
+
+用法：
+- 需要 LSP 服务器在项目中运行
+- file 必须是工作区中的文件绝对路径
+- line 和 character 是从 0 开始的位置""",
+
+    "webfetch.py": 从指定 URL 获取内容并以可读格式返回。
+
+用法：
+- URL 必须是以 http:// 或 https:// 开头的完整有效 URL
+- 默认以 markdown 格式返回内容（HTML 会被转换）
+- 支持 text、markdown 和 html 输出格式
+
 
 @ToolRegistry.register_function(
     name="lsp",

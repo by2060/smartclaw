@@ -36,6 +36,24 @@ DESCRIPTION = """- Fast file pattern matching tool that works with any codebase 
 - When you are doing an open-ended search that may require multiple rounds of globbing and grepping, use the Task tool instead
 - You have the capability to call multiple tools in a single response. It is always better to speculatively perform multiple searches as a batch that are potentially useful."""
 
+DESCRIPTION_CN = """快速文件模式匹配工具，适用于任何规模的代码库。
+
+用法：
+- 支持类似 "**/*.js" 或 "src/**/*.ts" 的 glob 模式
+- 返回按修改时间排序的匹配文件路径
+- 当你需要按名称模式查找文件时使用此工具
+- 当进行可能需要多轮 glob 和 grep 的开放式搜索时，改用 Task 工具
+- 你可以在单个响应中调用多个工具。推测性地批量执行可能有用的搜索总是更好的选择。""",
+
+    "grep.py": 快速内容搜索工具，适用于任何规模的代码库。
+
+用法：
+- 使用正则表达式搜索文件内容
+- 支持完整正则语法（如 "log.*Error"、"function\s+\w+" 等）
+- 使用 include 参数按模式过滤文件（如 "*.js"、"*.{ts,tsx}"）
+- 返回至少有一个匹配的文件路径和行号，按修改时间排序
+- 当你需要查找包含特定模式的文件时使用此工具
+
 
 def find_ripgrep() -> Optional[str]:
     """Find ripgrep executable"""

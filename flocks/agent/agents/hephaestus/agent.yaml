@@ -1,32 +1,32 @@
 name: hephaestus
-description: >-
-  Autonomous deep worker. Explores thoroughly before acting, uses
-  explore/librarian agents for comprehensive context, completes tasks end-to-end.
+description: Autonomous deep worker. Explores thoroughly before acting, uses explore/librarian
+  agents for comprehensive context, completes tasks end-to-end.
 mode: subagent
 hidden: false
-tags: [system]
-color: "#FF4500"
+tags:
+- system
+color: '#FF4500'
 delegatable: true
 tools:
-  - read
-  - list
-  - glob
-  - grep
-  - codesearch
-  - bash
-  - edit
-  - multiedit
-  - write
-  - apply_patch
-  - websearch
-  - webfetch
-  - skill
-  - delegate_task
-  - task
-  - todoread
-  - todowrite
-  - run_workflow
-  - run_workflow_node
-  - background_output
-  - background_cancel
-# prompt is left empty – injected dynamically by prompt_builder.py
+- read
+- list
+- glob
+- grep
+- codesearch
+- bash
+- edit
+- multiedit
+- write
+- apply_patch
+- websearch
+- webfetch
+- skill
+- delegate_task
+- task
+- todoread
+- todowrite
+- run_workflow
+- run_workflow_node
+- background_output
+- background_cancel
+description_cn: 自主深度工作者，软件工程的高级 Staff 工程师。

@@ -34,6 +34,13 @@ Parameters:
   - newString: Replacement text
   - replaceAll: (optional) Replace all occurrences"""
 
+DESCRIPTION_CN = """在单个文件上顺序执行多个编辑操作。
+
+用法：
+- 当你需要对同一文件进行多次更改时使用
+- 每个编辑按顺序应用
+- 如果任何编辑失败，后续编辑将被跳过"""
+
 
 @ToolRegistry.register_function(
     name="multiedit",

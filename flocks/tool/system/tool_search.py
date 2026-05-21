@@ -29,6 +29,13 @@ returned here are added to the current session callable tool set immediately.
 If you already know the needed tool names, prefer one exact batch query such as
 `select:websearch,webfetch,skill` instead of multiple separate searches."""
 
+DESCRIPTION_CN = """按任务意图、关键字、类别或精确名称搜索可用工具。
+
+用法：
+- 当你需要发现当前轮次中尚未暴露的工具时使用
+- 按用户目标、能力或关键字搜索
+- 匹配工具立即添加到当前会话可调用工具集"""
+
 @ToolRegistry.register_function(
     name="tool_search",
     description=DESCRIPTION,

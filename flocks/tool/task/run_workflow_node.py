@@ -40,6 +40,14 @@ Returns:
 - node_id, outputs, stdout, error, traceback, duration_ms, success
 """
 
+DESCRIPTION_CN = """隔离执行单个工作流节点，用于逐步测试。
+
+用法：
+- 逐节点测试工作流时使用（BFS 顺序）
+- 用第一个节点和示例输入数据调用
+- 将每个节点的 outputs 作为 inputs 传给下一个节点
+- 在 workflow.json 中修复错误，然后重新运行失败节点直到 success=true"""
+
 
 def _load_workflow_dict(workflow: Union[Dict[str, Any], str]) -> Dict[str, Any]:
     """Resolve workflow parameter to a dict."""
