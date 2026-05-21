@@ -184,7 +184,7 @@ After generating files, verify:
 5. **Tool names**: verify every listed tool exists in the current registry; if the repo exposes a `/tools` or tool listing command, check against that instead of relying on memory
 6. **Trigger reload**: call the refresh API so Rex recognizes the new agent immediately — **no restart needed**:
    ```bash
-   curl -s -X POST http://localhost:8000/api/agents/refresh
+   curl -s -X POST http://localhost:5174/api/agents/refresh
    ```
    A successful response looks like `{"count": N}` where N is the total number of loaded agents. If the count increased, the new agent has been picked up correctly.
 
