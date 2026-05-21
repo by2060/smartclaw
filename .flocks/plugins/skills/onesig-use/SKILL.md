@@ -1,6 +1,7 @@
 ---
 name: onesig-use
 description: 用于处理 OneSIG（安全互联网网关 / Secure Internet Gateway）相关任务，适合通过 API 或者结合浏览器进行以下任务：威胁监控（仪表盘、防护大屏、失陷主机、入站/出站威胁事件、报告管理）、防护策略（全局白/黑名单、多维封锁、IPS、HTTP 黑名单、高危端口防护、API 联动、Syslog 自动封禁、FTP/SFTP 联动）、资产管理、平台管理（告警/审计/用户、HTTPS 解密、网口路由 DNS、HA、OneCC、设备升级与备份、license、MDR、诊断）、登录会话与改密、帮助文档。只要用户提到 OneSIG、SIG、安全互联网网关、微步互联网网关等相关操作时，必须先加载本 skill。本 skill 是 OneSIG 平台操作的唯一决策入口：在未阅读本 skill 并完成模式判断前，不要直接调用任何 `onesig_*` tool。
+description_cn: 用于处理 OneSIG（安全互联网网关）相关任务，适合通过 API 或结合浏览器进行威胁监控、防护策略、资产管理、平台管理、登录会话与改密、帮助文档等操作。只要用户提到 OneSIG、SIG、安全互联网网关、微步互联网网关等相关操作时，必须先加载本 skill。本 skill 是 OneSIG 平台操作的唯一决策入口：在未阅读本 skill 并完成模式判断前，不要直接调用任何 onesig_* tool。
 ---
 
 # OneSIG Use

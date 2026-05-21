@@ -1,6 +1,7 @@
 ---
 name: web2cli
 description: 使用统一的 Web2CLI 流程捕获网站的 XHR/Fetch 请求，并生成可复用的 CLI、Markdown 文档。支持 `agent-browser` 与 `cdp-direct` 两种模式：前者适合独立浏览器会话，后者复用用户 Chromium 系浏览器登录态与 CDP 能力。适用于复现登录后操作、沉淀接口调用样例，或基于页面操作生成自动化工具时。
+description_cn: 使用统一的 Web2CLI 流程捕获网站的 XHR/Fetch 请求，并生成可复用的 CLI、Markdown 文档。支持 agent-browser 与 cdp-direct 两种模式：前者适合独立浏览器会话，后者复用用户 Chromium 系浏览器登录态与 CDP 能力。适用于复现登录后操作、沉淀接口调用样例，或基于页面操作生成自动化工具时。
 required: browser-use
 ---
 

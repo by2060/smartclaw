@@ -1,6 +1,7 @@
 ---
 name: browser-use
 description: 统一处理浏览器使用任务，支持 CDP 直连用户本机 Chromium 系浏览器与 agent-browser CLI 两种模式。Use when the user asks to browse websites, interact with pages, fill forms, capture screenshots, reuse an existing Chrome/Chromium/Edge login session, access internal/login-only pages, or automate browser actions.
+description_cn: 统一处理浏览器使用任务，支持 CDP 直连用户本机 Chromium 系浏览器与 agent-browser CLI 两种模式。当用户要求浏览网站、与页面交互、填写表单、截图、复用现有 Chrome/Chromium/Edge 登录态、访问内部/需登录页面或自动化浏览器操作时使用。
 ---
 
 # Browser Use
