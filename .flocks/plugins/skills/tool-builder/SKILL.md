@@ -428,7 +428,13 @@ Run the bundled validator before anything else. It is self-contained
 `_provider.yaml` and any script handler:
 
 ```bash
-SKILL_DIR="$(realpath ~/.flocks/plugins/skills/tool-builder)"
+PROJECT_SKILL_DIR=".flocks/plugins/skills/tool-builder"
+USER_SKILL_DIR="$HOME/.flocks/plugins/skills/tool-builder"
+if [ -f "$PROJECT_SKILL_DIR/validator.py" ]; then
+  SKILL_DIR="$(realpath "$PROJECT_SKILL_DIR")"
+else
+  SKILL_DIR="$(realpath "$USER_SKILL_DIR")"
+fi
 uv run python "$SKILL_DIR/validator.py" "$TOOL_PATH"
 ```
 
@@ -457,7 +463,11 @@ The validator checks (this list is enforced, not aspirational):
 - `{secret:xxx}` references are surfaced so you can confirm they exist
 
 **YAML-script handler**
-- `script_file` resolves to an existing file under `~/.flocks/plugins/`
+- `script_file` resolves relative to the YAML file's directory
+- The resolved script file exists under an allowed plugins root:
+  `<project>/.flocks/plugins/` or `~/.flocks/plugins/`
+- For newly created project tools, place the handler next to the YAML file under
+  `<project>/.flocks/plugins/tools/api/{provider}/`
 - `function` exists in that file as `async def`
 - The function signature accepts `(ctx, ...)` and every YAML parameter
   is either a named arg or `**kwargs`
