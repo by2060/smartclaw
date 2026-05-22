@@ -98,7 +98,7 @@ def build_key_triggers_section(
     if not key_triggers:
         return ""
     return (
-        "### 关键触发器（分类前检查）：\n\n"
+        "### Key Triggers (check BEFORE classification):\n\n"
         + "\n".join(key_triggers)
         + '\n- **"Look into" + "create PR"** → Not just research. Full implementation cycle expected.'
     )
@@ -110,14 +110,14 @@ def build_tool_selection_table(
     _skills: Optional[List[AvailableSkill]] = None,
 ) -> str:
     tools = tools or []
-    rows: List[str] = ["### 工具与智能体选择："]
+    rows: List[str] = ["### Tool & Agent Selection:"]
 
     if tools:
         tools_block = _format_tools_for_prompt(tools)
         if tools_block:
             rows += [
                 "",
-                "**可用工具**：",
+                "**Available Tools**:",
                 tools_block,
             ]
 
@@ -128,17 +128,17 @@ def build_tool_selection_table(
     if sorted_agents:
         rows += [
             "",
-            "**智能体**（任务复杂或专业时委派）：",
+            "**Agents** (delegate when task is complex or specialised):",
             "",
-            "| 智能体 | 成本 | 何时使用 |",
-            "|-------|------|----------|",
+            "| Agent | Cost | When to Use |",
+            "|-------|------|-------------|",
         ]
         for agent in sorted_agents:
             short_desc = agent.description.split(".")[0] or agent.description
             rows.append(f"| `{agent.name}` | {agent.metadata.cost} | {short_desc} |")
 
     rows.append("")
-    rows.append("**默认流程**：explore/librarian（后台）+ 工具 → oracle（如需）")
+    rows.append("**Default flow**: explore/librarian (background) + tools → oracle (if required)")
     return "\n".join(rows)
 
 
@@ -151,9 +151,9 @@ def build_explore_section(agents: List[AvailableAgent]) -> str:
     left = [f"| {w} |  |" for w in avoid_when]
     right = [f"|  | {w} |" for w in use_when]
     return (
-        "### Explore 智能体 = 上下文 Grep\n\n"
-        "作为**对等工具**使用，而非后备。自由启动。\n\n"
-        "| 使用直接工具 | 使用 Explore 智能体 |\n"
+        "### Explore Agent = Contextual Grep\n\n"
+        "Use it as a **peer tool**, not a fallback. Fire liberally.\n\n"
+        "| Use Direct Tools | Use Explore Agent |\n"
         "|------------------|-------------------|\n"
         + "\n".join(left + right)
     )
@@ -166,27 +166,27 @@ def build_librarian_section(agents: List[AvailableAgent]) -> str:
     use_when = librarian_agent.metadata.use_when or []
     triggers = "\n".join([f'- "{w}"' for w in use_when])
     return (
-        "### Librarian 智能体 = 参考 Grep\n\n"
-        "搜索**外部参考**（文档、OSS、网络）。涉及不熟悉库时主动启动。\n\n"
-        "| 上下文 Grep（内部）| 参考 Grep（外部）|\n"
+        "### Librarian Agent = Reference Grep\n\n"
+        "Search **external references** (docs, OSS, web). Fire proactively when unfamiliar libraries are involved.\n\n"
+        "| Contextual Grep (Internal) | Reference Grep (External) |\n"
         "|----------------------------|---------------------------|\n"
-        "| 搜索我们的代码库 | 搜索外部资源 |\n"
-        "| 在本仓库找模式 | 在其他仓库找示例 |\n"
-        "| 我们的代码如何工作？| 这个库如何工作？|\n"
-        "| 项目特定逻辑 | 官方 API 文档 |\n"
-        "| | 库最佳实践与怪癖 |\n"
+        "| Search OUR codebase | Search EXTERNAL resources |\n"
+        "| Find patterns in THIS repo | Find examples in OTHER repos |\n"
+        "| How does our code work? | How does this library work? |\n"
+        "| Project-specific logic | Official API documentation |\n"
+        "| | Library best practices & quirks |\n"
         "| | OSS implementation examples |\n\n"
-        "**触发短语**（立即启动 librarian）：\n"
+        "**Trigger phrases** (fire librarian immediately):\n"
         + triggers
     )
 
 
 def build_delegation_table(agents: List[AvailableAgent]) -> str:
     rows: List[str] = [
-        "### 委派表：",
+        "### Delegation Table:",
         "",
-        "| 领域 | 委派给 | 触发 |",
-        "|--------|----------|--------|",
+        "| Domain | Delegate To | Trigger |",
+        "|--------|-------------|---------|",
     ]
     for agent in agents:
         for trigger in agent.metadata.triggers:

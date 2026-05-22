@@ -41,20 +41,6 @@ Format:
 - tool_calls: Array of {tool: "tool_name", parameters: {...}}
 - commands: Legacy alias for tool_calls using {tool: "tool_name", args: {...}}"""
 
-DESCRIPTION_CN = """并行执行多个工具调用以获得最佳性能。
-
-用法：
-- 当你需要运行多个独立操作时使用此工具
-- 操作不依赖彼此的结果
-- 你希望最大化吞吐量""",
-
-    "question.py": 向用户提问并等待响应。
-
-用法：
-- 在进行重大更改前需要确认时使用
-- 需要在多个选项间获取用户偏好时使用
-- 需要澄清模糊指令时使用
-
 
 @ToolRegistry.register_function(
     name="batch",

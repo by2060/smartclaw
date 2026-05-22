@@ -36,13 +36,6 @@ Usage:
 - Has a default timeout of 30 seconds (configurable up to 120 seconds)
 - Response size is limited to 5MB"""
 
-DESCRIPTION_CN = """从指定 URL 获取内容并以可读格式返回。
-
-用法：
-- URL 必须是以 http:// 或 https:// 开头的完整有效 URL
-- 默认以 markdown 格式返回内容
-- 支持 text、markdown 和 html 输出格式"""
-
 
 class HTMLTextExtractor(HTMLParser):
     """Extract text content from HTML, skipping script/style tags"""

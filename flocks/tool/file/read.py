@@ -55,16 +55,6 @@ Usage:
 - If you read a file that exists but has empty contents you will receive a system reminder warning in place of file contents.
 - You can read image files using this tool."""
 
-DESCRIPTION_CN = """读取本地文件系统中的文件。
-
-用法：
-- filePath 参数必须是绝对路径，不是相对路径
-- 默认从文件开头读取最多 2000 行
-- 支持文本文件、图片文件和 PDF 文件
-- 自动检测并拒绝二进制文件
-
-你可以直接使用此工具访问任何文件。如果用户提供文件路径，假设该路径有效。尝试读取不存在的文件是允许的；将返回错误。"""
-
 
 def is_binary_file(filepath: str) -> bool:
     """

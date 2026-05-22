@@ -40,13 +40,6 @@ Tips:
 - Include the security tool or technology if relevant
 - Use higher tokensNum for comprehensive documentation"""
 
-DESCRIPTION_CN = """搜索安全示例、文档和 API 使用模式。
-
-用法：
-- 需要特定工具或框架的安全示例时使用
-- 需要 API 文档和使用模式时使用
-- 需要特定编程任务的最佳实践时使用"""
-
 
 @ToolRegistry.register_function(
     name="codesearch",

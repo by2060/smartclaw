@@ -53,13 +53,6 @@ content of new file
 Use the edit tool for simple string replacements.
 Use apply_patch for complex multi-file changes."""
 
-DESCRIPTION_CN = """应用补丁修改文件。
-
-此工具设计用于高级基于补丁的编辑，支持：
-- 文件创建（add）
-- 文件修改（update）
-- 文件删除（delete）"""
-
 
 @dataclass
 class PatchChunk:

@@ -51,21 +51,6 @@ Usage:
 - If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.
 - Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked."""
 
-DESCRIPTION_CN = """将文件写入本地文件系统。
-
-用法：
-- 如果提供的路径已存在文件，此工具将覆盖它
-- 如果是现有文件，你必须先使用 Read 工具读取文件内容。如果未先读取，此工具将失败
-- 除非用户明确要求，不要写入 emoji""",
-
-    "edit.py": 在文件中执行精确字符串替换。
-
-用法：
-- 在编辑文件前，你必须至少使用一次 Read 工具
-- 关键：每次成功编辑后，文件内容会改变。你必须用 Read 重新读取文件后再进行任何编辑，否则 oldString 将不匹配更新后的内容，编辑会失败
-- 编辑 Read 工具输出的文本时，确保保留行号前缀后出现的精确缩进（制表符/空格）
-- 始终优先编辑代码库中的现有文件。除非明确要求，永不写入新文件
-
 
 def generate_diff(filepath: str, old_content: str, new_content: str) -> str:
     """

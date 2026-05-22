@@ -88,13 +88,6 @@ Note:
 - This tool depends on an existing workflow file.
 - If no workflow file exists, ask user to specify the workflow file path or use the `workflow-builder` skill to create."""
 
-DESCRIPTION_CN = """执行完整工作流。
-
-用法：
-- 运行定义在 workflow.json 中的工作流
-- 自动按 BFS 顺序执行所有节点
-- 收集并返回所有节点输出"""
-
 DESCRIPTION = _BASE_DESCRIPTION
 
 # TTL cache for _build_description — avoid repeated file-system scans on every tool call.

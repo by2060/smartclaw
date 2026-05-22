@@ -78,14 +78,6 @@ Usage:
 - The edit will FAIL if `oldString` is found multiple times in the file with an error "oldString found multiple times and requires more code context to uniquely identify the intended match". Either provide a larger string with more surrounding context to make it unique or use `replaceAll` to change every instance of `oldString`. 
 - Use `replaceAll` for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance."""
 
-DESCRIPTION_CN = """在文件中执行精确字符串替换。
-
-用法：
-- 在编辑文件前，你必须至少使用一次 Read 工具
-- 关键：每次成功编辑后，文件内容会改变。你必须用 Read 重新读取文件后再进行任何编辑
-- 编辑 Read 工具输出的文本时，确保保留行号前缀后出现的精确缩进
-- 始终优先编辑代码库中的现有文件。除非明确要求，永不写入新文件"""
-
 
 # Similarity thresholds for block anchor fallback matching
 SINGLE_CANDIDATE_SIMILARITY_THRESHOLD = 0.0
