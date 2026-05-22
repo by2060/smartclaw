@@ -38,7 +38,7 @@ class McpToolAdapter:
             return {}
 
         meta = {}
-        for key in ("currentUserName", "currentToken"):
+        for key in ("currentUserName", "currentToken", "reportModelPaths"):
             value = user_context.get(key)
             if value is not None:
                 meta[key] = value
