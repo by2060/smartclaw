@@ -17,14 +17,18 @@ Source scheme routing:
 from __future__ import annotations
 
 import asyncio
+import io
+import json
 import os
 import platform
 import re
 import shutil
 import sys
 import tempfile
+import zipfile
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, List, Optional
 
 from flocks.skill.skill import Skill, SkillInfo, SkillInstallSpec
@@ -32,6 +36,15 @@ from flocks.utils.log import Log
 
 
 log = Log.create(service="skill.installer")
+
+# skill的安装接口改造添加
+def _managed_marker_name(skill_name: str) -> str:
+    return f".{skill_name}.skill.json"
+
+
+def _managed_marker_path(skill_dir: Path, skill_name: str) -> Path:
+    return skill_dir / _managed_marker_name(skill_name)
+# ---------------end---------------------------
 
 # ---------------------------------------------------------------------------
 # Result Types
@@ -98,7 +111,10 @@ def _resolve_source(source: str) -> dict:
 
     if source.startswith("github:"):
         return {"kind": "github", "value": source[len("github:"):]}
-
+    # skill的安装接口改造添加
+    if source.startswith("workspace:"):
+        return {"kind": "workspace", "value": source[len("workspace:"):].lstrip("/\\")}
+    # ---------------------end-------------------------------
     if source.startswith(("http://", "https://")):
         # Detect GitHub URLs and handle them specially
         gh_match = re.match(
@@ -111,8 +127,12 @@ def _resolve_source(source: str) -> dict:
             return {"kind": "github", "value": f"{repo}/{subpath}" if subpath else repo}
         return {"kind": "url", "value": source}
 
-    if source.startswith(("/", "./", "../", "~/")):
+    if source.startswith(("/", "./", "../", "~/")) or re.match(r"^[a-zA-Z]:[\\/]", source):
         return {"kind": "local", "value": os.path.expanduser(source)}
+
+    # skill的安装接口改造添加
+    if source.startswith("uploads/") or source.startswith("uploads\\"):
+        return {"kind": "workspace", "value": source}
 
     # Bare "owner/repo" or "owner/repo/subpath" shorthand → GitHub
     if re.match(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_./-]+$", source):
@@ -132,11 +152,73 @@ class SkillInstaller:
     # Install skill itself
     # ------------------------------------------------------------------
 
+    # skill安装接口改造添加
+    @staticmethod
+    def _resolve_workspace_source(path: str) -> Path:
+        from flocks.workspace.manager import WorkspaceManager
+
+        mgr = WorkspaceManager.get_instance()
+        mgr.ensure_dirs()
+        return mgr.resolve_workspace_path(path)
+
+    @staticmethod
+    def _remove_empty_upload_parents(start_dir: Path) -> None:
+        try:
+            from flocks.workspace.manager import WorkspaceManager
+
+            mgr = WorkspaceManager.get_instance()
+            workspace = mgr.get_workspace_dir().resolve()
+            uploads_root = (workspace / "uploads" / "skills").resolve()
+            current = start_dir.resolve()
+            while current != uploads_root and current.is_relative_to(uploads_root):
+                try:
+                    current.rmdir()
+                except OSError:
+                    break
+                current = current.parent
+        except Exception:
+            return
+
+    @classmethod
+    def _write_managed_marker(
+        cls,
+        skill_dir: Path,
+        skill_name: str,
+        source: Optional[str],
+        deletable: Optional[bool],
+    ) -> None:
+        marker = _managed_marker_path(skill_dir, skill_name)
+        if deletable is True:
+            payload = {
+                "name": skill_name,
+                "managed_by": "api-install",
+                "deletable": True,
+                "source": source or "",
+                "installed_at": datetime.now(timezone.utc).isoformat(),
+            }
+            marker.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+        elif marker.exists():
+            marker.unlink()
+
+    @classmethod
+    def is_deletable_project_skill(cls, skill: SkillInfo) -> bool:
+        skill_dir = Path(skill.location).parent
+        marker = _managed_marker_path(skill_dir, skill.name)
+        if not marker.exists():
+            return False
+        try:
+            data = json.loads(marker.read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        return data.get("name") == skill.name and data.get("deletable") is True
+    # -----------------------end---------------------------------
     @classmethod
     async def install_from_source(
         cls,
         source: str,
         scope: str = "project",
+        # skill删除接口改造添加
+        deletable: Optional[bool] = None,
     ) -> SkillInstallResult:
         """
         Install a skill from an external source.
@@ -154,22 +236,61 @@ class SkillInstaller:
         value = resolved["value"]
 
         log.info("skill.install.start", {"source": source, "kind": kind, "scope": scope})
+        # skill安装接口改造修改
+        cleanup_path: Optional[Path] = None
 
-        if kind == "safeskill":
-            return await cls._install_from_safeskill(value, scope)
-        elif kind == "clawhub":
-            return await cls._install_from_clawhub(value, scope)
-        elif kind == "github":
-            return await cls._install_from_github(value, scope)
-        elif kind == "url":
-            return await cls._install_from_url(value, scope)
-        elif kind == "local":
-            return await cls._install_from_local(value, scope)
-        else:
-            return SkillInstallResult(
-                success=False,
-                error=f"Unsupported source kind: {kind}",
-            )
+        try:
+            if kind == "safeskill":
+                result = await cls._install_from_safeskill(value, scope)
+            elif kind == "clawhub":
+                result = await cls._install_from_clawhub(value, scope, deletable=deletable, source=source)
+            elif kind == "github":
+                result = await cls._install_from_github(value, scope, deletable=deletable, source=source)
+            elif kind == "url":
+                result = await cls._install_from_url(
+                    value,
+                    scope,
+                    skill_name_hint=None,
+                    source=source,
+                    deletable=deletable,
+                )
+            elif kind == "workspace":
+                workspace_path = cls._resolve_workspace_source(value)
+                if workspace_path.suffix.lower() == ".zip":
+                    cleanup_path = workspace_path
+                result = await cls._install_from_local(
+                    str(workspace_path),
+                    scope,
+                    deletable=deletable,
+                    source=source,
+                )
+            elif kind == "local":
+                local_path = Path(value).expanduser()
+                if local_path.suffix.lower() == ".zip":
+                    cleanup_path = local_path
+                result = await cls._install_from_local(
+                    value,
+                    scope,
+                    deletable=deletable,
+                    source=source,
+                )
+            else:
+                result = SkillInstallResult(
+                    success=False,
+                    error=f"Unsupported source kind: {kind}",
+                )
+            return result
+        finally:
+            if cleanup_path and cleanup_path.exists() and cleanup_path.is_file():
+                try:
+                    cleanup_path.unlink()
+                    cls._remove_empty_upload_parents(cleanup_path.parent)
+                    log.info("skill.install.source_zip.cleaned", {"path": str(cleanup_path)})
+                except Exception as exc:
+                    log.warn("skill.install.source_zip.cleanup_failed", {
+                        "path": str(cleanup_path),
+                        "error": str(exc),
+                    })
 
     @classmethod
     async def _install_from_safeskill(cls, name: str, scope: str) -> SkillInstallResult:
@@ -183,11 +304,14 @@ class SkillInstaller:
         )
 
     @classmethod
-    async def _install_from_clawhub(cls, name: str, scope: str) -> SkillInstallResult:
+    async def _install_from_clawhub(
+        cls,
+        name: str,
+        scope: str,
+        deletable: Optional[bool] = None,
+        source: Optional[str] = None,
+    ) -> SkillInstallResult:
         """Download a skill from clawhub.ai registry (ZIP bundle)."""
-        import io
-        import zipfile
-
         try:
             import httpx
         except ImportError:
@@ -226,74 +350,22 @@ class SkillInstaller:
         except Exception as exc:
             return SkillInstallResult(success=False, error=f"Download failed: {exc}")
 
-        # Extract ZIP to skill directory
-        try:
-            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-                names_in_zip = zf.namelist()
-                if "SKILL.md" not in names_in_zip:
-                    return SkillInstallResult(
-                        success=False,
-                        error=f"Invalid clawhub package: no SKILL.md found in zip for '{name}'",
-                    )
-
-                skill_md_content = zf.read("SKILL.md").decode("utf-8")
-                stripped = skill_md_content.lstrip()
-                if stripped.lower().startswith("<!doctype") or stripped.lower().startswith("<html"):
-                    return SkillInstallResult(
-                        success=False,
-                        error="Downloaded SKILL.md is an HTML page, not valid content.",
-                    )
-
-                data = Skill._parse_frontmatter(skill_md_content)
-                skill_name = (data.get("name") or name).strip()
-                if not skill_name or not Skill._is_valid_name(skill_name):
-                    return SkillInstallResult(
-                        success=False,
-                        error=f"Invalid or missing skill name in SKILL.md frontmatter: {skill_name!r}",
-                    )
-
-                install_root = _resolve_install_root(scope)
-                skill_dir = install_root / skill_name
-                skill_dir.mkdir(parents=True, exist_ok=True)
-
-                for zip_entry in names_in_zip:
-                    if zip_entry == "_meta.json":
-                        continue
-                    # Skip directory entries
-                    if zip_entry.endswith("/"):
-                        continue
-                    dest = (skill_dir / zip_entry).resolve()
-                    # Zip Slip prevention: ensure dest stays inside skill_dir
-                    if not str(dest).startswith(str(skill_dir.resolve())):
-                        log.warn("skill.install.clawhub.zip_slip", {
-                            "entry": zip_entry,
-                            "skill": name,
-                        })
-                        continue
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    dest.write_bytes(zf.read(zip_entry))
-
-        except zipfile.BadZipFile:
-            return SkillInstallResult(
-                success=False,
-                error=f"Invalid ZIP file downloaded for skill '{name}'",
-            )
-        except Exception as exc:
-            return SkillInstallResult(success=False, error=f"Failed to extract skill: {exc}")
-
-        skill_path = skill_dir / "SKILL.md"
-        Skill.clear_cache()
-        log.info("skill.install.clawhub.ok", {"name": skill_name, "url": zip_url})
-        log.info("skill.install.saved", {"name": skill_name, "path": str(skill_path)})
-        return SkillInstallResult(
-            success=True,
-            skill_name=skill_name,
-            location=str(skill_path),
-            message=f"Skill '{skill_name}' installed from clawhub to {skill_path}",
+        return cls._install_from_zip_bytes(
+            zip_bytes,
+            scope,
+            source=source or f"clawhub:{name}",
+            deletable=deletable,
+            label=f"clawhub skill '{name}'",
         )
 
     @classmethod
-    async def _install_from_github(cls, repo_path: str, scope: str) -> SkillInstallResult:
+    async def _install_from_github(
+        cls,
+        repo_path: str,
+        scope: str,
+        deletable: Optional[bool] = None,
+        source: Optional[str] = None,
+    ) -> SkillInstallResult:
         """
         Download an entire skill directory from a GitHub repository using the
         GitHub Contents API, preserving the full folder structure.
@@ -334,7 +406,7 @@ class SkillInstaller:
             for branch in ("main", "master"):
                 for dir_path in candidate_paths:
                     result = await cls._download_github_dir(
-                        client, owner, repo, branch, dir_path, scope
+                        client, owner, repo, branch, dir_path, scope, deletable, source
                     )
                     if result.success:
                         return result
@@ -353,6 +425,8 @@ class SkillInstaller:
         branch: str,
         dir_path: str,
         scope: str,
+        deletable: Optional[bool] = None,
+        source: Optional[str] = None,
     ) -> SkillInstallResult:
         """
         Recursively download all files in a GitHub directory via the Contents API
@@ -407,6 +481,7 @@ class SkillInstaller:
         file_count = await cls._download_github_entries(
             client, entries, skill_dir, relative_base=""
         )
+        cls._write_managed_marker(skill_dir, name, source, deletable)
 
         Skill.clear_cache()
         log.info("skill.install.github.ok", {
@@ -475,12 +550,215 @@ class SkillInstaller:
                     )
         return count
 
+    @staticmethod
+    def _safe_zip_path(name: str) -> Optional[PurePosixPath]:
+        normalized = name.replace("\\", "/").strip("/")
+        if not normalized:
+            return None
+        path = PurePosixPath(normalized)
+        if path.is_absolute() or any(part in ("", ".", "..") for part in path.parts):
+            return None
+        return path
+
+    @staticmethod
+    def _should_skip_packaged_path(path: PurePosixPath) -> bool:
+        skip_parts = {".git", "__MACOSX", "__pycache__", ".venv", "node_modules"}
+        if any(part in skip_parts for part in path.parts):
+            return True
+        if path.name in {".DS_Store", "_meta.json"}:
+            return True
+        if path.name.startswith(".") and path.name.endswith(".skill.json"):
+            return True
+        return False
+
+    @classmethod
+    def _zip_skill_root(cls, zf: zipfile.ZipFile) -> tuple[PurePosixPath, str, str]:
+        candidates: list[tuple[int, PurePosixPath, str, str]] = []
+
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            path = cls._safe_zip_path(info.filename)
+            if path is None or path.name != "SKILL.md":
+                continue
+            try:
+                content = zf.read(info).decode("utf-8")
+            except Exception:
+                continue
+            data = Skill._parse_frontmatter(content)
+            skill_name = (data.get("name") or "").strip()
+            description = (data.get("description") or "").strip()
+            if not Skill._is_valid_name(skill_name) or not Skill._is_valid_description(description):
+                continue
+            root = PurePosixPath(*path.parts[:-1]) if len(path.parts) > 1 else PurePosixPath(".")
+            candidates.append((len(path.parts), root, content, skill_name))
+
+        if not candidates:
+            raise ValueError("No valid SKILL.md found in zip package")
+
+        candidates.sort(key=lambda item: item[0])
+        _, root, content, skill_name = candidates[0]
+        return root, content, skill_name
+
+    @classmethod
+    def _install_from_zip_bytes(
+        cls,
+        zip_bytes: bytes,
+        scope: str,
+        *,
+        source: Optional[str],
+        deletable: Optional[bool],
+        label: str,
+    ) -> SkillInstallResult:
+        try:
+            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+                root, _skill_md_content, skill_name = cls._zip_skill_root(zf)
+                install_root = _resolve_install_root(scope)
+                install_root.mkdir(parents=True, exist_ok=True)
+                target_dir = install_root / skill_name
+                staging_parent = Path(tempfile.mkdtemp(prefix=f".{skill_name}-", dir=install_root))
+                staging_dir = staging_parent / skill_name
+                staging_dir.mkdir(parents=True, exist_ok=True)
+
+                copied = 0
+                root_parts = () if str(root) == "." else root.parts
+                for info in zf.infolist():
+                    if info.is_dir():
+                        continue
+                    path = cls._safe_zip_path(info.filename)
+                    if path is None:
+                        log.warn("skill.install.zip.unsafe_path", {"entry": info.filename})
+                        continue
+                    if root_parts:
+                        if path.parts[: len(root_parts)] != root_parts:
+                            continue
+                        rel = PurePosixPath(*path.parts[len(root_parts):])
+                    else:
+                        rel = path
+                    if not rel.parts or cls._should_skip_packaged_path(rel):
+                        continue
+
+                    dest = (staging_dir / Path(*rel.parts)).resolve()
+                    if not dest.is_relative_to(staging_dir.resolve()):
+                        log.warn("skill.install.zip.escape", {"entry": info.filename})
+                        continue
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_bytes(zf.read(info))
+                    copied += 1
+
+                if not (staging_dir / "SKILL.md").exists():
+                    raise ValueError("Selected zip skill root did not produce SKILL.md")
+
+                cls._write_managed_marker(staging_dir, skill_name, source, deletable)
+                if target_dir.exists():
+                    shutil.rmtree(target_dir)
+                shutil.move(str(staging_dir), str(target_dir))
+                shutil.rmtree(staging_parent, ignore_errors=True)
+
+        except zipfile.BadZipFile:
+            return SkillInstallResult(success=False, error=f"Invalid ZIP file for {label}")
+        except Exception as exc:
+            try:
+                if "staging_parent" in locals():
+                    shutil.rmtree(staging_parent, ignore_errors=True)
+            except Exception:
+                pass
+            return SkillInstallResult(success=False, error=f"Failed to extract {label}: {exc}")
+
+        skill_path = target_dir / "SKILL.md"
+        Skill.clear_cache()
+        log.info("skill.install.zip.ok", {
+            "name": skill_name,
+            "path": str(target_dir),
+            "files": copied,
+        })
+        return SkillInstallResult(
+            success=True,
+            skill_name=skill_name,
+            location=str(skill_path),
+            message=f"Skill '{skill_name}' installed to {target_dir} ({copied} files)",
+        )
+
+    @classmethod
+    def _find_local_skill_root(cls, local_path: Path) -> Optional[Path]:
+        current = local_path
+        for _ in range(3):
+            if (current / "SKILL.md").is_file():
+                return current
+            children = [p for p in current.iterdir() if p.is_dir()]
+            if len(children) != 1:
+                return None
+            current = children[0]
+        return None
+
+    @classmethod
+    def _install_from_skill_dir(
+        cls,
+        source_dir: Path,
+        scope: str,
+        *,
+        source: Optional[str],
+        deletable: Optional[bool],
+    ) -> SkillInstallResult:
+        skill_root = cls._find_local_skill_root(source_dir)
+        if skill_root is None:
+            return SkillInstallResult(success=False, error=f"No SKILL.md found in directory: {source_dir}")
+
+        try:
+            skill_md_content = (skill_root / "SKILL.md").read_text(encoding="utf-8")
+        except Exception as exc:
+            return SkillInstallResult(success=False, error=f"Cannot read SKILL.md: {exc}")
+
+        data = Skill._parse_frontmatter(skill_md_content)
+        skill_name = (data.get("name") or "").strip()
+        description = (data.get("description") or "").strip()
+        if not Skill._is_valid_name(skill_name) or not Skill._is_valid_description(description):
+            return SkillInstallResult(success=False, error=f"Invalid SKILL.md metadata in directory: {source_dir}")
+
+        install_root = _resolve_install_root(scope)
+        install_root.mkdir(parents=True, exist_ok=True)
+        target_dir = install_root / skill_name
+        staging_parent = Path(tempfile.mkdtemp(prefix=f".{skill_name}-", dir=install_root))
+        staging_dir = staging_parent / skill_name
+
+        try:
+            shutil.copytree(
+                skill_root,
+                staging_dir,
+                ignore=shutil.ignore_patterns(
+                    ".git",
+                    "__pycache__",
+                    ".venv",
+                    "node_modules",
+                    _managed_marker_name(skill_name),
+                ),
+            )
+            cls._write_managed_marker(staging_dir, skill_name, source, deletable)
+            if target_dir.exists():
+                shutil.rmtree(target_dir)
+            shutil.move(str(staging_dir), str(target_dir))
+            shutil.rmtree(staging_parent, ignore_errors=True)
+        except Exception as exc:
+            shutil.rmtree(staging_parent, ignore_errors=True)
+            return SkillInstallResult(success=False, error=f"Failed to copy skill directory: {exc}")
+
+        Skill.clear_cache()
+        skill_path = target_dir / "SKILL.md"
+        return SkillInstallResult(
+            success=True,
+            skill_name=skill_name,
+            location=str(skill_path),
+            message=f"Skill '{skill_name}' installed to {target_dir}",
+        )
+
     @classmethod
     async def _install_from_url(
         cls,
         url: str,
         scope: str,
         skill_name_hint: Optional[str] = None,
+        source: Optional[str] = None,
+        deletable: Optional[bool] = None,
     ) -> SkillInstallResult:
         """Download a SKILL.md from an arbitrary HTTPS URL."""
         try:
@@ -509,31 +787,55 @@ class SkillInstaller:
         except Exception as exc:
             return SkillInstallResult(success=False, error=f"Download failed: {exc}")
 
-        return cls._save_skill_content(content, scope, skill_name_hint=skill_name_hint)
+        return cls._save_skill_content(
+            content,
+            scope,
+            skill_name_hint=skill_name_hint,
+            source=source or url,
+            deletable=deletable,
+        )
 
     @classmethod
-    async def _install_from_local(cls, path: str, scope: str) -> SkillInstallResult:
+    async def _install_from_local(
+        cls,
+        path: str,
+        scope: str,
+        deletable: Optional[bool] = None,
+        source: Optional[str] = None,
+    ) -> SkillInstallResult:
         """Install a skill from a local SKILL.md file or directory."""
-        local_path = Path(path)
+        local_path = Path(path).expanduser()
 
         if local_path.is_dir():
-            skill_md = local_path / "SKILL.md"
-            if not skill_md.exists():
-                return SkillInstallResult(
-                    success=False,
-                    error=f"No SKILL.md found in directory: {path}",
-                )
-            local_path = skill_md
+            return cls._install_from_skill_dir(
+                local_path,
+                scope,
+                source=source or path,
+                deletable=deletable,
+            )
 
         if not local_path.exists():
             return SkillInstallResult(success=False, error=f"File not found: {path}")
+
+        if local_path.suffix.lower() == ".zip":
+            try:
+                zip_bytes = local_path.read_bytes()
+            except Exception as exc:
+                return SkillInstallResult(success=False, error=f"Cannot read zip file: {exc}")
+            return cls._install_from_zip_bytes(
+                zip_bytes,
+                scope,
+                source=source or path,
+                deletable=deletable,
+                label=str(local_path),
+            )
 
         try:
             content = local_path.read_text(encoding="utf-8")
         except Exception as exc:
             return SkillInstallResult(success=False, error=f"Cannot read file: {exc}")
 
-        return cls._save_skill_content(content, scope)
+        return cls._save_skill_content(content, scope, source=source or path, deletable=deletable)
 
     @classmethod
     def _save_skill_content(
@@ -541,6 +843,8 @@ class SkillInstaller:
         content: str,
         scope: str,
         skill_name_hint: Optional[str] = None,
+        source: Optional[str] = None,
+        deletable: Optional[bool] = None,
     ) -> SkillInstallResult:
         """Parse content, validate, and persist to the skills directory."""
         # Reject HTML content (e.g. a web page was downloaded instead of raw SKILL.md)
@@ -572,6 +876,7 @@ class SkillInstaller:
         skill_dir.mkdir(parents=True, exist_ok=True)
         skill_path = skill_dir / "SKILL.md"
         skill_path.write_text(content, encoding="utf-8")
+        cls._write_managed_marker(skill_dir, name, source, deletable)
 
         Skill.clear_cache()
         log.info("skill.install.saved", {"name": name, "path": str(skill_path)})

@@ -564,3 +564,51 @@ async def test_create_skill_writes_to_plugins_path(tmp_path, monkeypatch):
     )
     assert data["source"] == "project"
     assert not (tmp_path / ".flocks" / "plugins" / "skills" / "write-path-test" / "SKILL.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_delete_project_skill_allows_api_managed_marker(tmp_path, monkeypatch):
+    from httpx import AsyncClient, ASGITransport
+    from flocks.server.app import app
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    skills_root = project_dir / ".flocks" / "plugins" / "skills"
+
+    managed = skills_root / "managed-skill"
+    managed.mkdir(parents=True)
+    (managed / "SKILL.md").write_text(
+        "---\nname: managed-skill\ndescription: Managed skill\n---\n# Managed\n",
+        encoding="utf-8",
+    )
+    (managed / ".managed-skill.skill.json").write_text(
+        '{"name":"managed-skill","deletable":true}',
+        encoding="utf-8",
+    )
+
+    builtin = skills_root / "builtin-skill"
+    builtin.mkdir(parents=True)
+    (builtin / "SKILL.md").write_text(
+        "---\nname: builtin-skill\ndescription: Builtin skill\n---\n# Builtin\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(
+        "flocks.project.instance.Instance.get_directory",
+        classmethod(lambda cls: str(project_dir)),
+    )
+    monkeypatch.setattr(
+        "flocks.project.instance.Instance.get_worktree",
+        classmethod(lambda cls: str(project_dir)),
+    )
+    Skill.clear_cache()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        managed_resp = await client.delete("/api/skills/managed-skill")
+        builtin_resp = await client.delete("/api/skills/builtin-skill")
+
+    assert managed_resp.status_code == 204
+    assert not managed.exists()
+    assert builtin_resp.status_code == 403
+    assert builtin.exists()

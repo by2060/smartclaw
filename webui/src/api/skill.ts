@@ -48,10 +48,12 @@ export interface Command {
 }
 
 export interface SkillInstallRequest {
-  /** Install source: clawhub:<name>, github:<owner>/<repo>, https://..., /local/path */
+  /** Install source: clawhub:<name>, github:<owner>/<repo>, workspace:<path>, https://..., /local/path */
   source: string;
   /** 'global' (default) or 'project' */
   scope?: string;
+  /** Mark installed project skill as deletable via DELETE /api/skills/{name}. */
+  deletable?: boolean;
 }
 
 export interface SkillInstallResponse {

@@ -5,6 +5,7 @@ Tests for flocks.skill.installer and eligibility checking.
 import os
 import shutil
 import tempfile
+import zipfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -106,6 +107,11 @@ class TestResolveSource:
     def test_local_relative(self):
         r = _resolve_source("./my-skill")
         assert r["kind"] == "local"
+
+    def test_workspace_scheme(self):
+        r = _resolve_source("workspace:uploads/skills/my-skill.zip")
+        assert r["kind"] == "workspace"
+        assert r["value"] == "uploads/skills/my-skill.zip"
 
     def test_shorthand_owner_repo(self):
         r = _resolve_source("owner/repo")
@@ -275,6 +281,53 @@ class TestInstallFromSource:
     async def test_local_file_not_found(self):
         result = await SkillInstaller.install_from_source("/nonexistent/path/SKILL.md")
         assert result.success is False
+
+    @pytest.mark.asyncio
+    async def test_workspace_zip_installs_nested_skill_and_cleans_zip(self, tmp_path: Path, monkeypatch):
+        workspace = tmp_path / "workspace"
+        upload_dir = workspace / "uploads" / "skills" / "batch"
+        upload_dir.mkdir(parents=True)
+        zip_path = upload_dir / "complex-skill.zip"
+
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr(
+                "complex-skill/complex-skill/SKILL.md",
+                "---\nname: complex-skill\ndescription: Complex skill\n---\n# Complex\n",
+            )
+            zf.writestr("complex-skill/complex-skill/scripts/helper.py", "print('ok')\n")
+
+        project_skills = tmp_path / "project" / ".flocks" / "plugins" / "skills"
+
+        class FakeWorkspace:
+            def ensure_dirs(self):
+                workspace.mkdir(parents=True, exist_ok=True)
+
+            def get_workspace_dir(self):
+                return workspace
+
+            def resolve_workspace_path(self, rel_path: str):
+                resolved = (workspace / rel_path).resolve()
+                if not resolved.is_relative_to(workspace.resolve()):
+                    raise ValueError("escape")
+                return resolved
+
+        monkeypatch.setattr(
+            "flocks.workspace.manager.WorkspaceManager.get_instance",
+            classmethod(lambda cls: FakeWorkspace()),
+        )
+        monkeypatch.setattr("flocks.skill.installer._project_skills_root", lambda: project_skills)
+
+        result = await SkillInstaller.install_from_source(
+            "workspace:uploads/skills/batch/complex-skill.zip",
+            deletable=True,
+        )
+
+        assert result.success is True
+        installed = project_skills / "complex-skill"
+        assert (installed / "SKILL.md").exists()
+        assert (installed / "scripts" / "helper.py").read_text() == "print('ok')\n"
+        assert (installed / ".complex-skill.skill.json").exists()
+        assert not zip_path.exists()
 
     @pytest.mark.asyncio
     async def test_url_success(self, tmp_skills_dir: Path):

@@ -176,6 +176,10 @@ class SkillInstallRequest(BaseModel):
         default="project",
         description="Install scope. Skills are always installed to project .flocks/plugins/skills/.",
     )
+    deletable: Optional[bool] = Field(
+        default=None,
+        description="If true, mark the installed project skill as API-deletable.",
+    )
 
 
 class SkillInstallResponse(BaseModel):
@@ -374,7 +378,11 @@ async def install_skill(req: SkillInstallRequest, agent: Optional[str] = Query(N
         inferred_name = _infer_skill_name_from_source(req.source)
         if inferred_name:
             await _agent_allowed_skill_or_403(agent, inferred_name)
-        result = await SkillInstaller.install_from_source(req.source, scope=req.scope)
+        result = await SkillInstaller.install_from_source(
+            req.source,
+            scope=req.scope,
+            deletable=req.deletable,
+        )
         if not result.success:
             raise HTTPException(
                 status_code=422,
@@ -588,13 +596,21 @@ async def delete_skill(name: str, agent: Optional[str] = Query(None)):
         if not skill:
             raise HTTPException(status_code=404, detail=f"Skill not found: {name}")
 
-        if skill.source == 'project':
+        if skill.source == 'project' and not SkillInstaller.is_deletable_project_skill(skill):
             raise HTTPException(
                 status_code=403,
                 detail="Built-in project skills (.flocks/plugins/skills/) cannot be deleted",
             )
 
         skill_dir = Path(skill.location).parent
+        if skill.source == 'project':
+            try:
+                skill_dir.resolve().relative_to(_project_skills_root().resolve())
+            except ValueError:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Refusing to delete project skill outside .flocks/plugins/skills/",
+                )
         if skill_dir.exists():
             shutil.rmtree(skill_dir)
 
