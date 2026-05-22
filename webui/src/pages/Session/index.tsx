@@ -33,12 +33,10 @@ function sanitizeSessionExportName(value: string) {
 
 function buildSessionUserContext(
   user: { id?: string; username?: string } | null,
-  knowledgeBaseIds?: string[],
 ): SessionUserContext {
   const userContext: SessionUserContext = {};
   if (user?.id) userContext.currentUserId = user.id;
   if (user?.username) userContext.currentUserName = user.username;
-  if (knowledgeBaseIds?.length) userContext.knowledgeBaseIds = knowledgeBaseIds;
   return userContext;
 }
 
@@ -82,8 +80,8 @@ export default function SessionPage() {
     [sessions, selectedSessionId],
   );
   const sessionUserContext = useMemo(
-    () => buildSessionUserContext(user, selectedAgentInfo?.kb),
-    [user, selectedAgentInfo],
+    () => buildSessionUserContext(user),
+    [user],
   );
 
   // Handle SSE events for session-level updates (title changes, etc.)
@@ -171,12 +169,12 @@ export default function SessionPage() {
     if (creating) return;
     setCreating(true);
     try {
-      const response = await client.post('/api/session', {
+      const createdSession = await sessionApi.create({
         title: 'New Session',
         userContext: sessionUserContext,
       });
-      addSession(response.data);
-      setSelectedSessionId(response.data.id);
+      addSession(createdSession);
+      setSelectedSessionId(createdSession.id);
     } catch (err: any) {
       toast.error(t('createFailed'), err.message);
     } finally {
@@ -189,13 +187,13 @@ export default function SessionPage() {
     imageParts?: ImagePartData[],
   ) => {
     try {
-      const response = await client.post('/api/session', {
+      const createdSession = await sessionApi.create({
         title: 'New Session',
         userContext: sessionUserContext,
       });
-      const newSessionId = response.data.id;
+      const newSessionId = createdSession.id;
 
-      addSession(response.data);
+      addSession(createdSession);
       setSelectedSessionId(newSessionId);
 
       const payload: Record<string, unknown> = {

@@ -18,6 +18,7 @@ const {
   toast,
 } = vi.hoisted(() => ({
   sessionApi: {
+    create: vi.fn(),
     delete: vi.fn(),
     get: vi.fn(),
     getMessages: vi.fn(),
@@ -144,6 +145,7 @@ describe('SessionPage session actions menu', () => {
       user: { id: 'user-1', username: 'tester' },
     });
 
+    sessionApi.create.mockResolvedValue({ ...session, id: 'session-created', slug: 'session-created', title: 'New Session' });
     sessionApi.update.mockResolvedValue({ ...session, title: 'Renamed Session' });
     sessionApi.get.mockResolvedValue(session);
     sessionApi.getMessages.mockResolvedValue([
@@ -306,6 +308,32 @@ describe('SessionPage session actions menu', () => {
     await user.click(screen.getByRole('button', { name: /Threat-hunter/i }));
 
     expect(screen.getByTestId('session-chat')).toHaveAttribute('data-agent-name', 'threat-hunter');
+  });
+
+  it('creates sessions without copying agent kb into userContext', async () => {
+    const user = userEvent.setup();
+    useAgents.mockReturnValue({
+      agents: [
+        { name: 'rex', mode: 'primary', permission: [], options: {}, skills: [], tools: [], kb: ['kb_rex'] },
+      ],
+      loading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderSessionPage();
+
+    await user.click(screen.getByRole('button', { name: 'newSession' }));
+
+    await waitFor(() => {
+      expect(sessionApi.create).toHaveBeenCalledWith({
+        title: 'New Session',
+        userContext: {
+          currentUserId: 'user-1',
+          currentUserName: 'tester',
+        },
+      });
+    });
   });
 
   it('syncs selected session when query param changes after mount', async () => {
