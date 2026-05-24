@@ -812,6 +812,25 @@ def _write_yaml(yaml_path: Path, data: Dict[str, Any]) -> None:
     yaml_path.write_text(content, encoding="utf-8")
 
 
+def create_api_provider_yaml(
+    provider_id: str,
+    data: Dict[str, Any],
+    *,
+    overwrite: bool = False,
+) -> Path:
+    """Create or update an API provider ``_provider.yaml`` file."""
+    if not provider_id or any(part in provider_id for part in ("..", "/", "\\")):
+        raise ValueError("Provider id must be a safe path component")
+
+    target_path = _project_tools_root() / TOOL_TYPE_API / provider_id / _PROVIDER_FILENAME
+    if target_path.exists() and not overwrite:
+        raise ValueError(f"Provider '{provider_id}' already exists")
+
+    _write_yaml(target_path, data)
+    log.info("tool.provider_yaml.created", {"provider": provider_id, "path": str(target_path)})
+    return target_path
+
+
 def find_yaml_tool(name: str) -> Optional[Path]:
     """Public API: return the YAML path for a plugin tool, or None."""
     return _find_yaml_file(name)

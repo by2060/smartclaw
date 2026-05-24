@@ -386,3 +386,143 @@ class TestToolRouteSecurity:
         assert kwargs["session_id"] == session_id
         assert kwargs["metadata"]["messageID"] == message_id
         assert kwargs["tool"] == {"name": "http_batch_named_tool"}
+
+
+class TestAPIToolDraftRoutes:
+    @pytest.mark.asyncio
+    async def test_generate_overrides_provider_references_with_provider_id(
+        self,
+        client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        from flocks.tool import api_tool_draft_llm
+        from flocks.tool.api_tool_draft import APIToolDraft, ProviderDraft, ToolDraft
+
+        async def fake_generate_api_tool_draft(
+            *,
+            source_context: str,
+            auth_hint=None,
+            tool_name_prefix=None,
+            model_id=None,
+        ):
+            assert "GET /users" in source_context
+            assert auth_hint == {"type": "api_key", "location": "header"}
+            assert tool_name_prefix is None
+            assert model_id is None
+            return APIToolDraft(
+                provider=ProviderDraft(
+                    id="smc_4a_sync",
+                    name="SMC 4A Sync",
+                    service_id="smc_4a_sync",
+                    description="Generated provider",
+                    defaults={"base_url": "https://api.example.com"},
+                ),
+                tools=[
+                    ToolDraft(
+                        name="draft_route_provider_override_sample",
+                        provider="smc_4a_sync",
+                        inputSchema={"type": "object", "properties": {}},
+                        handler={"type": "http", "method": "GET", "url": "{base_url}/users"},
+                    )
+                ],
+            )
+
+        monkeypatch.setattr(api_tool_draft_llm, "generate_api_tool_draft", fake_generate_api_tool_draft)
+
+        response = await client.post(
+            "/api/tools/drafts",
+            json={
+                "sources": [{"type": "text", "source_type": "text", "content": "GET /users"}],
+                "provider_id": "postman_api_draft_demo",
+                "auth_hint": {"type": "api_key", "location": "header"},
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        draft = response.json()["draft"]
+        assert draft["provider"]["id"] == "postman_api_draft_demo"
+        assert draft["provider"]["service_id"] == "postman_api_draft_demo"
+        assert "version" not in draft["provider"]
+        assert draft["tools"][0]["provider"] == "postman_api_draft_demo"
+
+    @pytest.mark.asyncio
+    async def test_confirm_writes_provider_yaml_and_registers_tool(
+        self,
+        client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ):
+        import yaml
+        from flocks.project.instance import Instance
+
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+        monkeypatch.setattr(Instance, "get_directory", classmethod(lambda cls: str(project_dir)))
+
+        tool_name = "draft_confirm_route_sample"
+        provider_id = "draft_confirm_provider"
+        ToolRegistry._tools.pop(tool_name, None)
+        if tool_name in ToolRegistry._plugin_tool_names:
+            ToolRegistry._plugin_tool_names.remove(tool_name)
+
+        response = await client.post(
+            "/api/tools/drafts/confirm",
+            json={
+                "draft": {
+                    "provider": {
+                        "id": provider_id,
+                        "name": "Draft Confirm Provider",
+                        "description": "Provider from draft confirm route",
+                        "defaults": {
+                            "base_url": "https://api.example.com",
+                            "timeout": 30,
+                            "category": "custom",
+                        },
+                    },
+                    "tools": [
+                        {
+                            "name": tool_name,
+                            "description": "Fetch a user",
+                            "enabled": False,
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {"type": "string", "description": "User id"},
+                                },
+                                "required": ["id"],
+                            },
+                            "handler": {
+                                "type": "http",
+                                "method": "GET",
+                                "url": "{base_url}/users/{id}",
+                                "response": {"extract": "data"},
+                            },
+                        }
+                    ],
+                }
+            },
+        )
+
+        assert response.status_code == 201, response.text
+        payload = response.json()
+        assert payload["provider_path"].endswith("_provider.yaml")
+        assert len(payload["tool_paths"]) == 1
+        assert payload["tools"][0]["name"] == tool_name
+
+        provider_path = project_dir / ".flocks" / "plugins" / "tools" / "api" / provider_id / "_provider.yaml"
+        tool_path = project_dir / ".flocks" / "plugins" / "tools" / "api" / provider_id / f"{tool_name}.yaml"
+        assert provider_path.exists()
+        assert tool_path.exists()
+
+        provider_yaml = yaml.safe_load(provider_path.read_text(encoding="utf-8"))
+        assert provider_yaml["service_id"] == provider_id
+        assert "version" not in provider_yaml
+
+        tool_yaml = yaml.safe_load(tool_path.read_text(encoding="utf-8"))
+        assert "response" not in tool_yaml
+        assert tool_yaml["handler"]["response"] == {"extract": "data"}
+        assert ToolRegistry.get(tool_name) is not None
+
+        ToolRegistry._tools.pop(tool_name, None)
+        if tool_name in ToolRegistry._plugin_tool_names:
+            ToolRegistry._plugin_tool_names.remove(tool_name)

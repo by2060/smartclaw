@@ -105,7 +105,7 @@
           "slug_timeout": 15
         }
       }
-  }
+  },
   "bash": {
     "command_black_list": ["rm", "sudo", "su","doas","run0","pkexec","rmdir","shred","wipe","sdelete","dd","mkfs",
     "fdisk","parted","diskpart","mount","umount","chmod","chown","chgrp","passwd","useradd","userdel","groupadd",

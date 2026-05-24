@@ -13,6 +13,16 @@ from flocks.server.routes._timing import log_route_timing
 from flocks.utils.log import Log
 from flocks.config.config_writer import ConfigWriter
 from flocks.permission.next import DeniedError, PermissionNext
+from flocks.tool.api_tool_draft import (
+    APIToolDraft,
+    DraftValidationIssue,
+    compile_provider_yaml,
+    compile_tool_yaml,
+    has_validation_errors,
+    normalize_api_tool_draft,
+    validate_api_tool_draft,
+)
+from flocks.tool.api_tool_draft_sources import APIToolDraftSource, extract_and_merge_sources
 from flocks.tool.registry import (
     ToolRegistry,
     ToolInfo,
@@ -960,9 +970,212 @@ class UpdateToolRequest(BaseModel):
     response: Optional[Dict[str, Any]] = Field(None)
 
 
+class GenerateAPIToolDraftRequest(BaseModel):
+    sources: List[APIToolDraftSource] = Field(default_factory=list)
+    auth_hint: Optional[Dict[str, Any]] = None
+    tool_name_prefix: Optional[str] = None
+    provider_id: Optional[str] = None
+    model_id: Optional[str] = None
+
+
+class GenerateAPIToolDraftResponse(BaseModel):
+    draft: APIToolDraft
+    issues: List[DraftValidationIssue] = Field(default_factory=list)
+
+
+class ValidateAPIToolDraftRequest(BaseModel):
+    draft: APIToolDraft
+    check_collisions: bool = True
+
+
+class ValidateAPIToolDraftResponse(BaseModel):
+    draft: APIToolDraft
+    issues: List[DraftValidationIssue] = Field(default_factory=list)
+    valid: bool = True
+
+
+class ConfirmAPIToolDraftRequest(BaseModel):
+    draft: APIToolDraft
+    overwrite_provider: bool = False
+
+
+class ConfirmAPIToolDraftResponse(BaseModel):
+    provider_path: str
+    tool_paths: List[str] = Field(default_factory=list)
+    tools: List[ToolInfoResponse] = Field(default_factory=list)
+    issues: List[DraftValidationIssue] = Field(default_factory=list)
+
+
 class PluginToolListResponse(BaseModel):
     """Response listing YAML plugin tools"""
     tools: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+async def _create_and_register_yaml_tool(
+    data: Dict[str, Any],
+    *,
+    provider: Optional[str],
+    enabled: bool,
+):
+    from flocks.tool.tool_loader import (
+        TOOL_TYPE_API,
+        create_yaml_tool,
+        yaml_to_tool,
+    )
+
+    ToolRegistry.init()
+
+    try:
+        yaml_path = create_yaml_tool(data, provider=provider, tool_type=TOOL_TYPE_API)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except Exception as e:
+        log.error("tool.create.error", {"error": str(e)})
+        raise HTTPException(status_code=500, detail=str(e))
+
+    try:
+        tool = yaml_to_tool(data, yaml_path)
+        if not tool.info.source:
+            tool.info.source = "plugin_yaml"
+        if provider:
+            tool.info.provider = provider
+        ToolRegistry.register(tool)
+        if tool.info.name not in ToolRegistry._plugin_tool_names:
+            ToolRegistry._plugin_tool_names.append(tool.info.name)
+    except Exception as e:
+        log.error("tool.create.register_error", {"error": str(e), "name": data.get("name")})
+        raise HTTPException(
+            status_code=500,
+            detail=f"Tool file created but failed to register: {e}",
+        )
+
+    if provider and enabled:
+        from flocks.server.routes.provider import (
+            APIServiceUpdateRequest,
+            update_api_service,
+        )
+
+        await update_api_service(
+            provider,
+            APIServiceUpdateRequest(enabled=True),
+        )
+
+    return tool, yaml_path
+
+
+@router.post(
+    "/drafts",
+    response_model=GenerateAPIToolDraftResponse,
+    summary="Generate an editable API tool draft",
+)
+async def generate_api_tool_draft_route(
+    request: GenerateAPIToolDraftRequest,
+    _admin: object = Depends(require_admin),
+):
+    if not request.sources:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="sources is required")
+
+    try:
+        source_context, _extracted, _source_warnings = extract_and_merge_sources(request.sources)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    try:
+        from flocks.tool.api_tool_draft_llm import generate_api_tool_draft
+
+        draft = await generate_api_tool_draft(
+            source_context=source_context,
+            auth_hint=request.auth_hint,
+            tool_name_prefix=request.tool_name_prefix,
+            model_id=request.model_id,
+        )
+    except ValueError as e:
+        message = str(e)
+        code = status.HTTP_400_BAD_REQUEST if "not configured" in message else status.HTTP_422_UNPROCESSABLE_ENTITY
+        raise HTTPException(status_code=code, detail=message)
+    except Exception as e:
+        log.error("tool.draft.generate_error", {"error": str(e)})
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"LLM draft generation failed: {e}")
+
+    if request.provider_id:
+        draft.provider.id = request.provider_id
+    draft = normalize_api_tool_draft(draft)
+    issues = validate_api_tool_draft(draft)
+    return GenerateAPIToolDraftResponse(
+        draft=draft,
+        issues=issues,
+    )
+
+
+@router.post(
+    "/drafts/validate",
+    response_model=ValidateAPIToolDraftResponse,
+    summary="Validate an editable API tool draft without writing files",
+)
+async def validate_api_tool_draft_route(
+    request: ValidateAPIToolDraftRequest,
+    _admin: object = Depends(require_admin),
+):
+    draft = normalize_api_tool_draft(request.draft)
+    issues = validate_api_tool_draft(draft, check_collisions=request.check_collisions)
+    return ValidateAPIToolDraftResponse(
+        draft=draft,
+        issues=issues,
+        valid=not has_validation_errors(issues),
+    )
+
+
+@router.post(
+    "/drafts/confirm",
+    response_model=ConfirmAPIToolDraftResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Confirm an API tool draft and create YAML tool files",
+)
+async def confirm_api_tool_draft_route(
+    request: ConfirmAPIToolDraftRequest,
+    _admin: object = Depends(require_admin),
+):
+    from flocks.tool.tool_loader import create_api_provider_yaml
+
+    draft = normalize_api_tool_draft(request.draft)
+    issues = validate_api_tool_draft(draft)
+    if has_validation_errors(issues):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=[issue.model_dump() for issue in issues],
+        )
+
+    provider_yaml = compile_provider_yaml(draft.provider)
+    try:
+        provider_path = create_api_provider_yaml(
+            draft.provider.id,
+            provider_yaml,
+            overwrite=request.overwrite_provider,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except Exception as e:
+        log.error("tool.draft.provider_write_error", {"error": str(e), "provider": draft.provider.id})
+        raise HTTPException(status_code=500, detail=str(e))
+
+    tool_paths: List[str] = []
+    responses: List[ToolInfoResponse] = []
+    for tool_draft in draft.tools:
+        tool_data = compile_tool_yaml(tool_draft)
+        tool, yaml_path = await _create_and_register_yaml_tool(
+            tool_data,
+            provider=draft.provider.id,
+            enabled=tool_draft.enabled,
+        )
+        tool_paths.append(str(yaml_path))
+        responses.append(_build_tool_response(tool.info))
+
+    return ConfirmAPIToolDraftResponse(
+        provider_path=str(provider_path),
+        tool_paths=tool_paths,
+        tools=responses,
+        issues=issues,
+    )
 
 
 @router.post(
@@ -979,13 +1192,9 @@ async def create_tool(request: CreateToolRequest, _admin: object = Depends(requi
     provider subdirectory ``api/{provider}/`` if specified), then loaded into
     the ToolRegistry immediately.
     """
-    from flocks.tool.tool_loader import (
-        create_yaml_tool,
-        yaml_to_tool,
-        TOOL_TYPE_API,
-    )
-
-    ToolRegistry.init()
+    handler = dict(request.handler or {})
+    if request.response and "response" not in handler:
+        handler["response"] = request.response
 
     data: Dict[str, Any] = {
         "name": request.name,
@@ -993,52 +1202,20 @@ async def create_tool(request: CreateToolRequest, _admin: object = Depends(requi
         "category": request.category,
         "enabled": request.enabled,
         "requires_confirmation": request.requires_confirmation,
-        "handler": request.handler,
+        "handler": handler,
     }
     if request.inputSchema:
         data["inputSchema"] = request.inputSchema
     if request.parameters:
         data["parameters"] = request.parameters
-    if request.response:
-        data["response"] = request.response
     if request.provider:
         data["provider"] = request.provider
 
-    try:
-        yaml_path = create_yaml_tool(data, provider=request.provider, tool_type=TOOL_TYPE_API)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
-    except Exception as e:
-        log.error("tool.create.error", {"error": str(e)})
-        raise HTTPException(status_code=500, detail=str(e))
-
-    try:
-        tool = yaml_to_tool(data, yaml_path)
-        if not tool.info.source:
-            tool.info.source = "plugin_yaml"
-        if request.provider:
-            tool.info.provider = request.provider
-        ToolRegistry.register(tool)
-        if tool.info.name not in ToolRegistry._plugin_tool_names:
-            ToolRegistry._plugin_tool_names.append(tool.info.name)
-    except Exception as e:
-        log.error("tool.create.register_error", {"error": str(e), "name": request.name})
-        raise HTTPException(
-            status_code=500,
-            detail=f"Tool file created but failed to register: {e}",
-        )
-
-    if request.provider and request.enabled:
-        from flocks.server.routes.provider import (
-            APIServiceUpdateRequest,
-            update_api_service,
-        )
-
-        await update_api_service(
-            request.provider,
-            APIServiceUpdateRequest(enabled=True),
-        )
-
+    tool, _ = await _create_and_register_yaml_tool(
+        data,
+        provider=request.provider,
+        enabled=request.enabled,
+    )
     return _build_tool_response(tool.info)
 
 

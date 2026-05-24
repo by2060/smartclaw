@@ -38,6 +38,7 @@ class McpToolAdapter:
             return {}
 
         meta = {}
+        # reportModelPaths 报告模板路径
         for key in ("currentUserName", "currentToken", "reportModelPaths"):
             value = user_context.get(key)
             if value is not None:
