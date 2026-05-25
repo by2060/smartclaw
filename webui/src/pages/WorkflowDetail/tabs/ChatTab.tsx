@@ -190,6 +190,19 @@ export default function ChatTab({
     [onFirstMessageSent, createSession, createAndSendSession],
   );
 
+  const handleEnsureSession = useCallback(async () => {
+    if (!hasCreatedRef.current) {
+      hasCreatedRef.current = true;
+      onFirstMessageSent?.();
+    }
+    try {
+      return await createSession();
+    } catch (err) {
+      hasCreatedRef.current = false;
+      throw err;
+    }
+  }, [createSession, onFirstMessageSent]);
+
   const handleNewSession = useCallback(() => {
     setShowHistory(false);
     setActiveSessionId(null);
@@ -355,6 +368,7 @@ export default function ChatTab({
           initialMessage={initialMessage}
           onSSEEvent={handleSSEEvent}
           supportsVision={supportsVision}
+          onEnsureSession={!sessionId ? handleEnsureSession : undefined}
           onCreateAndSend={!sessionId ? handleCreateAndSend : undefined}
           welcomeContent={!sessionId ? <WorkflowWelcome workflow={workflow} error={error} onRetry={() => { hasCreatedRef.current = false; resetSession(); }} /> : undefined}
         />

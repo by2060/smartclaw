@@ -1,7 +1,23 @@
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from flocks.provider.provider import ProviderConfig
+import pytest
+
+from flocks.provider.provider import ChatMessage, ProviderConfig
 from flocks.provider.sdk.openai import OpenAIProvider
+
+
+class _AsyncStream:
+    def __init__(self, chunks):
+        self._chunks = list(chunks)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self._chunks:
+            raise StopAsyncIteration
+        return self._chunks.pop(0)
 
 
 class TestOpenAIProviderConfiguration:
@@ -40,3 +56,54 @@ class TestOpenAIProviderConfiguration:
             base_url="https://gateway.internal/v1",
             http_client=http_client,
         )
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_preserves_length_finish_reason_for_tool_calls(self):
+        provider = OpenAIProvider()
+        create = AsyncMock(return_value=_AsyncStream([
+            SimpleNamespace(
+                usage=None,
+                choices=[
+                    SimpleNamespace(
+                        finish_reason=None,
+                        delta=SimpleNamespace(
+                            content=None,
+                            tool_calls=[
+                                SimpleNamespace(
+                                    index=0,
+                                    id="call_1",
+                                    function=SimpleNamespace(
+                                        name="write",
+                                        arguments="{",
+                                    ),
+                                )
+                            ],
+                        ),
+                    )
+                ],
+            ),
+            SimpleNamespace(
+                usage=None,
+                choices=[
+                    SimpleNamespace(
+                        finish_reason="length",
+                        delta=SimpleNamespace(content=None, tool_calls=None),
+                    )
+                ],
+            ),
+        ]))
+        provider._client = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+        )
+
+        chunks = [
+            chunk async for chunk in provider.chat_stream(
+                "gpt-test",
+                [ChatMessage(role="user", content="write a file")],
+                tools=[{"type": "function", "function": {"name": "write"}}],
+            )
+        ]
+
+        terminal = chunks[-1]
+        assert terminal.finish_reason == "length"
+        assert terminal.tool_calls[0]["function"]["arguments"] == "{"

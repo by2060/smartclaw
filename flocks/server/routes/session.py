@@ -18,6 +18,7 @@ from flocks.auth.context import get_current_auth_user
 from flocks.server.routes._timing import log_route_timing
 from flocks.session.session import Session, SessionInfo as SessionModel
 from flocks.session.policy import SessionPolicy
+from flocks.sandbox.uploads import UPLOADS_CHAT_PREFIX, rewrite_upload_paths_for_prompt
 from flocks.utils.log import Log
 from flocks.utils.json_repair import parse_json_robust, repair_truncated_json
 from flocks.server.auth import require_user
@@ -517,7 +518,7 @@ async def delete_session(sessionID: str, request: Request) -> bool:
         from flocks.workspace.manager import WorkspaceManager
 
         ws = WorkspaceManager.get_instance()
-        uploads_root = ws.resolve_workspace_path(f"uploads/{sessionID}")
+        uploads_root = ws.resolve_user_workspace_path(f"{UPLOADS_CHAT_PREFIX}/{sessionID}")
         if uploads_root.exists() and uploads_root.is_dir():
             shutil.rmtree(uploads_root, ignore_errors=True)
             log.info("session.uploads.cleaned", {
@@ -2207,6 +2208,8 @@ async def _process_session_message(
     # (e.g. "/tools create foo" stores the slash command text, not the full skill
     # prompt that is sent to the LLM).
     display_text = getattr(request, "display_text", None) or text_content
+    text_content = rewrite_upload_paths_for_prompt(text_content, sessionID)
+    display_text = rewrite_upload_paths_for_prompt(display_text, sessionID)
 
     _is_no_reply = bool(request.noReply)
     user_message = await Message.create(
@@ -2261,7 +2264,7 @@ async def _process_session_message(
     def _materialize_data_url_to_disk(
         data_url: str, mime_hint: str, filename_hint: Optional[str]
     ) -> str:
-        """Decode a ``data:`` URL to ``~/.flocks/workspace/uploads/<session>/...``.
+        """Decode a ``data:`` URL to ``~/.flocks/workspace/uploads/chat/<session>/...``.
 
         Returns a ``file://`` URL pointing at the persisted file. On failure
         the original ``data:`` URL is returned unchanged (older code paths
@@ -2277,9 +2280,11 @@ async def _process_session_message(
             raw_bytes = base64.b64decode(encoded)
 
             ws = WorkspaceManager.get_instance()
-            # Use resolve_workspace_path to guard against path traversal if
+            # Use the canonical user workspace to avoid writing uploads into
+            # the project checkout when FLOCKS_WORKSPACE_DIR is misconfigured.
+            # The resolver still guards against path traversal if
             # sessionID were ever user-controlled (e.g. ../../../tmp/x).
-            uploads_root = ws.resolve_workspace_path(f"uploads/{sessionID}")
+            uploads_root = ws.resolve_user_workspace_path(f"{UPLOADS_CHAT_PREFIX}/{sessionID}")
             uploads_root.mkdir(parents=True, exist_ok=True)
 
             ext_map = {

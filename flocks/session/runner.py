@@ -52,6 +52,7 @@ from flocks.session.utils.file_extractor import (
     is_text_extractable_mime,
     extract_file_text,
 )
+from flocks.sandbox.uploads import container_path_for_upload
 
 
 log = Log.create(service="session.runner")
@@ -533,6 +534,10 @@ class SessionRunner:
             })
         else:
             safe_url = url if url and not url.startswith("data:") else ""
+            if safe_url.startswith("file://"):
+                sandbox_path = container_path_for_upload(safe_url[7:], self.session.id)
+                if sandbox_path:
+                    safe_url = sandbox_path
             placeholder = (
                 f"[File: {filename}]({safe_url})" if safe_url else f"[File: {filename}]"
             )

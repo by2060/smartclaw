@@ -50,7 +50,9 @@ def _route_test_api_token(monkeypatch: pytest.MonkeyPatch) -> None:
 def mock_workspace(tmp_path: Path) -> Path:
     """Patch WorkspaceManager root to a temp directory."""
     ws_root = tmp_path / "workspace"
+    home = tmp_path / "home"
     ws_root.mkdir()
+    home.mkdir()
     (ws_root / "README.md").write_text("# Test workspace\n")
     subdir = ws_root / "subdir"
     subdir.mkdir()
@@ -58,6 +60,8 @@ def mock_workspace(tmp_path: Path) -> Path:
 
     from flocks.workspace.manager import WorkspaceManager
 
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr("flocks.workspace.manager._user_home_dir", lambda: home)
     original_instance = WorkspaceManager._instance
     manager = WorkspaceManager()
     manager._workspace_dir = ws_root
@@ -67,6 +71,7 @@ def mock_workspace(tmp_path: Path) -> Path:
     yield ws_root
 
     WorkspaceManager._instance = original_instance
+    monkeypatch.undo()
 
 
 @pytest.fixture

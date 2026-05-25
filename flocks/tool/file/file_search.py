@@ -2,7 +2,8 @@ import os
 import re
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-from flocks.tool.registry import ToolRegistry
+from flocks.tool.registry import ToolContext, ToolRegistry, ToolResult
+from flocks.tool.file.sandbox_paths import display_path, resolve_sandbox_path, sandbox_search_roots
 
 # Sensitive directories to exclude from search
 SENSITIVE_DIRS = {
@@ -54,13 +55,14 @@ SENSITIVE_DIRS = {
     ]
 )
 async def file_search(
-    pattern: str,
+    ctx: Optional[ToolContext] = None,
+    pattern: str = "",
     directory: Optional[str] = None,
     search_content: bool = False,
     recursive: bool = True,
     max_results: int = 100,
     file_extensions: Optional[str] = None
-) -> Dict[str, Any]:
+) -> Dict[str, Any] | ToolResult:
     """
     Search for files by name pattern or content.
     
@@ -75,27 +77,54 @@ async def file_search(
     Returns:
         Dictionary with search results and metadata
     """
+    def finish(payload: Dict[str, Any]) -> Dict[str, Any] | ToolResult:
+        if ctx is None:
+            return payload
+        ok = payload.get("status") == "success"
+        return ToolResult(
+            success=ok,
+            output=payload if ok else None,
+            error=None if ok else str(payload.get("error") or "Search failed"),
+            metadata=payload,
+        )
+
     try:
+        if not pattern:
+            return finish({
+                "status": "error",
+                "error": "pattern is required",
+                "results": []
+            })
         # Set default directory
         if directory is None:
             directory = os.getcwd()
-        
-        search_dir = Path(directory).resolve()
-        
-        # Validate directory exists and is accessible
-        if not search_dir.exists():
-            return {
-                "status": "error",
-                "error": f"Directory does not exist: {directory}",
-                "results": []
-            }
-        
-        if not search_dir.is_dir():
-            return {
-                "status": "error",
-                "error": f"Path is not a directory: {directory}",
-                "results": []
-            }
+
+        search_dirs: list[Path] = []
+        sandbox = ctx.extra.get("sandbox") if ctx and ctx.extra else None
+        if sandbox:
+            if directory:
+                resolved, sandbox_error = await resolve_sandbox_path(ctx, directory)
+                if sandbox_error:
+                    return finish({"status": "error", "error": sandbox_error, "results": []})
+                search_dirs = [Path(resolved.path if resolved else directory).resolve()]
+            else:
+                search_dirs = [Path(root).resolve() for root in sandbox_search_roots(ctx, os.getcwd())]
+        else:
+            search_dirs = [Path(directory).resolve()]
+
+        for search_dir in search_dirs:
+            if not search_dir.exists():
+                return finish({
+                    "status": "error",
+                    "error": f"Directory does not exist: {directory}",
+                    "results": []
+                })
+            if not search_dir.is_dir():
+                return finish({
+                    "status": "error",
+                    "error": f"Path is not a directory: {directory}",
+                    "results": []
+                })
         
         # Parse file extensions filter
         extensions = None
@@ -105,48 +134,54 @@ async def file_search(
         results = []
         total_scanned = 0
         
-        if search_content:
-            # Content search
-            try:
-                regex_pattern = re.compile(pattern, re.IGNORECASE)
-            except re.error as e:
-                return {
-                    "status": "error",
-                    "error": f"Invalid regex pattern: {e}",
-                    "results": []
-                }
-            
-            results = _search_content(
-                search_dir, regex_pattern, recursive, max_results, extensions
-            )
-        else:
-            # Filename search
-            results = _search_filenames(
-                search_dir, pattern, recursive, max_results
-            )
+        for search_dir in search_dirs:
+            remaining = max_results - len(results)
+            if remaining <= 0:
+                break
+            if search_content:
+                try:
+                    regex_pattern = re.compile(pattern, re.IGNORECASE)
+                except re.error as e:
+                    return finish({
+                        "status": "error",
+                        "error": f"Invalid regex pattern: {e}",
+                        "results": []
+                    })
+                results.extend(_search_content(
+                    search_dir, regex_pattern, recursive, remaining, extensions
+                ))
+            else:
+                results.extend(_search_filenames(
+                    search_dir, pattern, recursive, remaining
+                ))
+
+        if ctx:
+            for item in results:
+                if isinstance(item, dict) and item.get("path"):
+                    item["path"] = display_path(str(item["path"]), ctx)
         
-        return {
+        return finish({
             "status": "success",
             "search_type": "content" if search_content else "filename",
             "pattern": pattern,
-            "directory": str(search_dir),
+            "directory": str(search_dirs[0]) if len(search_dirs) == 1 else [str(p) for p in search_dirs],
             "results": results,
             "count": len(results),
             "truncated": len(results) >= max_results
-        }
+        })
         
     except PermissionError as e:
-        return {
+        return finish({
             "status": "error",
             "error": f"Permission denied: {e}",
             "results": []
-        }
+        })
     except Exception as e:
-        return {
+        return finish({
             "status": "error",
             "error": f"Search failed: {str(e)}",
             "results": []
-        }
+        })
 
 
 def _search_filenames(

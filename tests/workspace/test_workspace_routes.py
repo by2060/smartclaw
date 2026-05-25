@@ -40,6 +40,8 @@ def workspace_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     ws.mkdir()
     data.mkdir()
     mem.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
     # Pre-create conventional workspace subdirs so tests can write files directly
     for sub in ("outputs", "knowledge"):
         (ws / sub).mkdir()
@@ -50,6 +52,7 @@ def workspace_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     # Reset both singletons so they re-read env vars
     from flocks.workspace.manager import WorkspaceManager
     from flocks.config.config import Config
+    monkeypatch.setattr("flocks.workspace.manager._user_home_dir", lambda: home)
     WorkspaceManager._instance = None
     Config._global_config = None
 
@@ -73,6 +76,7 @@ def workspace_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 def _client(fixture): return fixture[0]
 def _ws(fixture): return fixture[1]
 def _mem(fixture): return fixture[2]
+def _user_ws(fixture): return fixture[1].parent / "home" / ".flocks" / "workspace"
 
 
 # ─── Stats ───────────────────────────────────────────────────────────────────
@@ -234,13 +238,13 @@ class TestUpload:
     def test_chat_upload_rejects_disallowed_file_type(self, workspace_client):
         client = _client(workspace_client)
         r = client.post(
-            "/api/workspace/upload?purpose=chat",
+            "/api/workspace/upload?purpose=chat&sessionID=ses_chat",
             files=[("files", ("archive.zip", b"\x50\x4b\x03\x04", "application/zip"))],
         )
         assert r.status_code == 200
         result = r.json()["uploaded"][0]
         assert "Unsupported file type" in result["error"]
-        assert not (_ws(workspace_client) / "archive.zip").exists()
+        assert not (_user_ws(workspace_client) / "uploads" / "chat" / "ses_chat" / "archive.zip").exists()
 
     def test_upload_multiple_files(self, workspace_client):
         client = _client(workspace_client)
@@ -278,6 +282,24 @@ class TestUpload:
         assert r.status_code == 200
         assert (_ws(workspace_client) / "new_folder" / "x.txt").exists()
 
+    def test_upload_with_session_id_defaults_to_chat_upload_dir(self, workspace_client):
+        client = _client(workspace_client)
+        r = client.post(
+            "/api/workspace/upload?sessionID=ses_third_party",
+            files=[("files", ("x.txt", b"x", "text/plain"))],
+        )
+        assert r.status_code == 200
+        result = r.json()["uploaded"][0]
+        assert result["path"] == "uploads/chat/ses_third_party/x.txt"
+        assert result["sandbox_path"] == "/workspace/uploads/chat/ses_third_party/x.txt"
+        assert (
+            _user_ws(workspace_client)
+            / "uploads"
+            / "chat"
+            / "ses_third_party"
+            / "x.txt"
+        ).exists()
+
     def test_upload_overwrites_duplicate_file_without_chat_purpose(self, workspace_client):
         client = _client(workspace_client)
         first = client.post(
@@ -301,11 +323,11 @@ class TestUpload:
     def test_chat_upload_renames_duplicate_file(self, workspace_client):
         client = _client(workspace_client)
         first = client.post(
-            "/api/workspace/upload?dest=uploads&purpose=chat",
+            "/api/workspace/upload?dest=uploads&purpose=chat&sessionID=ses_uploads",
             files=[("files", ("report.pdf", b"first", "application/pdf"))],
         )
         second = client.post(
-            "/api/workspace/upload?dest=uploads&purpose=chat",
+            "/api/workspace/upload?dest=uploads&purpose=chat&sessionID=ses_uploads",
             files=[("files", ("report.pdf", b"second", "application/pdf"))],
         )
         assert first.status_code == 200
@@ -314,23 +336,24 @@ class TestUpload:
         second_item = second.json()["uploaded"][0]
         assert first_item["name"] == "report.pdf"
         assert second_item["name"] == "report (1).pdf"
-        assert first_item["path"] == "uploads/report.pdf"
-        assert second_item["path"] == "uploads/report (1).pdf"
-        assert (_ws(workspace_client) / "uploads" / "report.pdf").read_bytes() == b"first"
-        assert (_ws(workspace_client) / "uploads" / "report (1).pdf").read_bytes() == b"second"
+        assert first_item["path"] == "uploads/chat/ses_uploads/report.pdf"
+        assert second_item["path"] == "uploads/chat/ses_uploads/report (1).pdf"
+        chat_dir = _user_ws(workspace_client) / "uploads" / "chat" / "ses_uploads"
+        assert (chat_dir / "report.pdf").read_bytes() == b"first"
+        assert (chat_dir / "report (1).pdf").read_bytes() == b"second"
 
     def test_chat_upload_returns_error_after_too_many_name_conflicts(self, workspace_client, monkeypatch):
         from flocks.server.routes import workspace as workspace_routes
 
         monkeypatch.setattr(workspace_routes, "_MAX_UPLOAD_RENAME_ATTEMPTS", 1)
         ws = _ws(workspace_client)
-        uploads_dir = ws / "uploads"
-        uploads_dir.mkdir(exist_ok=True)
+        uploads_dir = _user_ws(workspace_client) / "uploads" / "chat" / "ses_conflict"
+        uploads_dir.mkdir(parents=True, exist_ok=True)
         (uploads_dir / "report.pdf").write_bytes(b"first")
         (uploads_dir / "report (1).pdf").write_bytes(b"second")
 
         r = _client(workspace_client).post(
-            "/api/workspace/upload?dest=uploads&purpose=chat",
+            "/api/workspace/upload?dest=uploads&purpose=chat&sessionID=ses_conflict",
             files=[("files", ("report.pdf", b"third", "application/pdf"))],
         )
 
@@ -455,6 +478,36 @@ class TestDownload:
         assert r.status_code == 200
         assert r.content == b"%PDF-1.4"
         assert "attachment" in r.headers.get("content-disposition", "")
+
+    def test_download_session_output_from_workspace_alias(self, workspace_client):
+        user_ws = _user_ws(workspace_client)
+        report = (
+            user_ws
+            / "outputs"
+            / "2026-05-24"
+            / "ses_report"
+            / "2025年石横发电公司6机组C级检修修前设备评估报告.docx"
+        )
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_bytes(b"report")
+
+        alias = "/workspace/outputs/2026-05-24/ses_report/" + report.name
+        r = _client(workspace_client).get("/api/workspace/download", params={"path": alias})
+
+        assert r.status_code == 200
+        assert r.content == b"report"
+
+    def test_download_session_output_from_project_prefixed_workspace_alias(self, workspace_client):
+        user_ws = _user_ws(workspace_client)
+        report = user_ws / "outputs" / "2026-05-24" / "ses_report" / "report.docx"
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_bytes(b"report")
+
+        mistaken_path = str(_ws(workspace_client) / "workspace" / "outputs" / "2026-05-24" / "ses_report" / "report.docx")
+        r = _client(workspace_client).get("/api/workspace/download", params={"path": mistaken_path})
+
+        assert r.status_code == 200
+        assert r.content == b"report"
 
     def test_download_nonexistent_returns_404(self, workspace_client):
         r = _client(workspace_client).get("/api/workspace/download?path=missing.pdf")

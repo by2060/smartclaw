@@ -493,6 +493,7 @@ export default function EntitySheet({
                   emptyText={t('entity.rexReady')}
                   initialMessage={rexInitialMessage}
                   supportsVision={supportsVision}
+                  onEnsureSession={!sessionId ? createRexSession : undefined}
                   onCreateAndSend={!sessionId ? (text, imageParts) => createAndSendRex({ text, imageParts }) : undefined}
                   welcomeContent={!sessionId ? (
                     <div className="text-center max-w-md">

@@ -27,6 +27,12 @@ from flocks.tool.registry import (
     ToolRegistry,
     ToolResult,
 )
+from flocks.tool.file.sandbox_paths import (
+    get_sandbox,
+    is_session_output_path,
+    is_upload_read_only,
+    resolve_sandbox_path,
+)
 from flocks.workspace.manager import WorkspaceManager
 
 SUPPORTED_SUFFIXES = {
@@ -187,14 +193,41 @@ def _effective_output_session_id(ctx: ToolContext) -> str | None:
     return ctx.session_id
 
 
-def _resolve_input_path(input_path: str) -> Path:
+async def _resolve_input_path(input_path: str, ctx: ToolContext) -> tuple[Path | None, str | None]:
+    resolved, error = await resolve_sandbox_path(ctx, input_path)
+    if error:
+        return None, error
+    if resolved and (
+        resolved.sandbox
+        or resolved.mapped_from
+        or str(resolved.path) != str(input_path)
+    ):
+        return Path(resolved.path), None
+
     path = Path(input_path).expanduser()
     if path.is_absolute():
-        return path.resolve()
+        return path.resolve(), None
 
     workspace = WorkspaceManager.get_instance()
     workspace.ensure_dirs()
-    return workspace.resolve_workspace_path(str(path))
+    return workspace.resolve_workspace_path(str(path)), None
+
+
+async def _resolve_sandbox_output_path(
+    output_path: str,
+    ctx: ToolContext,
+) -> tuple[Path | None, str | None]:
+    resolved, error = await resolve_sandbox_path(ctx, output_path)
+    if error:
+        return None, error
+    if is_upload_read_only(resolved):
+        return None, (
+            "doc_parser output cannot overwrite uploaded files. Upload mounts are "
+            "read-only; omit output_path or write under the session outputs directory."
+        )
+    if resolved and not resolved.sandbox and not Path(output_path).expanduser().is_absolute():
+        return None, None
+    return Path(resolved.path) if resolved else None, None
 
 
 def _resolve_output_path(
@@ -705,9 +738,22 @@ def _run_extractors(file_path: Path) -> tuple[str, str, list[str]]:
             type=ParameterType.STRING,
             description=(
                 "Absolute or relative path to the source PDF / DOC / DOCX / "
-                "PPT / PPTX / XLS / XLSX / HTML file."
+                "PPT / PPTX / XLS / XLSX / HTML file. Preferred parameter; "
+                "`path` is accepted as a compatibility alias."
             ),
-            required=True,
+            required=False,
+        ),
+        ToolParameter(
+            name="path",
+            type=ParameterType.STRING,
+            description="Compatibility alias for input_path.",
+            required=False,
+        ),
+        ToolParameter(
+            name="filePath",
+            type=ParameterType.STRING,
+            description="Compatibility alias for input_path, matching the read tool parameter name.",
+            required=False,
         ),
         ToolParameter(
             name="output_path",
@@ -716,6 +762,12 @@ def _run_extractors(file_path: Path) -> tuple[str, str, list[str]]:
                 "Optional output markdown path. Absolute paths are used directly. "
                 "Relative paths are resolved inside the Flocks workspace directory."
             ),
+            required=False,
+        ),
+        ToolParameter(
+            name="output",
+            type=ParameterType.STRING,
+            description="Compatibility alias for output_path.",
             required=False,
         ),
         ToolParameter(
@@ -729,11 +781,29 @@ def _run_extractors(file_path: Path) -> tuple[str, str, list[str]]:
 )
 async def doc_parser(
     ctx: ToolContext,
-    input_path: str,
+    input_path: str | None = None,
+    path: str | None = None,
+    filePath: str | None = None,
     output_path: str | None = None,
+    output: str | None = None,
     overwrite: bool = True,
 ) -> ToolResult:
-    input_file = _resolve_input_path(input_path)
+    source_path = input_path or path or filePath
+    output_path = output_path or output
+    if not source_path:
+        return ToolResult(
+            success=False,
+            error=(
+                "Missing required input_path. Compatibility aliases path and "
+                "filePath are also accepted."
+            ),
+        )
+
+    input_file, input_error = await _resolve_input_path(source_path, ctx)
+    if input_error:
+        return ToolResult(success=False, error=input_error)
+    if input_file is None:
+        return ToolResult(success=False, error=f"Input file not found: {source_path}")
     if not input_file.exists():
         return ToolResult(success=False, error=f"Input file not found: {input_file}")
     if input_file.suffix.lower() not in SUPPORTED_SUFFIXES:
@@ -744,11 +814,38 @@ async def doc_parser(
         )
     # 输出按会话隔离
     # output_file = _resolve_output_path(input_file, output_path)
-    output_file = _resolve_output_path(
-        input_file,
-        output_path,
-        _effective_output_session_id(ctx),
-    )
+    if output_path:
+        output_file, output_error = await _resolve_sandbox_output_path(output_path, ctx)
+        if output_error:
+            return ToolResult(success=False, error=output_error)
+        if output_file is None:
+            output_file = _resolve_output_path(
+                input_file,
+                output_path,
+                _effective_output_session_id(ctx),
+            )
+        elif output_file.suffix.lower() != ".md":
+            output_file = output_file.with_suffix(".md")
+    else:
+        output_file = _resolve_output_path(
+            input_file,
+            output_path,
+            _effective_output_session_id(ctx),
+        )
+    sandbox = get_sandbox(ctx)
+    if (
+        isinstance(sandbox, dict)
+        and sandbox.get("workspace_access") == "ro"
+        and not is_session_output_path(ctx, str(output_file))
+    ):
+        return ToolResult(
+            success=False,
+            error=(
+                "doc_parser output is blocked for workspace files in sandbox "
+                "read-only mode. Omit output_path or write under the session "
+                "outputs or artifacts directory."
+            ),
+        )
     if output_file.exists() and not overwrite:
         return ToolResult(success=False, error=f"Output file already exists: {output_file}")
 

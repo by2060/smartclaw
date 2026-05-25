@@ -216,10 +216,6 @@ def build_sandbox_create_args(
         args.extend(["--ulimit", f"{name_key}={value}"])
 
     # 额外的 bind mount
-    if cfg.binds:
-        for bind in cfg.binds:
-            args.extend(["-v", bind])
-
     return args
 
 
@@ -267,6 +263,12 @@ async def create_sandbox_container(
         ])
 
     # 镜像 + 保持容器运行
+    # Extra binds are appended after the workspace mounts so nested writable
+    # mounts such as /workspace/outputs can override a read-only /workspace.
+    if cfg.binds:
+        for bind in cfg.binds:
+            args.extend(["-v", bind])
+
     args.extend([cfg.image, "sleep", "infinity"])
 
     log.info("sandbox.creating_container", {"name": name, "image": cfg.image})
@@ -337,6 +339,16 @@ async def ensure_sandbox_container(
                 not isinstance(last_used, (int, float))
                 or now - last_used < HOT_CONTAINER_WINDOW_MS
             )
+            # 上传目录挂载到沙箱新增
+            workspace_artifact_mount_changed = any(
+                "/uploads/" in str(bind).replace("\\", "/")
+                or "/outputs" in str(bind).replace("\\", "/")
+                or "/.flocks/plugins" in str(bind).replace("\\", "/")
+                for bind in (cfg.docker.binds or [])
+            )
+            if workspace_artifact_mount_changed:
+                is_hot = False
+            # ----------------------end----------------
             if is_hot:
                 log.info(
                     "sandbox.config_changed_hot",

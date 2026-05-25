@@ -271,13 +271,14 @@ class TestWorkspaceUpload:
         """Chat uploads reject unsupported file types via purpose=chat."""
         resp = await client.post(
             "/api/workspace/upload",
-            params={"purpose": "chat"},
+            params={"purpose": "chat", "sessionID": "ses_chat"},
             files={"files": ("archive.zip", io.BytesIO(b"zip"), "application/zip")},
         )
         assert resp.status_code == status.HTTP_200_OK
         result = resp.json()["uploaded"][0]
         assert "Unsupported file type" in result["error"]
-        assert not (mock_workspace / "archive.zip").exists()
+        chat_root = mock_workspace.parent / "home" / ".flocks" / "workspace" / "uploads" / "chat" / "ses_chat"
+        assert not (chat_root / "archive.zip").exists()
 
     @pytest.mark.parametrize("filename", ALL_SUPPORTED_UPLOAD_FILENAMES)
     @pytest.mark.asyncio
@@ -293,7 +294,7 @@ class TestWorkspaceUpload:
         create_sample_file(source)
         resp = await client.post(
             "/api/workspace/upload",
-            params={"purpose": "chat"},
+            params={"purpose": "chat", "sessionID": "ses_supported"},
             files={"files": (filename, io.BytesIO(source.read_bytes()), "application/octet-stream")},
         )
 
@@ -301,7 +302,8 @@ class TestWorkspaceUpload:
         result = resp.json()["uploaded"][0]
         assert result.get("error") is None
         assert result["name"] == filename
-        assert (mock_workspace / filename).exists()
+        chat_root = mock_workspace.parent / "home" / ".flocks" / "workspace" / "uploads" / "chat" / "ses_supported"
+        assert (chat_root / filename).exists()
 
     @pytest.mark.asyncio
     async def test_upload_overwrites_duplicate_file_without_chat_purpose(
@@ -335,12 +337,12 @@ class TestWorkspaceUpload:
         """Chat uploads auto-rename duplicates to preserve attachment paths."""
         first = await client.post(
             "/api/workspace/upload",
-            params={"dest": "uploads", "purpose": "chat"},
+            params={"dest": "uploads", "purpose": "chat", "sessionID": "ses_uploads"},
             files={"files": ("report.pdf", io.BytesIO(b"first"), "application/pdf")},
         )
         second = await client.post(
             "/api/workspace/upload",
-            params={"dest": "uploads", "purpose": "chat"},
+            params={"dest": "uploads", "purpose": "chat", "sessionID": "ses_uploads"},
             files={"files": ("report.pdf", io.BytesIO(b"second"), "application/pdf")},
         )
         assert first.status_code == status.HTTP_200_OK
@@ -349,10 +351,11 @@ class TestWorkspaceUpload:
         second_item = second.json()["uploaded"][0]
         assert first_item["name"] == "report.pdf"
         assert second_item["name"] == "report (1).pdf"
-        assert first_item["path"] == "uploads/report.pdf"
-        assert second_item["path"] == "uploads/report (1).pdf"
-        assert (mock_workspace / "uploads" / "report.pdf").read_bytes() == b"first"
-        assert (mock_workspace / "uploads" / "report (1).pdf").read_bytes() == b"second"
+        assert first_item["path"] == "uploads/chat/ses_uploads/report.pdf"
+        assert second_item["path"] == "uploads/chat/ses_uploads/report (1).pdf"
+        chat_dir = mock_workspace.parent / "home" / ".flocks" / "workspace" / "uploads" / "chat" / "ses_uploads"
+        assert (chat_dir / "report.pdf").read_bytes() == b"first"
+        assert (chat_dir / "report (1).pdf").read_bytes() == b"second"
 
     @pytest.mark.asyncio
     async def test_chat_upload_returns_error_after_too_many_name_conflicts(
@@ -362,14 +365,14 @@ class TestWorkspaceUpload:
         from flocks.server.routes import workspace as workspace_routes
 
         monkeypatch.setattr(workspace_routes, "_MAX_UPLOAD_RENAME_ATTEMPTS", 1)
-        uploads_dir = mock_workspace / "uploads"
-        uploads_dir.mkdir(exist_ok=True)
+        uploads_dir = mock_workspace.parent / "home" / ".flocks" / "workspace" / "uploads" / "chat" / "ses_conflict"
+        uploads_dir.mkdir(parents=True, exist_ok=True)
         (uploads_dir / "report.pdf").write_bytes(b"first")
         (uploads_dir / "report (1).pdf").write_bytes(b"second")
 
         resp = await client.post(
             "/api/workspace/upload",
-            params={"dest": "uploads", "purpose": "chat"},
+            params={"dest": "uploads", "purpose": "chat", "sessionID": "ses_conflict"},
             files={"files": ("report.pdf", io.BytesIO(b"third"), "application/pdf")},
         )
 

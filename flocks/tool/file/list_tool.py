@@ -19,6 +19,7 @@ from flocks.tool.registry import (
 )
 from flocks.project.instance import Instance
 from flocks.utils.log import Log
+from flocks.tool.file.sandbox_paths import display_path, resolve_sandbox_path
 
 
 log = Log.create(service="tool.list")
@@ -278,10 +279,20 @@ async def list_tool(
     """
     # Resolve search path
     base_dir = Instance.get_directory() or os.getcwd()
-    search_path = os.path.join(base_dir, path or ".")
+    sandbox = ctx.extra.get("sandbox") if ctx.extra else None
+    search_path = path if (path and isinstance(sandbox, dict)) else os.path.join(base_dir, path or ".")
     
-    if not os.path.isabs(search_path):
+    if not os.path.isabs(search_path) and not (path and isinstance(sandbox, dict)):
         search_path = os.path.abspath(search_path)
+    if path:
+        resolved, sandbox_error = await resolve_sandbox_path(ctx, search_path)
+        if sandbox_error:
+            return ToolResult(success=False, error=sandbox_error, title=path)
+        search_path = resolved.path if resolved else search_path
+    else:
+        sandbox = ctx.extra.get("sandbox") if ctx.extra else None
+        if isinstance(sandbox, dict) and sandbox.get("workspace_dir"):
+            search_path = str(sandbox["workspace_dir"])
     
     # Request permission
     await ctx.ask(
@@ -329,7 +340,7 @@ async def list_tool(
     truncated = len(files) >= LIMIT
     
     # Build output
-    output = render_directory_tree(files, search_path)
+    output = render_directory_tree(files, display_path(search_path, ctx))
     
     return ToolResult(
         success=True,

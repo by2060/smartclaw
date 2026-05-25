@@ -182,6 +182,18 @@ export default function SessionPage() {
     }
   }, [creating, sessionUserContext, addSession, toast, t]);
 
+  const handleEnsureSession = useCallback(async (): Promise<string> => {
+    if (selectedSessionId) return selectedSessionId;
+
+    const createdSession = await sessionApi.create({
+      title: 'New Session',
+      userContext: sessionUserContext,
+    });
+    addSession(createdSession);
+    setSelectedSessionId(createdSession.id);
+    return createdSession.id;
+  }, [addSession, selectedSessionId, sessionUserContext]);
+
   const handleCreateAndSend = useCallback(async (
     text: string,
     imageParts?: ImagePartData[],
@@ -664,6 +676,7 @@ export default function SessionPage() {
           onSseStatusChange={selectedSessionId ? setSseStatus : undefined}
           onSSEEvent={handleSSEEvent}
           onError={handleChatError}
+          onEnsureSession={!selectedSessionId ? handleEnsureSession : undefined}
           onCreateAndSend={handleCreateAndSend}
           onStreamingDone={() => setPendingInitialMessage(null)}
           supportsVision={supportsVision}

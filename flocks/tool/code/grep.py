@@ -21,6 +21,7 @@ from flocks.tool.registry import (
 )
 from flocks.project.instance import Instance
 from flocks.utils.log import Log
+from flocks.tool.file.sandbox_paths import display_path, resolve_sandbox_path, sandbox_search_roots
 
 
 log = Log.create(service="tool.grep")
@@ -272,19 +273,30 @@ async def grep_tool(
     # Resolve search path
     base_dir = Instance.get_directory() or os.getcwd()
     search_path = path or base_dir
+    # 上传文档目录挂载到沙箱新增
+    sandbox = ctx.extra.get("sandbox") if ctx.extra else None
     
-    if not os.path.isabs(search_path):
+    if not os.path.isabs(search_path) and not (path and isinstance(sandbox, dict)):
         search_path = os.path.join(base_dir, search_path)
-    
+    if path:
+        resolved, sandbox_error = await resolve_sandbox_path(ctx, search_path)
+        if sandbox_error:
+            return ToolResult(success=False, error=sandbox_error, title=pattern)
+        search_roots = [resolved.path if resolved else search_path]
+    else:
+        search_roots = sandbox_search_roots(ctx, base_dir)
+    # --------------------end--------------------------
     # Find ripgrep
     rg_path = find_ripgrep()
     
     try:
-        if rg_path:
-            matches = await ripgrep_search(rg_path, pattern, search_path, include)
-        else:
-            log.warn("grep.ripgrep_not_found", {"fallback": "python_regex"})
-            matches = fallback_grep(pattern, search_path, include)
+        matches = []
+        for root in search_roots:
+            if rg_path:
+                matches.extend(await ripgrep_search(rg_path, pattern, root, include))
+            else:
+                log.warn("grep.ripgrep_not_found", {"fallback": "python_regex"})
+                matches.extend(fallback_grep(pattern, root, include))
     except Exception as e:
         return ToolResult(
             success=False,
@@ -312,11 +324,12 @@ async def grep_tool(
     
     current_file = ""
     for match in final_matches:
-        if current_file != match['path']:
+        display_file = display_path(match['path'], ctx)
+        if current_file != display_file:
             if current_file:
                 output_lines.append("")
-            current_file = match['path']
-            output_lines.append(f"{match['path']}:")
+            current_file = display_file
+            output_lines.append(f"{display_file}:")
         
         # Truncate long lines
         line_text = match['lineText']

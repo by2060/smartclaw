@@ -1033,7 +1033,22 @@ class StreamProcessor:
 
             # Sandbox metadata is needed for sandbox-aware tools, including workflow
             # entrypoint so workflow runtime can execute python nodes in sandbox.
-            if tool_name not in {"bash", "read", "write", "edit", "run_workflow"}:
+            sandbox_aware_tools = {
+                "bash",
+                "read",
+                "write",
+                "edit",
+                "multiedit",
+                "apply_patch",
+                "glob",
+                "list",
+                "grep",
+                "file_search",
+                "doc_parser",
+                "run_workflow",
+                "run_workflow_node",
+            }
+            if tool_name not in sandbox_aware_tools:
                 return result
 
             if not self._sandbox_context_resolved:
@@ -1061,6 +1076,7 @@ class StreamProcessor:
                     **sandbox.model_dump(exclude_none=True),
                     "workspace_access": sandbox_ctx.workspace_access,
                     "agent_workspace_dir": sandbox_ctx.agent_workspace_dir,
+                    "upload_mounts": sandbox_ctx.upload_mounts,
                 }
             }
             elevated_cfg = getattr(self._sandbox_config_cache, "elevated", None)

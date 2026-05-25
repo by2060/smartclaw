@@ -21,6 +21,12 @@ from flocks.tool.registry import (
 )
 from flocks.project.instance import Instance
 from flocks.utils.log import Log
+from flocks.tool.file.sandbox_paths import (
+    is_project_plugin_path,
+    is_session_output_path,
+    is_upload_read_only,
+    resolve_sandbox_path,
+)
 
 
 log = Log.create(service="tool.write")
@@ -272,6 +278,72 @@ def _is_flocks_plugin_or_container_path(
     )
 
 
+def _safe_workflow_component(value: object) -> Optional[str]:
+    component = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value or "")).strip("._-")
+    return component or None
+
+
+def _workflow_id_from_requested_path(
+    requested_path: str,
+    filepath: str,
+    base_dir: str,
+    session_id: Optional[str],
+    workflow_id_hint: Optional[str] = None,
+) -> str:
+    hinted = _safe_workflow_component(workflow_id_hint)
+    if hinted:
+        return hinted
+
+    raw_parent_name = Path(requested_path).expanduser().parent.name
+    candidate = _safe_workflow_component(raw_parent_name)
+    ignored_names = {
+        "",
+        "output",
+        "outputs",
+        "artifact",
+        "artifacts",
+        ".flocks_outputs",
+        ".flocks",
+        "plugins",
+        "workflow",
+        "workflows",
+    }
+    if candidate and candidate not in ignored_names:
+        try:
+            if Path(filepath).expanduser().resolve().parent != Path(base_dir).expanduser().resolve():
+                return candidate
+        except OSError:
+            if Path(filepath).expanduser().absolute().parent != Path(base_dir).expanduser().absolute():
+                return candidate
+
+    return f"draft-{_safe_session_component(session_id)}"
+
+
+def _rewrite_workflow_json_path(
+    filepath: str,
+    requested_path: str,
+    session_id: Optional[str],
+    base_dir: str,
+    sandbox: Optional[dict] = None,
+    workflow_id_hint: Optional[str] = None,
+) -> tuple[str, Optional[str]]:
+    """Route generated workflow definitions to the project workflow plugin root."""
+    if Path(filepath).name != "workflow.json":
+        return filepath, None
+    if _is_flocks_plugin_or_container_path(filepath, base_dir, sandbox):
+        return filepath, None
+
+    workflow_id = _workflow_id_from_requested_path(
+        requested_path,
+        filepath,
+        base_dir,
+        session_id,
+        workflow_id_hint=workflow_id_hint,
+    )
+    target = _project_plugins_root(base_dir) / "workflows" / workflow_id / "workflow.json"
+    return str(target), filepath
+
+
 def _is_existing_project_file(filepath: str, base_dir: str) -> bool:
     """Existing project files may be intentional source edits, not generated output."""
     path = Path(filepath)
@@ -367,6 +439,9 @@ def _rewrite_sandbox_container_output_path(
             return filepath, None
         return str(manager.get_outputs_dir(session_id, day=day) / Path(*output_parts)), filepath
 
+    if parts[0] == "artifacts" and len(parts) > 1:
+        return str(manager.get_outputs_dir(session_id) / "artifacts" / Path(*parts[1:])), filepath
+
     if len(parts) == 1 and Path(parts[0]).suffix.lower() in OUTPUT_FILE_EXTENSIONS:
         return str(manager.get_outputs_dir(session_id) / parts[0]), filepath
 
@@ -384,9 +459,12 @@ def _map_sandbox_container_path_to_host(
     if not isinstance(sandbox, dict):
         return filepath, None
     workspace_root = sandbox.get("workspace_dir")
+    parts = rel.split("/") if rel else []
+    if len(parts) >= 2 and parts[0] == ".flocks" and parts[1] == "plugins":
+        workspace_root = sandbox.get("agent_workspace_dir") or workspace_root
     if not workspace_root:
         return filepath, None
-    mapped = os.path.normpath(os.path.join(str(workspace_root), *rel.split("/"))) if rel else str(workspace_root)
+    mapped = os.path.normpath(os.path.join(str(workspace_root), *parts)) if rel else str(workspace_root)
     return mapped, filepath
 # ---------------------end--------------------------------
 
@@ -400,31 +478,16 @@ async def _resolve_sandbox_file_path(
     Returns:
         (resolved_path, error_message, sandbox_dict)
     """
-    sandbox = ctx.extra.get("sandbox") if ctx.extra else None
-    if not isinstance(sandbox, dict):
-        return filepath, None, None
-
-    workspace_root = sandbox.get("workspace_dir")
-    if not workspace_root:
-        return filepath, None, sandbox
-
-    if not os.path.isabs(filepath):
-        filepath = os.path.join(workspace_root, filepath)
-
-    try:
-        from flocks.sandbox.paths import assert_sandbox_path
-
-        resolved = await assert_sandbox_path(
-            file_path=filepath,
-            cwd=workspace_root,
-            root=workspace_root,
-        )
-        return resolved.resolved, None, sandbox
-    except Exception:
+    resolved, error = await resolve_sandbox_path(ctx, filepath)
+    sandbox = resolved.sandbox if resolved else (ctx.extra.get("sandbox") if ctx.extra else None)
+    if error:
+        return None, error, sandbox if isinstance(sandbox, dict) else None
+    if is_upload_read_only(resolved):
         return None, (
-            f"Path escapes sandbox workspace: {filepath}. "
-            "Use paths inside sandbox workspace only."
-        ), sandbox
+            "Write is blocked for uploaded files. Upload mounts are read-only; "
+            "write derived outputs under the session outputs directory instead."
+        ), sandbox if isinstance(sandbox, dict) else None
+    return (resolved.path if resolved else filepath), None, sandbox if isinstance(sandbox, dict) else None
 
 
 @ToolRegistry.register_function(
@@ -491,11 +554,35 @@ async def write_tool(
     if not os.path.isabs(filepath) and _sandbox_container_relative_path(filepath, sandbox) is None:
         filepath = os.path.join(base_dir, filepath)
 
-    filepath, rewritten_from = _rewrite_legacy_workspace_output_path(
+    upload_target, upload_error = await resolve_sandbox_path(ctx, filepath)
+    if not upload_error and is_upload_read_only(upload_target):
+        return ToolResult(
+            success=False,
+            error=(
+                "Write is blocked for uploaded files. Upload mounts are read-only; "
+                "write derived outputs under the session outputs directory instead."
+            ),
+            title=filePath,
+        )
+
+    workflow_id_hint = None
+    if isinstance(ctx.extra, dict):
+        workflow_id_hint = ctx.extra.get("workflow_id") or ctx.extra.get("workflowId")
+    filepath, rewritten_from = _rewrite_workflow_json_path(
         filepath,
+        filePath,
         output_session_id,
         base_dir,
+        sandbox,
+        workflow_id_hint=workflow_id_hint,
     )
+
+    if rewritten_from is None:
+        filepath, rewritten_from = _rewrite_legacy_workspace_output_path(
+            filepath,
+            output_session_id,
+            base_dir,
+        )
 
     if rewritten_from is None:
         filepath, rewritten_from = _rewrite_user_plugin_path_to_project(filepath, base_dir)
@@ -539,12 +626,18 @@ async def write_tool(
         if post_sandbox_rewritten_from is not None:
             rewritten_from = post_sandbox_rewritten_from
     #------------------------end-----------------------------------
-    if isinstance(sandbox, dict) and sandbox.get("workspace_access") == "ro":
+    if (
+        isinstance(sandbox, dict)
+        and sandbox.get("workspace_access") == "ro"
+        and not is_session_output_path(ctx, filepath)
+        and not is_project_plugin_path(ctx, filepath)
+    ):
         return ToolResult(
             success=False,
             error=(
                 "Write is blocked in sandbox read-only workspace mode. "
-                "Set sandbox.workspace_access to 'rw' to allow writes."
+                "Write generated outputs under the session outputs or artifacts directory, "
+                "or set sandbox.workspace_access to 'rw' to allow workspace writes."
             ),
             title=filePath,
         )

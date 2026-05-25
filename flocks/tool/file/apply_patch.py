@@ -16,6 +16,13 @@ from flocks.tool.registry import (
 )
 from flocks.project.instance import Instance
 from flocks.utils.log import Log
+from flocks.tool.file.sandbox_paths import (
+    get_sandbox,
+    is_project_plugin_path,
+    is_session_output_path,
+    is_upload_read_only,
+    resolve_sandbox_path,
+)
 
 
 log = Log.create(service="tool.apply_patch")
@@ -255,6 +262,17 @@ def generate_diff(filepath: str, old_content: str, new_content: str) -> str:
     return "".join(diff_lines)
 
 
+def _readonly_workspace_patch_error(action: str = "Patch") -> ToolResult:
+    return ToolResult(
+        success=False,
+        error=(
+            f"{action} is blocked for workspace files in sandbox read-only mode. "
+            "Use files under the session outputs or artifacts directory, or set "
+            "sandbox.workspace_access to 'rw' to allow workspace edits."
+        ),
+    )
+
+
 @ToolRegistry.register_function(
     name="apply_patch",
     description=DESCRIPTION,
@@ -306,13 +324,33 @@ async def apply_patch_tool(
     # Resolve base directory
     base_dir = Instance.get_directory() or os.getcwd()
     worktree = Instance.get_worktree() or os.getcwd()
+    sandbox = get_sandbox(ctx)
+    sandbox_read_only = bool(sandbox and sandbox.get("workspace_access") == "ro")
     
     # Process hunks and collect changes
     file_changes: List[Dict[str, Any]] = []
     total_diff = ""
     
     for hunk in hunks:
-        filepath = os.path.join(base_dir, hunk.path)
+        # 沙
+        if sandbox:
+            resolved_path, sandbox_error = await resolve_sandbox_path(ctx, hunk.path)
+            if sandbox_error:
+                return ToolResult(success=False, error=sandbox_error)
+            if is_upload_read_only(resolved_path):
+                return ToolResult(
+                    success=False,
+                    error=(
+                        "apply_patch is blocked for uploaded files. Upload mounts are "
+                        "read-only; copy or parse the document into outputs before editing."
+                    ),
+                )
+            filepath = resolved_path.path if resolved_path else hunk.path
+        else:
+            filepath = os.path.join(base_dir, hunk.path)
+
+        if sandbox_read_only and not is_session_output_path(ctx, filepath) and not is_project_plugin_path(ctx, filepath):
+            return _readonly_workspace_patch_error()
         
         try:
             if hunk.type == "add":
@@ -345,8 +383,27 @@ async def apply_patch_tool(
                 diff = generate_diff(filepath, old_content, new_content)
                 
                 change_type = "move" if hunk.move_path else "update"
-                move_filepath = os.path.join(base_dir, hunk.move_path) if hunk.move_path else None
-                
+                move_filepath = None
+                if hunk.move_path:
+                    if sandbox:
+                        resolved_move, sandbox_error = await resolve_sandbox_path(ctx, hunk.move_path)
+                        if sandbox_error:
+                            return ToolResult(success=False, error=sandbox_error)
+                        if is_upload_read_only(resolved_move):
+                            return ToolResult(
+                                success=False,
+                                error="apply_patch cannot move files into the read-only upload mount.",
+                            )
+                        move_filepath = resolved_move.path if resolved_move else hunk.move_path
+                    else:
+                        move_filepath = os.path.join(base_dir, hunk.move_path)
+                    if (
+                        sandbox_read_only
+                        and not is_session_output_path(ctx, move_filepath)
+                        and not is_project_plugin_path(ctx, move_filepath)
+                    ):
+                        return _readonly_workspace_patch_error("Move target")
+
                 file_changes.append({
                     "filePath": filepath,
                     "oldContent": old_content,

@@ -370,6 +370,98 @@ async def test_project_plugin_tool_files_are_not_rewritten_to_outputs(tmp_path, 
 
 
 @pytest.mark.asyncio
+async def test_bare_workflow_json_rewritten_to_project_workflows(tmp_path, monkeypatch):
+    from flocks.config.config import Config
+    from flocks.project.instance import Instance
+    from flocks.workspace.manager import WorkspaceManager
+
+    project_dir = tmp_path / "project"
+    workspace = project_dir / ".flocks" / "workspace"
+    home = tmp_path / "home"
+    project_dir.mkdir()
+    home.mkdir()
+    monkeypatch.setenv("FLOCKS_WORKSPACE_DIR", str(workspace))
+    monkeypatch.setattr("flocks.workspace.manager._user_home_dir", lambda: home)
+    WorkspaceManager._instance = None
+    Config._global_config = None
+    with patch.object(Instance, "get_directory", return_value=str(project_dir)):
+        try:
+            expected = project_dir / ".flocks" / "plugins" / "workflows" / "draft-test-session" / "workflow.json"
+            wrong_output = (
+                home
+                / ".flocks"
+                / "workspace"
+                / "outputs"
+                / date.today().isoformat()
+                / "test-session"
+                / "workflow.json"
+            )
+
+            ctx = _make_ctx()
+            result = await ToolRegistry.execute(
+                "write",
+                ctx,
+                filePath="workflow.json",
+                content='{"start": "n1", "nodes": [], "edges": []}\n',
+            )
+        finally:
+            WorkspaceManager._instance = None
+            Config._global_config = None
+
+    assert result.success, f"write failed: {result.error}"
+    assert expected.exists()
+    assert not wrong_output.exists()
+    assert result.metadata["filepath"] == str(expected)
+    assert result.metadata["rewritten_from"] == str(project_dir / "workflow.json")
+
+
+@pytest.mark.asyncio
+async def test_nested_workflow_json_uses_parent_as_workflow_id(tmp_path, monkeypatch):
+    from flocks.config.config import Config
+    from flocks.project.instance import Instance
+    from flocks.workspace.manager import WorkspaceManager
+
+    project_dir = tmp_path / "project"
+    workspace = project_dir / ".flocks" / "workspace"
+    home = tmp_path / "home"
+    project_dir.mkdir()
+    home.mkdir()
+    monkeypatch.setenv("FLOCKS_WORKSPACE_DIR", str(workspace))
+    monkeypatch.setattr("flocks.workspace.manager._user_home_dir", lambda: home)
+    WorkspaceManager._instance = None
+    Config._global_config = None
+    with patch.object(Instance, "get_directory", return_value=str(project_dir)):
+        try:
+            expected = project_dir / ".flocks" / "plugins" / "workflows" / "alert_triage" / "workflow.json"
+            wrong_output = (
+                home
+                / ".flocks"
+                / "workspace"
+                / "outputs"
+                / date.today().isoformat()
+                / "test-session"
+                / "workflow.json"
+            )
+
+            ctx = _make_ctx()
+            result = await ToolRegistry.execute(
+                "write",
+                ctx,
+                filePath="alert_triage/workflow.json",
+                content='{"start": "n1", "nodes": [], "edges": []}\n',
+            )
+        finally:
+            WorkspaceManager._instance = None
+            Config._global_config = None
+
+    assert result.success, f"write failed: {result.error}"
+    assert expected.exists()
+    assert not wrong_output.exists()
+    assert result.metadata["filepath"] == str(expected)
+    assert result.metadata["rewritten_from"] == str(project_dir / "alert_triage" / "workflow.json")
+
+
+@pytest.mark.asyncio
 async def test_sandbox_flocks_outputs_alias_rewritten_to_workspace_outputs(tmp_path, monkeypatch):
     from flocks.config.config import Config
     from flocks.workspace.manager import WorkspaceManager
@@ -529,7 +621,7 @@ async def test_sandbox_readonly_blocks_write(tmp_path):
     ctx = _make_ctx(extra={"sandbox": sandbox})
 
     result = await ToolRegistry.execute(
-        "write", ctx, filePath=str(tmp_path / "blocked.txt"), content="x"
+        "write", ctx, filePath=str(tmp_path / "blocked.py"), content="x"
     )
 
     assert not result.success

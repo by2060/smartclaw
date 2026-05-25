@@ -165,8 +165,9 @@ def _resolve_sandbox_payload_from_config(tool_context: Optional[Any]) -> Optiona
         "container_workdir": sandbox_ctx.container_workdir,
         "workspace_access": sandbox_ctx.workspace_access,
         "agent_workspace_dir": sandbox_ctx.agent_workspace_dir,
+        "upload_mounts": sandbox_ctx.upload_mounts,
     }
-    env = getattr(sandbox_ctx, "env", None)
+    env = getattr(getattr(sandbox_ctx, "docker", None), "env", None)
     if isinstance(env, dict):
         payload["env"] = env
     return payload

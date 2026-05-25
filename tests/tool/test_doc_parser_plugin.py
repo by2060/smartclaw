@@ -99,7 +99,8 @@ def test_relative_outputs_path_rewritten_to_output_session(tmp_path, monkeypatch
     )
 
 
-def test_resolve_input_path_uses_workspace_dir_for_relative_paths(tmp_path, monkeypatch, doc_parser_module):
+@pytest.mark.asyncio
+async def test_resolve_input_path_uses_workspace_dir_for_relative_paths(tmp_path, monkeypatch, doc_parser_module):
     previous_instance = WorkspaceManager._instance
     WorkspaceManager._instance = None
     workspace = tmp_path / "workspace"
@@ -111,10 +112,14 @@ def test_resolve_input_path_uses_workspace_dir_for_relative_paths(tmp_path, monk
     monkeypatch.setenv("FLOCKS_WORKSPACE_DIR", str(workspace))
     monkeypatch.chdir(other_cwd)
     try:
-        resolved = doc_parser_module._resolve_input_path("uploads/report.pdf")
+        resolved, error = await doc_parser_module._resolve_input_path(
+            "uploads/report.pdf",
+            ToolContext(session_id="test", message_id="test"),
+        )
     finally:
         WorkspaceManager._instance = previous_instance
 
+    assert error is None
     assert resolved == source.resolve()
 
 

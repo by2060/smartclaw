@@ -136,6 +136,30 @@ class TestFeedChunkIncremental:
         assert "tool-call" in event_types
 
     @pytest.mark.asyncio
+    async def test_late_provider_id_merges_existing_argument_fragments(self):
+        acc, proc = _make_accumulator()
+        with patch("flocks.session.streaming.tool_accumulator.ToolRegistry") as mock_reg:
+            mock_reg.get_schema.return_value = None
+            mock_reg.get.return_value = None
+
+            await acc.feed_chunk(_make_chunk(index=0, name="bash", arguments="{"))
+            await acc.feed_chunk(_make_chunk(
+                index=0,
+                tc_id="call_real",
+                arguments='"command": "pwd"}',
+            ))
+            await acc.flush_remaining()
+
+        tool_call_events = [
+            c.args[0] for c in proc.process_event.call_args_list
+            if c.args[0].type == "tool-call"
+        ]
+        assert len(tool_call_events) == 1
+        assert tool_call_events[0].tool_call_id == "call_real"
+        assert tool_call_events[0].tool_name == "bash"
+        assert tool_call_events[0].input == {"command": "pwd"}
+
+    @pytest.mark.asyncio
     async def test_completed_call_ignored_on_re_feed(self):
         acc, proc = _make_accumulator()
         with patch("flocks.session.streaming.tool_accumulator.ToolRegistry") as mock_reg:

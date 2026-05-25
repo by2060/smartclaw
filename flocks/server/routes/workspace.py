@@ -43,7 +43,7 @@ import zipfile
 from pathlib import Path
 from typing import List, Optional, Literal
 
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -104,6 +104,122 @@ def _resolve_upload_target(dest_dir: Path, filename: str, *, auto_rename: bool) 
         f"Too many conflicting filenames for upload: {filename}. "
         "Please rename the file and try again."
     )
+
+
+def _sandbox_upload_path(relative_path: str) -> str | None:
+    parts = Path(relative_path).parts
+    if len(parts) >= 4 and parts[0] == "uploads" and parts[1] == "chat":
+        return "/" + "/".join(("workspace", *parts))
+    return None
+
+
+def _is_chat_upload_dest(path: str) -> bool:
+    parts = Path(path).parts
+    return len(parts) >= 3 and parts[0] == "uploads" and parts[1] == "chat"
+
+
+def _safe_session_component(value: str | None) -> str | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    safe = "".join(
+        ch if ch.isascii() and (ch.isalnum() or ch in "._-") else "_"
+        for ch in raw
+    ).strip("._-")
+    return safe or None
+
+
+def _request_upload_session_id(request: Request, dest: str) -> str | None:
+    for key in ("sessionID", "sessionId", "session_id", "session"):
+        value = request.query_params.get(key)
+        if value:
+            return _safe_session_component(value)
+
+    for key in ("x-flocks-session-id", "x-flocks-sessionid"):
+        value = request.headers.get(key)
+        if value:
+            return _safe_session_component(value)
+
+    parts = Path(dest).parts
+    if len(parts) >= 3 and parts[0] == "uploads" and parts[1] == "chat":
+        return _safe_session_component(parts[2])
+    return None
+
+
+def _resolve_chat_upload_dest(dest: str, session_id: str | None) -> str:
+    if _is_chat_upload_dest(dest):
+        return dest
+    if session_id and dest in {"", "upload", "uploads", "output", "outputs"}:
+        return f"uploads/chat/{session_id}"
+    raise ValueError("Chat uploads must be stored under uploads/chat/<session_id>")
+
+
+def _normalize_workspace_path(path: str | None) -> str:
+    """Accept sandbox-visible /workspace paths from tool output in the UI API."""
+
+    if not path:
+        return ""
+    raw = str(path).replace("\\", "/")
+    if raw.startswith("file://"):
+        raw = raw[7:]
+
+    # Some integrations mistakenly prepend the project/session directory to
+    # sandbox-visible paths such as /workspace/outputs/... . Treat the
+    # sandbox-visible segment as authoritative so downloads still work.
+    for marker, replacement in (
+        ("/workspace/uploads/chat/", "uploads/chat/"),
+        ("/workspace/outputs/", "outputs/")
+    ):
+        marker_index = raw.find(marker)
+        if marker_index >= 0:
+            return replacement + raw[marker_index + len(marker):]
+
+    if raw in {"/workspace", "workspace"}:
+        return ""
+    if raw.startswith("/workspace/"):
+        raw = raw[len("/workspace/"):]
+    elif raw.startswith("workspace/"):
+        raw = raw[len("workspace/"):]
+    if raw == "upload":
+        raw = "uploads"
+    elif raw.startswith("upload/"):
+        raw = "uploads/" + raw[len("upload/"):]
+    if raw.startswith("output/"):
+        raw = "outputs/" + raw[len("output/"):]
+    elif raw == "output":
+        raw = "outputs"
+    return raw
+
+
+def _is_session_scoped_outputs_path(path: str) -> bool:
+    parts = Path(path).parts
+    return (
+        len(parts) >= 3
+        and parts[0] == "outputs"
+        and len(parts[1]) == 10
+        and parts[1][4] == "-"
+        and parts[1][7] == "-"
+        and parts[2].startswith("ses_")
+    )
+
+
+def _resolve_workspace_api_path(mgr: WorkspaceManager, path: str) -> Path:
+    """Resolve UI/API paths, including sandbox aliases for user artifacts."""
+
+    normalized = _normalize_workspace_path(path)
+    if _is_chat_upload_dest(normalized) or _is_session_scoped_outputs_path(normalized):
+        return mgr.resolve_user_workspace_path(normalized)
+    return mgr.resolve_workspace_path(normalized)
+
+
+def _display_root_for_path(mgr: WorkspaceManager, path: Path) -> Path:
+    user_workspace = mgr.get_user_workspace_dir().resolve()
+    try:
+        if path.resolve().is_relative_to(user_workspace):
+            return user_workspace
+    except ValueError:
+        pass
+    return mgr.get_workspace_dir()
 
 
 def _node_from_path(path: Path, root: Path) -> WorkspaceNode:
@@ -178,15 +294,16 @@ async def list_tree(
     depth: int = Query(2, ge=1, le=5, description="Tree depth"),
 ):
     mgr = _get_manager()
+    path = _normalize_workspace_path(path)
     try:
-        base = mgr.resolve_workspace_path(path) if path else mgr.get_workspace_dir()
+        base = _resolve_workspace_api_path(mgr, path) if path else mgr.get_workspace_dir()
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not base.exists():
         raise HTTPException(status_code=404, detail=f"Path not found: {path}")
     if not base.is_dir():
         raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
-    return await asyncio.to_thread(_build_tree_sync, base, mgr.get_workspace_dir(), depth)
+    return await asyncio.to_thread(_build_tree_sync, base, _display_root_for_path(mgr, base), depth)
 
 
 @router.get("/list", response_model=List[WorkspaceNode], summary="List directory")
@@ -194,15 +311,16 @@ async def list_dir(
     path: str = Query("", description="Relative path from workspace root"),
 ):
     mgr = _get_manager()
+    path = _normalize_workspace_path(path)
     try:
-        base = mgr.resolve_workspace_path(path) if path else mgr.get_workspace_dir()
+        base = _resolve_workspace_api_path(mgr, path) if path else mgr.get_workspace_dir()
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not base.exists():
         raise HTTPException(status_code=404, detail=f"Path not found: {path}")
     if not base.is_dir():
         raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
-    return await asyncio.to_thread(_list_dir_sync, base, mgr.get_workspace_dir())
+    return await asyncio.to_thread(_list_dir_sync, base, _display_root_for_path(mgr, base))
 
 
 class DirCreateRequest(BaseModel):
@@ -212,13 +330,14 @@ class DirCreateRequest(BaseModel):
 @router.post("/dir", summary="Create directory")
 async def create_dir(body: DirCreateRequest):
     mgr = _get_manager()
+    path = _normalize_workspace_path(body.path)
     try:
-        target = mgr.resolve_workspace_path(body.path)
+        target = _resolve_workspace_api_path(mgr, path)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     target.mkdir(parents=True, exist_ok=True)
-    log.info("workspace.dir.created", {"path": body.path})
-    return {"path": body.path, "created": True}
+    log.info("workspace.dir.created", {"path": path})
+    return {"path": path, "created": True}
 
 
 @router.delete("/dir", summary="Delete directory")
@@ -226,8 +345,9 @@ async def delete_dir(
     path: str = Query(..., description="Relative path to directory"),
 ):
     mgr = _get_manager()
+    path = _normalize_workspace_path(path)
     try:
-        target = mgr.resolve_workspace_path(path)
+        target = _resolve_workspace_api_path(mgr, path)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     # Existence check first — resolve() on a non-existent path may behave
@@ -248,13 +368,23 @@ async def delete_dir(
 
 @router.post("/upload", summary="Upload file(s)")
 async def upload_files(
+    request: Request,
     dest: str = Query("", description="Destination directory (relative)"),
     purpose: Optional[Literal["chat"]] = Query(None, description="Upload purpose"),
     files: List[UploadFile] = File(...),
 ):
     mgr = _get_manager()
+    dest = _normalize_workspace_path(dest)
+    upload_session_id = _request_upload_session_id(request, dest)
+    is_chat_upload = purpose == "chat" or bool(upload_session_id) or _is_chat_upload_dest(dest)
     try:
-        dest_dir = mgr.resolve_workspace_path(dest) if dest else mgr.get_workspace_dir()
+        if is_chat_upload:
+            dest = _resolve_chat_upload_dest(dest, upload_session_id)
+            dest_dir = mgr.resolve_user_workspace_path(dest)
+            workspace_root = mgr.get_user_workspace_dir()
+        else:
+            dest_dir = mgr.resolve_workspace_path(dest) if dest else mgr.get_workspace_dir()
+            workspace_root = mgr.get_workspace_dir()
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -271,7 +401,7 @@ async def upload_files(
             continue
 
         filename = Path(raw_name).name  # strip any dir component from client
-        if purpose == "chat" and not _is_allowed_upload_filename(filename):
+        if is_chat_upload and not _is_allowed_upload_filename(filename):
             results.append({
                 "name": filename,
                 "error": f"Unsupported file type (allowed: {_ALLOWED_UPLOAD_LABEL})",
@@ -299,7 +429,7 @@ async def upload_files(
 
         content = b"".join(chunks)
         try:
-            target = _resolve_upload_target(dest_dir, filename, auto_rename=purpose == "chat")
+            target = _resolve_upload_target(dest_dir, filename, auto_rename=is_chat_upload)
         except ValueError as exc:
             message = str(exc)
             results.append({"name": filename, "error": message})
@@ -312,12 +442,14 @@ async def upload_files(
             "name": target.name,
             "size": total,
             "dest": dest,
-            "purpose": purpose,
+            "purpose": "chat" if is_chat_upload else purpose,
             "is_text": is_text,
         })
+        rel_path = str(target.relative_to(workspace_root))
         results.append({
             "name": target.name,
-            "path": str(target.relative_to(mgr.get_workspace_dir())),
+            "path": rel_path,
+            "sandbox_path": _sandbox_upload_path(rel_path),
             "abs_path": str(target),
             "size": total,
             "is_text_file": is_text,
@@ -335,8 +467,9 @@ async def read_file(
     path: str = Query(..., description="Relative path to file"),
 ):
     mgr = _get_manager()
+    path = _normalize_workspace_path(path)
     try:
-        target = mgr.resolve_workspace_path(path)
+        target = _resolve_workspace_api_path(mgr, path)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not target.exists():
@@ -363,8 +496,9 @@ class FileWriteRequest(BaseModel):
 @router.put("/file", summary="Write file content")
 async def write_file(body: FileWriteRequest):
     mgr = _get_manager()
+    path = _normalize_workspace_path(body.path)
     try:
-        target = mgr.resolve_workspace_path(body.path)
+        target = _resolve_workspace_api_path(mgr, path)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -372,8 +506,8 @@ async def write_file(body: FileWriteRequest):
         target.write_text(body.content, encoding="utf-8")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    log.info("workspace.file.written", {"path": body.path, "size": len(body.content)})
-    return {"path": body.path, "written": True}
+    log.info("workspace.file.written", {"path": path, "size": len(body.content)})
+    return {"path": path, "written": True}
 
 
 @router.delete("/file", summary="Delete file")
@@ -381,8 +515,9 @@ async def delete_file(
     path: str = Query(..., description="Relative path to file"),
 ):
     mgr = _get_manager()
+    path = _normalize_workspace_path(path)
     try:
-        target = mgr.resolve_workspace_path(path)
+        target = _resolve_workspace_api_path(mgr, path)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not target.exists():
@@ -399,8 +534,9 @@ async def download_file(
     path: str = Query(..., description="Relative path to file"),
 ):
     mgr = _get_manager()
+    path = _normalize_workspace_path(path)
     try:
-        target = mgr.resolve_workspace_path(path)
+        target = _resolve_workspace_api_path(mgr, path)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not target.exists():
@@ -425,8 +561,9 @@ async def download_zip(body: ZipDownloadRequest):
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for rel_path in body.paths:
+            rel_path = _normalize_workspace_path(rel_path)
             try:
-                target = mgr.resolve_workspace_path(rel_path)
+                target = _resolve_workspace_api_path(mgr, rel_path)
             except ValueError:
                 continue
             if target.is_file():
@@ -447,19 +584,21 @@ class MoveRequest(BaseModel):
 @router.post("/move", summary="Move / rename file or directory")
 async def move_item(body: MoveRequest):
     mgr = _get_manager()
+    src_path = _normalize_workspace_path(body.src)
+    dst_path = _normalize_workspace_path(body.dst)
     try:
-        src = mgr.resolve_workspace_path(body.src)
-        dst = mgr.resolve_workspace_path(body.dst)
+        src = mgr.resolve_workspace_path(src_path)
+        dst = mgr.resolve_workspace_path(dst_path)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not src.exists():
-        raise HTTPException(status_code=404, detail=f"Source not found: {body.src}")
+        raise HTTPException(status_code=404, detail=f"Source not found: {src_path}")
     if dst.exists():
-        raise HTTPException(status_code=409, detail=f"Destination already exists: {body.dst}")
+        raise HTTPException(status_code=409, detail=f"Destination already exists: {dst_path}")
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(src), str(dst))
-    log.info("workspace.item.moved", {"src": body.src, "dst": body.dst})
-    return {"src": body.src, "dst": body.dst, "moved": True}
+    log.info("workspace.item.moved", {"src": src_path, "dst": dst_path})
+    return {"src": src_path, "dst": dst_path, "moved": True}
 
 
 # ─── memory view (read-only) ────────────────────────────────────────────────

@@ -24,6 +24,12 @@ from flocks.tool.registry import (
 )
 from flocks.project.instance import Instance
 from flocks.utils.log import Log
+from flocks.tool.file.sandbox_paths import (
+    is_project_plugin_path,
+    is_session_output_path,
+    is_upload_read_only,
+    resolve_sandbox_path,
+)
 
 
 log = Log.create(service="tool.edit")
@@ -39,31 +45,16 @@ async def _resolve_sandbox_file_path(
     Returns:
         (resolved_path, error_message, sandbox_dict)
     """
-    sandbox = ctx.extra.get("sandbox") if ctx.extra else None
-    if not isinstance(sandbox, dict):
-        return filepath, None, None
-
-    workspace_root = sandbox.get("workspace_dir")
-    if not workspace_root:
-        return filepath, None, sandbox
-
-    if not os.path.isabs(filepath):
-        filepath = os.path.join(workspace_root, filepath)
-
-    try:
-        from flocks.sandbox.paths import assert_sandbox_path
-
-        resolved = await assert_sandbox_path(
-            file_path=filepath,
-            cwd=workspace_root,
-            root=workspace_root,
-        )
-        return resolved.resolved, None, sandbox
-    except Exception:
+    resolved, error = await resolve_sandbox_path(ctx, filepath)
+    sandbox = resolved.sandbox if resolved else (ctx.extra.get("sandbox") if ctx.extra else None)
+    if error:
+        return None, error, sandbox if isinstance(sandbox, dict) else None
+    if is_upload_read_only(resolved):
         return None, (
-            f"Path escapes sandbox workspace: {filepath}. "
-            "Use paths inside sandbox workspace only."
-        ), sandbox
+            "Edit is blocked for uploaded files. Upload mounts are read-only; "
+            "write derived outputs under the session outputs directory instead."
+        ), sandbox if isinstance(sandbox, dict) else None
+    return (resolved.path if resolved else filepath), None, sandbox if isinstance(sandbox, dict) else None
 
 
 # Description matching Flocks' edit.txt
@@ -546,7 +537,8 @@ async def edit_tool(
     
     # Resolve path
     filepath = filePath
-    if not os.path.isabs(filepath):
+    sandbox = ctx.extra.get("sandbox") if ctx.extra else None
+    if not os.path.isabs(filepath) and not isinstance(sandbox, dict):
         base_dir = Instance.get_directory() or os.getcwd()
         filepath = os.path.join(base_dir, filepath)
 
@@ -557,12 +549,18 @@ async def edit_tool(
             error=sandbox_error,
             title=filePath,
         )
-    if isinstance(sandbox, dict) and sandbox.get("workspace_access") == "ro":
+    if (
+        isinstance(sandbox, dict)
+        and sandbox.get("workspace_access") == "ro"
+        and not is_session_output_path(ctx, filepath)
+        and not is_project_plugin_path(ctx, filepath)
+    ):
         return ToolResult(
             success=False,
             error=(
                 "Edit is blocked in sandbox read-only workspace mode. "
-                "Set sandbox.workspace_access to 'rw' to allow edits."
+                "Edit generated outputs under the session outputs or artifacts directory, "
+                "or set sandbox.workspace_access to 'rw' to allow workspace edits."
             ),
             title=filePath,
         )

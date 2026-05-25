@@ -48,11 +48,18 @@ async def build_sandbox_system_prompt(
         f"- workspace_access: {sandbox_ctx.workspace_access}",
         f"- sandbox_workspace: {sandbox_ctx.workspace_dir}",
         f"- container_workdir: {sandbox_ctx.container_workdir}",
-        "- read/write/edit paths are constrained to sandbox workspace.",
+        "- read/write/edit paths are constrained to sandbox workspace and session outputs.",
+        "- uploaded chat files are available read-only under /workspace/uploads/chat/<session_id>/.",
+        "- generated reports and final outputs should be written under /workspace/outputs/.",
+        "- workflow intermediate artifacts should be written under /workspace/outputs/artifacts/ or /workspace/artifacts/.",
+        "- generated Flocks plugins must be written under /workspace/.flocks/plugins/.",
         "- bash runs in sandbox container by default.",
     ]
     if sandbox_ctx.workspace_access == "ro":
-        lines.append("- write/edit are blocked in read-only sandbox mode.")
+        lines.append(
+            "- workspace files are read-only; write/edit may still create or update "
+            "files under the current session outputs or artifacts directory."
+        )
     if sandbox_cfg.elevated.enabled:
         lines.append(
             f"- elevated host execution is enabled for tools: {', '.join(elevated_tools)}."

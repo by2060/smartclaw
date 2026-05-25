@@ -43,12 +43,17 @@ class ToolCallAccumulator:
     async def feed_chunk(self, tc: dict[str, Any]) -> None:
         """Process a single tool-call chunk from the provider stream."""
         tc_index = tc.get("index", 0)
+        if tc_index is None:
+            tc_index = 0
         tc_id = tc.get("id")
+        previous_id = self._index_to_id.get(tc_index)
 
         if tc_id:
+            if previous_id and previous_id != tc_id:
+                self._promote_accumulator_id(previous_id, tc_id)
             self._index_to_id[tc_index] = tc_id
-        elif tc_index in self._index_to_id:
-            tc_id = self._index_to_id[tc_index]
+        elif previous_id:
+            tc_id = previous_id
         else:
             tc_id = Identifier.create("call")
             self._index_to_id[tc_index] = tc_id
@@ -168,6 +173,30 @@ class ToolCallAccumulator:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _promote_accumulator_id(self, old_id: str, new_id: str) -> None:
+        """Move fragments collected under a temporary id to the provider id."""
+        if old_id not in self._accumulator:
+            return
+
+        old_data = self._accumulator.pop(old_id)
+        old_data["id"] = new_id
+
+        if new_id not in self._accumulator:
+            self._accumulator[new_id] = old_data
+            return
+
+        new_data = self._accumulator[new_id]
+        if not new_data.get("name") and old_data.get("name"):
+            new_data["name"] = old_data["name"]
+        if old_data.get("arguments_str"):
+            new_data["arguments_str"] = (
+                old_data.get("arguments_str", "") +
+                new_data.get("arguments_str", "")
+            )
+        for key in ("input_started", "awaiting_required", "completed"):
+            if old_data.get(key) and not new_data.get(key):
+                new_data[key] = old_data[key]
 
     def _should_accumulate(self, tc_id: str, current_args: str) -> bool:
         """Return True if we should keep accumulating JSON fragments."""

@@ -62,14 +62,16 @@ def _run_node_sync(
     workflow_dict: Dict[str, Any],
     node_id: str,
     inputs: Dict[str, Any],
+    sandbox: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Synchronous helper: run one node via WorkflowEngine.run_node()."""
     from flocks.workflow.models import Workflow as WfModel
     from flocks.workflow.engine import WorkflowEngine
-    from flocks.workflow.repl_runtime import PythonExecRuntime
+    from flocks.workflow.repl_runtime import PythonExecRuntime, SandboxPythonExecRuntime
 
     wf = WfModel.from_dict(workflow_dict)
-    engine = WorkflowEngine(wf, runtime=PythonExecRuntime())
+    runtime = SandboxPythonExecRuntime(sandbox=sandbox) if sandbox else PythonExecRuntime()
+    engine = WorkflowEngine(wf, runtime=runtime)
     step = engine.run_node(node_id, inputs)
     return {
         "node_id": step.node_id,
@@ -173,10 +175,19 @@ async def run_workflow_node_tool(
     })
 
     NODE_TIMEOUT_SECONDS = 120
+    sandbox = None
+    extra = ctx.extra if isinstance(ctx.extra, dict) else {}
+    raw_sandbox = extra.get("sandbox")
+    if isinstance(raw_sandbox, dict):
+        sandbox = dict(raw_sandbox)
+    elif hasattr(raw_sandbox, "model_dump"):
+        dumped = raw_sandbox.model_dump(exclude_none=True)
+        if isinstance(dumped, dict):
+            sandbox = dumped
 
     try:
         result = await asyncio.wait_for(
-            asyncio.to_thread(_run_node_sync, workflow_dict, node_id, node_inputs),
+            asyncio.to_thread(_run_node_sync, workflow_dict, node_id, node_inputs, sandbox),
             timeout=NODE_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError:

@@ -1,12 +1,15 @@
 """Tests for bash tool error propagation."""
 
 from pathlib import Path
+from datetime import date
 
 import pytest
 
 from flocks.tool.code.bash import (
+    _bash_output_env,
     _is_flocks_plugin_write_path,
     _is_user_flocks_plugin_write_path,
+    _migrate_misrouted_project_workspace_outputs,
     _stream_output,
 )
 from flocks.tool.code import bash as bash_module
@@ -83,6 +86,67 @@ def test_user_plugin_shell_write_path_is_blocked_from_project_allowlist(tmp_path
 
     assert _is_user_flocks_plugin_write_path(str(user_plugin))
     assert not _is_flocks_plugin_write_path(str(user_plugin), str(project))
+
+
+def test_bash_output_env_points_to_user_workspace(tmp_path: Path, monkeypatch) -> None:
+    from flocks.config.config import Config
+    from flocks.workspace.manager import WorkspaceManager
+
+    home = tmp_path / "home"
+    project = tmp_path / "opt" / "zhhtest" / "flocks"
+    home.mkdir()
+    project.mkdir(parents=True)
+    monkeypatch.setenv("FLOCKS_WORKSPACE_DIR", str(project / ".flocks" / "workspace"))
+    monkeypatch.setattr("flocks.workspace.manager._user_home_dir", lambda: home)
+    WorkspaceManager._instance = None
+    Config._global_config = None
+    try:
+        ctx = ToolContext(session_id="ses_abc123", message_id="m-bash")
+        env = _bash_output_env(ctx)
+    finally:
+        WorkspaceManager._instance = None
+        Config._global_config = None
+
+    assert env["FLOCKS_WORKSPACE_DIR"] == str(home / ".flocks" / "workspace")
+    assert env["FLOCKS_OUTPUTS_DIR"] == str(
+        home / ".flocks" / "workspace" / "outputs" / date.today().isoformat() / "ses_abc123"
+    )
+
+
+def test_migrate_misrouted_project_workspace_outputs(tmp_path: Path, monkeypatch) -> None:
+    from flocks.config.config import Config
+    from flocks.workspace.manager import WorkspaceManager
+
+    home = tmp_path / "home"
+    project = tmp_path / "opt" / "zhhtest" / "flocks"
+    wrong_dir = project / ".flocks" / "workspace" / "outputs" / "2026-05-24" / "ses_abc123"
+    wrong_file = wrong_dir / "final_report.md"
+    home.mkdir()
+    wrong_dir.mkdir(parents=True)
+    wrong_file.write_text("report", encoding="utf-8")
+    monkeypatch.setenv("FLOCKS_WORKSPACE_DIR", str(project / ".flocks" / "workspace"))
+    monkeypatch.setattr("flocks.workspace.manager._user_home_dir", lambda: home)
+    WorkspaceManager._instance = None
+    Config._global_config = None
+    try:
+        ctx = ToolContext(session_id="ses_abc123", message_id="m-bash")
+        migrated = _migrate_misrouted_project_workspace_outputs(ctx, str(project))
+    finally:
+        WorkspaceManager._instance = None
+        Config._global_config = None
+
+    expected = (
+        home
+        / ".flocks"
+        / "workspace"
+        / "outputs"
+        / "2026-05-24"
+        / "ses_abc123"
+        / "final_report.md"
+    )
+    assert migrated == [{"from": str(wrong_file), "to": str(expected)}]
+    assert expected.read_text(encoding="utf-8") == "report"
+    assert not wrong_file.exists()
 
 
 def test_bash_blacklist_matches_command_names_without_text_false_positives() -> None:

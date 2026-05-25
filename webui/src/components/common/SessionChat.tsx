@@ -131,6 +131,12 @@ export interface SessionChatProps {
    */
   onCreateAndSend?: (text: string, imageParts?: ImagePartData[]) => Promise<unknown> | unknown;
   /**
+   * Called before uploading document attachments when a lazy chat does not yet
+   * have a session id. The returned id is used to scope uploads under
+   * ``uploads/<sessionId>/`` so sandbox tools can read them.
+   */
+  onEnsureSession?: () => Promise<string> | string;
+  /**
    * Whether the current model supports vision/image analysis.
    * true = allow images; false = block images with a UI warning; null/undefined = allow (unknown).
    */
@@ -321,7 +327,6 @@ export function getRegenerateTruncateTarget(
 const ABORT_SSE_SETTLE_DELAY = 2000;
 const SCROLL_BOTTOM_THRESHOLD_PX = 80;
 const FALLBACK_POLL_MS = 5_000;
-const WORKSPACE_UPLOAD_DEST = 'uploads';
 const FILE_INPUT_ACCEPT_DOCS = '.txt,.md,.json,.yaml,.yml,.xml,.csv,.pdf,.doc,.docx,.html,.htm,.ppt,.pptx,.xls,.xlsx';
 const FILE_INPUT_ACCEPT_ALL = `${FILE_INPUT_ACCEPT_DOCS},${FILE_INPUT_ACCEPT_IMAGES}`;
 const ALLOWED_UPLOAD_EXTENSIONS = new Set([
@@ -352,6 +357,7 @@ export default function SessionChat({
   onSSEEvent,
   onError,
   onCreateAndSend,
+  onEnsureSession,
   onInitialMessageConsumed,
   supportsVision,
 }: SessionChatProps) {
@@ -363,6 +369,8 @@ export default function SessionChat({
   const showTimestamp = display?.showTimestamp ?? false;
   const effectivePlaceholder = placeholder ?? t('chat.placeholder');
   const effectiveEmptyText = emptyText ?? t('chat.emptyText');
+  const ensuredSessionIdRef = useRef<string | null>(sessionId ?? null);
+  const previousSessionIdRef = useRef<string | null>(sessionId ?? null);
   const activeAgentName = useMemo(() => {
     const name = agentName || 'rex';
     return name.charAt(0).toUpperCase() + name.slice(1);
@@ -690,6 +698,17 @@ export default function SessionChat({
 
   // Reset state on session change
   useEffect(() => {
+    const previousSessionId = previousSessionIdRef.current;
+    const nextSessionId = sessionId ?? null;
+    const keepComposerForUploadSession =
+      !previousSessionId &&
+      !!nextSessionId &&
+      ensuredSessionIdRef.current === nextSessionId;
+
+    previousSessionIdRef.current = nextSessionId;
+    ensuredSessionIdRef.current = nextSessionId;
+    if (keepComposerForUploadSession) return;
+
     setIsStreaming(false);
     setAttachments([]);
     setIsDragOver(false);
@@ -818,12 +837,24 @@ export default function SessionChat({
     )));
   }, []);
 
+  const ensureUploadSession = useCallback(async (): Promise<string> => {
+    if (sessionId) return sessionId;
+    if (ensuredSessionIdRef.current) return ensuredSessionIdRef.current;
+    if (!onEnsureSession) throw new Error(t('chat.upload.errorGeneric'));
+    const createdSessionId = await onEnsureSession();
+    if (!createdSessionId) throw new Error(t('chat.upload.errorGeneric'));
+    ensuredSessionIdRef.current = createdSessionId;
+    return createdSessionId;
+  }, [onEnsureSession, sessionId, t]);
+
   const uploadSelectedFiles = useCallback(async (entries: Array<{ id: string; file: File }>) => {
     if (entries.length === 0) return;
     try {
+      const uploadSessionId = await ensureUploadSession();
+      const uploadDest = `uploads/chat/${uploadSessionId}`;
       const response = await workspaceAPI.upload(
         entries.map((entry) => entry.file),
-        WORKSPACE_UPLOAD_DEST,
+        uploadDest,
         'chat',
       );
       const uploaded = response.data.uploaded ?? [];
@@ -842,7 +873,7 @@ export default function SessionChat({
           ...attachment,
           name: result.name || attachment.name,
           status: 'success',
-          workspacePath: result.abs_path ?? result.path,
+          workspacePath: result.sandbox_path ?? result.path,
           error: undefined,
         };
       }));
@@ -854,7 +885,7 @@ export default function SessionChat({
           : attachment
       )));
     }
-  }, [t]);
+  }, [ensureUploadSession, t]);
 
   const queueFilesForUpload = useCallback((files: File[], { imageBlocked = false }: { imageBlocked?: boolean } = {}) => {
     if (files.length === 0) return;
@@ -1022,7 +1053,8 @@ export default function SessionChat({
    * the SSE "message.updated" event replaces it with the persisted message.
    */
   const sendCommand = async (command: string, args: string) => {
-    if (!sessionId) return;
+    const activeSessionId = sessionId ?? ensuredSessionIdRef.current;
+    if (!activeSessionId) return;
 
     abortingRef.current = false;
     isAtBottomRef.current = true;
@@ -1033,14 +1065,14 @@ export default function SessionChat({
     const tempId = `temp-${Date.now()}`;
     addMessage({
       id: tempId,
-      sessionID: sessionId,
+      sessionID: activeSessionId,
       role: 'user',
       parts: [{ id: `${tempId}-part`, type: 'text', text: displayText }],
       timestamp: Date.now(),
     } as Message);
 
     try {
-      await client.post(`/api/session/${sessionId}/command`, {
+      await client.post(`/api/session/${activeSessionId}/command`, {
         command,
         arguments: args,
         agent: agentName,
@@ -1061,7 +1093,8 @@ export default function SessionChat({
 
   /** Core send logic */
   const sendText = async (text: string, imageParts: ImagePartData[] = []) => {
-    if (!sessionId) return;
+    const activeSessionId = sessionId ?? ensuredSessionIdRef.current;
+    if (!activeSessionId) return;
     // Clear abort state immediately so SSE events for the new stream are not suppressed
     abortingRef.current = false;
     // Force scroll to bottom when user sends a new message
@@ -1078,7 +1111,7 @@ export default function SessionChat({
 
     addMessage({
       id: tempId,
-      sessionID: sessionId,
+      sessionID: activeSessionId,
       role: 'user',
       parts: tempParts.length > 0 ? tempParts : [{ id: `${tempId}-part`, type: 'text', text }],
       timestamp: Date.now(),
@@ -1090,7 +1123,7 @@ export default function SessionChat({
       };
       if (agentName) payload.agent = agentName;
 
-      await client.post(`/api/session/${sessionId}/prompt_async`, payload);
+      await client.post(`/api/session/${activeSessionId}/prompt_async`, payload);
     } catch (err: unknown) {
       setIsStreaming(false);
       const axiosErr = err as any;
@@ -1128,7 +1161,7 @@ export default function SessionChat({
     const parsed = docAttachmentsToSend.length === 0 && imageAttachmentsToSend.length === 0
       ? parseSlashCommand(rawText) : null;
     if (parsed) {
-      if (!sessionId) {
+      if (!(sessionId ?? ensuredSessionIdRef.current)) {
         // Slash commands need an existing session; restore input and do nothing
         setInput(rawText);
         return;
@@ -1141,7 +1174,7 @@ export default function SessionChat({
       return;
     }
 
-    if (!sessionId) {
+    if (!(sessionId ?? ensuredSessionIdRef.current)) {
       if (onCreateAndSend) {
         setSending(true);
         try {

@@ -5,7 +5,7 @@
 使用 Pydantic BaseModel 与 flocks 现有配置风格保持一致。
 """
 
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -217,6 +217,8 @@ class SandboxContext(BaseModel):
     container_workdir: str = Field(description="容器内工作目录")
     docker: SandboxDockerConfig = Field(description="Docker 配置")
     tools: SandboxToolPolicy = Field(description="工具策略")
+    # 上传目录挂载沙箱新增
+    upload_mounts: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class SandboxWorkspaceInfo(BaseModel):
@@ -233,3 +235,4 @@ class BashSandboxConfig(BaseModel):
     workspace_dir: str
     container_workdir: str
     env: Optional[Dict[str, str]] = None
+    upload_mounts: List[Dict[str, Any]] = Field(default_factory=list)

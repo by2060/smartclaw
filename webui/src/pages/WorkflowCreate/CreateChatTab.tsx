@@ -18,7 +18,7 @@ export default function CreateChatTab({ onWorkflowCreated }: CreateChatTabProps)
 
   const exampleQuestions = t('create.chat.exampleQuestions', { returnObjects: true }) as string[];
 
-  const { sessionId, error, createAndSend, retry } = useSessionChat({
+  const { sessionId, error, create, createAndSend, retry } = useSessionChat({
     title: t('create.chat.sessionTitle'),
     category: 'workflow',
     contextMessage: t('create.chat.contextMessage'),
@@ -113,6 +113,7 @@ export default function CreateChatTab({ onWorkflowCreated }: CreateChatTabProps)
       supportsVision={supportsVision}
       onStreamingDone={handleStreamingDone}
       onSSEEvent={handleSSEEvent}
+      onEnsureSession={!sessionId ? create : undefined}
       onCreateAndSend={!sessionId ? (text, imageParts) => createAndSend({ text, imageParts }) : undefined}
     />
   );

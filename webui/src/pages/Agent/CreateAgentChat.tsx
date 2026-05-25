@@ -50,7 +50,7 @@ export default function CreateAgentChat({ open, onClose }: CreateAgentChatProps)
   const { t } = useTranslation(['agent', 'common']);
   const supportsVision = useDefaultModelVision();
 
-  const { sessionId, createAndSend, reset } = useSessionChat({
+  const { sessionId, create, createAndSend, reset } = useSessionChat({
     title: t('agent:chat.createTitle'),
     category: 'agent',
     contextMessage: buildContext(),
@@ -97,6 +97,7 @@ export default function CreateAgentChat({ open, onClose }: CreateAgentChatProps)
           className="flex-1 min-h-0"
           suggestions={SUGGESTIONS}
           supportsVision={supportsVision}
+          onEnsureSession={!sessionId ? create : undefined}
           onCreateAndSend={!sessionId ? (text, imageParts) => createAndSend({ text, imageParts }) : undefined}
           welcomeContent={!sessionId ? (
             <div className="text-center max-w-md">

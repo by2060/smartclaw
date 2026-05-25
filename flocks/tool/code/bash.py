@@ -16,6 +16,7 @@ import subprocess
 import shlex
 import tempfile
 import re
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -52,6 +53,14 @@ OUTPUT_FILE_EXTENSIONS = (
     "xlsx",
     "yaml",
     "yml",
+)
+SCRIPT_FILE_EXTENSIONS = (
+    "bash",
+    "js",
+    "ps1",
+    "py",
+    "sh",
+    "ts",
 )
 # ---------------------end-------------------
 
@@ -244,7 +253,16 @@ def _effective_output_session_id(ctx: ToolContext) -> str:
 
 def _looks_like_generated_document_write(command: str) -> Optional[str]:
     """Detect common shell patterns that create user-facing document outputs."""
-    ext_group = "|".join(OUTPUT_FILE_EXTENSIONS)
+    return _looks_like_shell_file_write(command, OUTPUT_FILE_EXTENSIONS)
+
+
+def _looks_like_temporary_script_write(command: str) -> Optional[str]:
+    """Detect shell-created helper scripts that would pollute the project root."""
+    return _looks_like_shell_file_write(command, SCRIPT_FILE_EXTENSIONS)
+
+
+def _looks_like_shell_file_write(command: str, extensions: tuple[str, ...]) -> Optional[str]:
+    ext_group = "|".join(extensions)
     path_pattern = (
         rf"(?:"
         rf"/[^\s'\";|&<>]+\.(?:{ext_group})"
@@ -263,6 +281,187 @@ def _looks_like_generated_document_write(command: str) -> Optional[str]:
         if match:
             return match.group("path")
     return None
+
+
+def _artifacts_dir_for_session(ctx: ToolContext) -> Path:
+    from flocks.workspace.manager import WorkspaceManager
+
+    output_dir = WorkspaceManager.get_instance().get_outputs_dir(
+        _effective_output_session_id(ctx),
+        create=False,
+    )
+    return output_dir / "artifacts"
+
+
+def _bash_output_env(ctx: ToolContext) -> dict[str, str]:
+    from flocks.workspace.manager import WorkspaceManager
+
+    manager = WorkspaceManager.get_instance()
+    output_dir = manager.get_outputs_dir(_effective_output_session_id(ctx), create=False)
+    return {
+        "FLOCKS_WORKSPACE_DIR": str(manager.get_user_workspace_dir()),
+        "FLOCKS_OUTPUTS_DIR": str(output_dir),
+        "FLOCKS_ARTIFACTS_DIR": str(output_dir / "artifacts"),
+    }
+
+
+def _workspace_output_scope(ctx: ToolContext) -> Optional[str]:
+    from flocks.workspace.manager import WorkspaceManager
+
+    manager = WorkspaceManager.get_instance()
+    output_dir = manager.get_outputs_dir(_effective_output_session_id(ctx), create=False)
+    outputs_root = manager.get_user_workspace_dir() / "outputs"
+    try:
+        rel = output_dir.resolve().relative_to(outputs_root.resolve())
+    except (OSError, ValueError):
+        return None
+    parts = rel.parts
+    if len(parts) < 2:
+        return None
+    return "/".join(part.replace("\\", "/").strip("/") for part in parts[:2] if part)
+
+
+def _already_session_scoped_output(suffix: str) -> bool:
+    parts = [part for part in suffix.strip("/").split("/") if part]
+    return (
+        len(parts) >= 2
+        and re.fullmatch(r"\d{4}-\d{2}-\d{2}", parts[0]) is not None
+        and bool(parts[1])
+    )
+
+
+def _normalize_bash_display_paths(ctx: ToolContext, output: str) -> str:
+    """Rewrite short sandbox output paths to stable date/session paths."""
+
+    if not output or "/workspace/" not in output:
+        return output
+    scope = _workspace_output_scope(ctx)
+    if not scope:
+        return output
+
+    def replace_output(match: re.Match[str]) -> str:
+        prefix = match.group("prefix")
+        suffix = match.group("suffix")
+        if _already_session_scoped_output(suffix):
+            return match.group(0)
+        scheme = "file://" if prefix.startswith("file://") else ""
+        return f"{scheme}/workspace/outputs/{scope}{suffix}"
+
+    normalized = re.sub(
+        r"(?P<prefix>(?:file://)?/workspace/(?:outputs|output))(?P<suffix>/[^\s'\"<>]+)",
+        replace_output,
+        output,
+    )
+
+    def replace_artifact(match: re.Match[str]) -> str:
+        suffix = match.group("suffix")
+        scheme = "file://" if match.group("prefix").startswith("file://") else ""
+        return f"{scheme}/workspace/outputs/{scope}/artifacts{suffix}"
+
+    return re.sub(
+        r"(?P<prefix>(?:file://)?/workspace/artifacts)(?P<suffix>/[^\s'\"<>]+)",
+        replace_artifact,
+        normalized,
+    )
+
+
+def _next_available_path(path: Path) -> Path:
+    if not path.exists():
+        return path
+    parent = path.parent
+    stem = path.stem
+    suffix = path.suffix
+    index = 1
+    while True:
+        candidate = parent / f"{stem}_{index}{suffix}"
+        if not candidate.exists():
+            return candidate
+        index += 1
+
+
+def _migrate_misrouted_project_workspace_outputs(
+    ctx: ToolContext,
+    source_dir: str,
+) -> list[dict[str, str]]:
+    from flocks.workspace.manager import WorkspaceManager
+
+    manager = WorkspaceManager.get_instance()
+    source_root = Path(source_dir).expanduser() / ".flocks" / "workspace" / "outputs"
+    user_outputs_root = manager.get_user_workspace_dir() / "outputs"
+    try:
+        if source_root.resolve() == user_outputs_root.resolve():
+            return []
+    except OSError:
+        pass
+    if not source_root.is_dir():
+        return []
+
+    session_id = _effective_output_session_id(ctx)
+    session_component = (
+        re.sub(r"[^A-Za-z0-9._-]+", "_", str(session_id)).strip("._-")
+        or "default-session"
+    )
+    migrated: list[dict[str, str]] = []
+
+    for day_dir in source_root.iterdir():
+        if not day_dir.is_dir() or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day_dir.name):
+            continue
+        session_dir = day_dir / session_component
+        if not session_dir.is_dir():
+            continue
+        target_session_dir = manager.get_outputs_dir(session_id, day=day_dir.name)
+        for source_file in sorted(session_dir.rglob("*")):
+            if not source_file.is_file():
+                continue
+            rel_path = source_file.relative_to(session_dir)
+            target_file = _next_available_path(target_session_dir / rel_path)
+            target_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(source_file), str(target_file))
+            migrated.append({"from": str(source_file), "to": str(target_file)})
+
+        for empty_dir in sorted(session_dir.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+            if empty_dir.is_dir():
+                try:
+                    empty_dir.rmdir()
+                except OSError:
+                    pass
+        try:
+            session_dir.rmdir()
+        except OSError:
+            pass
+
+    return migrated
+
+
+def _attach_output_migrations(result: ToolResult, migrations: list[dict[str, str]]) -> ToolResult:
+    if not migrations:
+        return result
+    result.metadata["migrated_outputs"] = migrations
+    lines = ["", "<migrated_outputs>"]
+    for item in migrations:
+        lines.append(f"{item['from']} -> {item['to']}")
+    lines.append("</migrated_outputs>")
+    result.output = (result.output or "") + "\n".join(lines)
+    return result
+
+
+def _is_allowed_temporary_script_path(path: str, cwd: str, ctx: ToolContext) -> bool:
+    normalized = str(path).replace("\\", "/").strip("'\"")
+    if normalized.startswith(("/tmp/", "/var/tmp/", "/workspace/artifacts/")):
+        return True
+
+    candidate = Path(path).expanduser()
+    if not candidate.is_absolute():
+        candidate = Path(cwd) / candidate
+
+    allowed_roots = [Path(tempfile.gettempdir()), _artifacts_dir_for_session(ctx)]
+    for root in allowed_roots:
+        try:
+            if candidate.resolve().is_relative_to(root.resolve()):
+                return True
+        except (OSError, ValueError):
+            continue
+    return False
 
 
 def _is_flocks_plugin_write_path(path: str, base_dir: str) -> bool:
@@ -425,6 +624,27 @@ async def bash_tool(
 
     # 输出按会话隔离新增
     blocked_output_path = _looks_like_generated_document_write(command)
+    blocked_script_path = _looks_like_temporary_script_write(command)
+    if (
+        blocked_script_path
+        and not _is_flocks_plugin_write_path(blocked_script_path, cwd)
+        and not _is_allowed_temporary_script_path(blocked_script_path, cwd, ctx)
+    ):
+        artifacts_dir = _artifacts_dir_for_session(ctx)
+        return ToolResult(
+            success=False,
+            error=(
+                "Temporary helper scripts must not be created in the project directory with Bash. "
+                f"Detected attempted script path: {blocked_script_path}. "
+                f"Use /tmp for throwaway scripts, or Write with a filePath under: {artifacts_dir}"
+            ),
+            title=description or command,
+            metadata={
+                "blocked_temporary_script_write": True,
+                "detected_path": blocked_script_path,
+                "expected_artifacts_dir": str(artifacts_dir),
+            },
+        )
     if blocked_output_path and _is_user_flocks_plugin_write_path(blocked_output_path):
         expected_plugin_dir = Path(cwd) / ".flocks" / "plugins"
         return ToolResult(
@@ -541,10 +761,9 @@ async def _execute_host(
         }
     )
 
-    # Build environment with UTF-8 encoding for Windows
-    env = None
+    env = os.environ.copy()
+    env.update(_bash_output_env(ctx))
     if sys.platform == "win32":
-        env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUTF8"] = "1"
 
@@ -570,12 +789,13 @@ async def _execute_host(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
+                env=env,
                 start_new_session=True,  # Create new process group
             )
     except Exception as e:
         return ToolResult(success=False, error=f"Failed to start command: {str(e)}", title=description or command)
 
-    return await _stream_output(
+    result = await _stream_output(
         ctx=ctx,
         proc=proc,
         command=command,
@@ -584,6 +804,11 @@ async def _execute_host(
         description=description,
         extra_metadata=extra_metadata,
     )
+    migrations = _migrate_misrouted_project_workspace_outputs(
+        ctx,
+        Instance.get_directory() or cwd,
+    )
+    return _attach_output_migrations(result, migrations)
 
 
 async def _execute_sandboxed(
@@ -665,7 +890,7 @@ async def _execute_sandboxed(
             metadata={"sandbox": True, "container": sandbox.container_name},
         )
 
-    return await _stream_output(
+    result = await _stream_output(
         ctx=ctx,
         proc=proc,
         command=command,
@@ -674,6 +899,8 @@ async def _execute_sandboxed(
         description=description,
         extra_metadata={"sandbox": True, "container": sandbox.container_name},
     )
+    migrations = _migrate_misrouted_project_workspace_outputs(ctx, sandbox.workspace_dir)
+    return _attach_output_migrations(result, migrations)
 
 
 async def _stream_output(
@@ -772,6 +999,8 @@ async def _stream_output(
 
     if result_metadata:
         output += "\n\n<bash_metadata>\n" + "\n".join(result_metadata) + "\n</bash_metadata>"
+
+    output = _normalize_bash_display_paths(ctx, output)
 
     # Truncate output for metadata
     truncated_output = output

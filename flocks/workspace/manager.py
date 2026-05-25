@@ -71,30 +71,32 @@ def _looks_like_source_dir(path: Path) -> bool:
     except OSError:
         candidate = path.expanduser().absolute()
 
+    user_workspace = _user_workspace_dir()
+    try:
+        user_workspace_resolved = user_workspace.resolve()
+    except OSError:
+        user_workspace_resolved = user_workspace.absolute()
+    try:
+        if candidate == user_workspace_resolved or candidate.is_relative_to(user_workspace_resolved):
+            return False
+    except ValueError:
+        pass
+
     try:
         cwd = Path.cwd().resolve()
     except OSError:
         cwd = Path.cwd().absolute()
-    if candidate == cwd:
-        return True
 
-    user_workspace = _user_workspace_dir()
-    try:
-        is_user_workspace = candidate == user_workspace.resolve()
-    except OSError:
-        is_user_workspace = candidate == user_workspace.absolute()
-    if candidate.name == "flocks" and not is_user_workspace:
-        return True
+    def has_source_markers(base: Path) -> bool:
+        source_markers = ("pyproject.toml", "AGENTS.md", "CLAUDE.md", "CONTEXT.md")
+        return (
+            any((base / marker).exists() for marker in source_markers)
+            or ((base / "flocks").is_dir() and (base / ".flocks").is_dir())
+        )
 
-    source_markers = ("pyproject.toml", "AGENTS.md", "CLAUDE.md", "CONTEXT.md")
-    if any((candidate / marker).exists() for marker in source_markers):
-        return True
-    if (candidate / "flocks").is_dir() and (candidate / ".flocks").is_dir():
-        return True
-
-    if candidate.name == "workspace" and candidate.parent.name == ".flocks":
-        project_root = candidate.parent.parent
-        return _looks_like_source_dir(project_root)
+    for current in (candidate, *candidate.parents):
+        if current == cwd or current.name == "flocks" or has_source_markers(current):
+            return True
 
     return False
 # ------------------------end----------------------------
@@ -161,14 +163,16 @@ class WorkspaceManager:
     # ------------------------------------------------------------------ #
 
     def get_workspace_dir(self) -> Path:
-        if self._workspace_dir is None:
+        if self._workspace_dir is None or _looks_like_source_dir(self._workspace_dir):
             self._workspace_dir = _get_workspace_dir()
         return self._workspace_dir
 
     # 输出按会话隔离新增
     def get_user_workspace_dir(self) -> Path:
+        runtime_workspace = os.getenv("FLOCKS_WORKSPACE_DIR")
+        if runtime_workspace and os.getenv("FLOCKS_OUTPUTS_DIR"):
+            return Path(runtime_workspace).expanduser()
         return _user_workspace_dir()
-    # ------------end------------------------
 
     def get_memory_dir(self) -> Path:
         """Return path to agent-managed memory directory (read-only view)."""
@@ -190,6 +194,13 @@ class WorkspaceManager:
         Output files are organized as:
         ``~/.flocks/workspace/outputs/<YYYY-MM-DD>/<session_id>/``.
         """
+        direct_override = os.getenv("FLOCKS_OUTPUTS_DIR")
+        if direct_override:
+            output_dir = Path(direct_override).expanduser()
+            if create:
+                output_dir.mkdir(parents=True, exist_ok=True)
+            return output_dir
+
         if isinstance(day, dt.date):
             day_component = day.isoformat()
         else:
@@ -354,6 +365,23 @@ class WorkspaceManager:
         against '/tmp/ws'.
         """
         workspace = self.get_workspace_dir().resolve()
+        if Path(rel_path).is_absolute():
+            raise ValueError(f"Absolute paths not allowed: {rel_path}")
+        resolved = (workspace / rel_path).resolve()
+        if not resolved.is_relative_to(workspace):
+            raise ValueError(f"Path traversal detected: {rel_path}")
+        return resolved
+
+    def resolve_user_workspace_path(self, rel_path: str) -> Path:
+        """
+        Resolve a relative path inside the canonical user workspace root.
+
+        This normally ignores FLOCKS_WORKSPACE_DIR so chat uploads and generated
+        artifacts cannot be redirected into the project checkout. Sandbox and
+        tool subprocesses may set both FLOCKS_WORKSPACE_DIR and FLOCKS_OUTPUTS_DIR
+        to expose the canonical workspace through container-visible mounts.
+        """
+        workspace = self.get_user_workspace_dir().resolve()
         if Path(rel_path).is_absolute():
             raise ValueError(f"Absolute paths not allowed: {rel_path}")
         resolved = (workspace / rel_path).resolve()

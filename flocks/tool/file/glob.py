@@ -19,6 +19,7 @@ from flocks.tool.registry import (
 )
 from flocks.project.instance import Instance
 from flocks.utils.log import Log
+from flocks.tool.file.sandbox_paths import display_path, resolve_sandbox_path, sandbox_search_roots
 
 
 log = Log.create(service="tool.glob")
@@ -168,16 +169,24 @@ async def glob_tool(
     # Resolve search path
     base_dir = Instance.get_directory() or os.getcwd()
     search_path = path or base_dir
-    
-    if not os.path.isabs(search_path):
+    sandbox = ctx.extra.get("sandbox") if ctx.extra else None
+
+    if not os.path.isabs(search_path) and not (path and isinstance(sandbox, dict)):
         search_path = os.path.join(base_dir, search_path)
+    if path:
+        resolved, sandbox_error = await resolve_sandbox_path(ctx, search_path)
+        if sandbox_error:
+            return ToolResult(success=False, error=sandbox_error, title=path)
+        search_roots = [resolved.path if resolved else search_path]
+    else:
+        search_roots = sandbox_search_roots(ctx, base_dir)
     
     # Get relative title
     worktree = Instance.get_worktree() or os.getcwd()
     try:
-        title = os.path.relpath(search_path, worktree)
+        title = os.path.relpath(search_roots[0], worktree)
     except ValueError:
-        title = search_path
+        title = search_roots[0]
     
     # Find files
     rg_path = find_ripgrep()
@@ -185,42 +194,34 @@ async def glob_tool(
     truncated = False
     
     try:
-        if rg_path:
-            async for filepath in ripgrep_files(rg_path, search_path, [pattern]):
-                if len(files) >= MAX_FILES:
-                    truncated = True
-                    break
-                
-                full_path = os.path.join(search_path, filepath)
-                try:
-                    stat = os.stat(full_path)
-                    mtime = stat.st_mtime
-                except OSError:
-                    mtime = 0
-                
-                files.append({
-                    'path': full_path,
-                    'mtime': mtime
-                })
-        else:
-            log.warn("glob.ripgrep_not_found", {"fallback": "python_glob"})
-            
-            for filepath in fallback_glob(search_path, pattern):
-                if len(files) >= MAX_FILES:
-                    truncated = True
-                    break
-                
-                full_path = os.path.join(search_path, filepath)
-                try:
-                    stat = os.stat(full_path)
-                    mtime = stat.st_mtime
-                except OSError:
-                    mtime = 0
-                
-                files.append({
-                    'path': full_path,
-                    'mtime': mtime
-                })
+        for root in search_roots:
+            if rg_path:
+                async for filepath in ripgrep_files(rg_path, root, [pattern]):
+                    if len(files) >= MAX_FILES:
+                        truncated = True
+                        break
+                    full_path = os.path.join(root, filepath)
+                    try:
+                        stat = os.stat(full_path)
+                        mtime = stat.st_mtime
+                    except OSError:
+                        mtime = 0
+                    files.append({'path': full_path, 'mtime': mtime})
+            else:
+                log.warn("glob.ripgrep_not_found", {"fallback": "python_glob"})
+                for filepath in fallback_glob(root, pattern):
+                    if len(files) >= MAX_FILES:
+                        truncated = True
+                        break
+                    full_path = os.path.join(root, filepath)
+                    try:
+                        stat = os.stat(full_path)
+                        mtime = stat.st_mtime
+                    except OSError:
+                        mtime = 0
+                    files.append({'path': full_path, 'mtime': mtime})
+            if truncated:
+                break
                 
     except Exception as e:
         return ToolResult(
@@ -238,7 +239,7 @@ async def glob_tool(
     if not files:
         output_lines.append("No files found")
     else:
-        output_lines.extend(f['path'] for f in files)
+        output_lines.extend(display_path(f['path'], ctx) for f in files)
         
         if truncated:
             output_lines.append("")

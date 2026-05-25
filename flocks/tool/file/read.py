@@ -20,6 +20,7 @@ from flocks.tool.registry import (
 from flocks.project.instance import Instance
 from flocks.utils.log import Log
 from flocks.utils.id import Identifier
+from flocks.tool.file.sandbox_paths import display_path, resolve_sandbox_path
 
 
 log = Log.create(service="tool.read")
@@ -42,8 +43,8 @@ IMAGE_MIME_TYPES = {
 }
 
 # Description matching Flocks' read.txt
-DESCRIPTION = """Reads a file from the local filesystem. You can access any file directly by using this tool.
-Assume this tool is able to read all files on the machine. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.
+DESCRIPTION = """Reads a text or image file from the local filesystem.
+If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.
 
 Usage:
 - The filePath parameter must be an absolute path, not a relative path
@@ -53,7 +54,8 @@ Usage:
 - Results are returned using cat -n format, with line numbers starting at 1
 - You have the capability to call multiple tools in a single response. It is always better to speculatively read multiple files as a batch that are potentially useful.
 - If you read a file that exists but has empty contents you will receive a system reminder warning in place of file contents.
-- You can read image files using this tool."""
+- You can read image files using this tool.
+- Do not use this tool to extract text from PDF, Word, Excel, PowerPoint, or HTML documents. Use doc_parser first, then read the generated Markdown if needed."""
 
 
 def is_binary_file(filepath: str) -> bool:
@@ -146,31 +148,10 @@ async def _resolve_sandbox_file_path(ctx: ToolContext, filepath: str) -> tuple[O
     Returns:
         (resolved_path, error_message)
     """
-    sandbox = ctx.extra.get("sandbox") if ctx.extra else None
-    if not isinstance(sandbox, dict):
-        return filepath, None
-
-    workspace_root = sandbox.get("workspace_dir")
-    if not workspace_root:
-        return filepath, None
-
-    if not os.path.isabs(filepath):
-        filepath = os.path.join(workspace_root, filepath)
-
-    try:
-        from flocks.sandbox.paths import assert_sandbox_path
-
-        resolved = await assert_sandbox_path(
-            file_path=filepath,
-            cwd=workspace_root,
-            root=workspace_root,
-        )
-        return resolved.resolved, None
-    except Exception:
-        return None, (
-            f"Path escapes sandbox workspace: {filepath}. "
-            "Use paths inside sandbox workspace only."
-        )
+    resolved, error = await resolve_sandbox_path(ctx, filepath)
+    if error:
+        return None, error
+    return (resolved.path if resolved else filepath), None
 
 
 @ToolRegistry.register_function(
@@ -222,7 +203,8 @@ async def read_tool(
     """
     # Resolve path
     filepath = filePath
-    if not os.path.isabs(filepath):
+    sandbox = ctx.extra.get("sandbox") if ctx.extra else None
+    if not os.path.isabs(filepath) and not isinstance(sandbox, dict):
         # Try to use Instance directory if available
         base_dir = Instance.get_directory() or os.getcwd()
         filepath = os.path.join(base_dir, filepath)
@@ -344,7 +326,11 @@ async def read_tool(
     if is_binary_file(filepath):
         return ToolResult(
             success=False,
-            error=f"Cannot read binary file: {filepath}",
+            error=(
+                f"Cannot read binary file: {display_path(filepath, ctx)}. "
+                "For PDF, Word, Excel, PowerPoint, or HTML documents, use doc_parser "
+                "to extract readable Markdown."
+            ),
             title=title
         )
     

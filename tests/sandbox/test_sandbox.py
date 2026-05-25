@@ -416,6 +416,44 @@ class TestDockerArgs:
         assert "--pids-limit" in args
         assert "100" in args
 
+    @pytest.mark.asyncio
+    async def test_create_container_appends_extra_binds_after_workspace(self, monkeypatch):
+        """Extra output mounts must override the workspace mount."""
+        from flocks.sandbox import docker as docker_module
+        from flocks.sandbox.types import SandboxDockerConfig
+
+        captured_args = []
+
+        async def fake_ensure_docker_image(_image):
+            return None
+
+        async def fake_exec_docker(args, allow_failure=False):
+            captured_args.append(args)
+            return "", "", 0
+
+        monkeypatch.setattr(docker_module, "ensure_docker_image", fake_ensure_docker_image)
+        monkeypatch.setattr(docker_module, "exec_docker", fake_exec_docker)
+
+        await docker_module.create_sandbox_container(
+            name="test-container",
+            cfg=SandboxDockerConfig(
+                image="python:slim",
+                workdir="/workspace",
+                binds=["/host/outputs:/workspace/outputs"],
+            ),
+            workspace_dir="/host/workspace",
+            workspace_access="ro",
+            agent_workspace_dir="/host/workspace",
+            scope_key="test",
+        )
+
+        create_args = captured_args[0]
+        workspace_index = create_args.index("/host/workspace:/workspace:ro")
+        outputs_index = create_args.index("/host/outputs:/workspace/outputs")
+        image_index = create_args.index("python:slim")
+
+        assert workspace_index < outputs_index < image_index
+
     def test_build_exec_args(self):
         """docker exec 参数构建."""
         from flocks.sandbox.docker import build_docker_exec_args
