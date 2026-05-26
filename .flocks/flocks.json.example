@@ -73,7 +73,14 @@
       "image": "python:slim",
       "network": "bridge",
       "memory": "1g",
-      "cpus": 1
+      "cpus": 1,
+      "binds": [
+        "/root/anaconda3/envs/aisAlgo:/root/anaconda3/envs/aisAlgo:ro"
+      ],
+      "env": {
+        "PATH": "/root/anaconda3/envs/aisAlgo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "PYTHONDONTWRITEBYTECODE": "1"
+      }
     },
     "prune": {
       "idle_hours": 12,

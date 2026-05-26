@@ -43,7 +43,7 @@ import zipfile
 from pathlib import Path
 from typing import List, Optional, Literal
 
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Request
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -116,42 +116,6 @@ def _sandbox_upload_path(relative_path: str) -> str | None:
 def _is_chat_upload_dest(path: str) -> bool:
     parts = Path(path).parts
     return len(parts) >= 3 and parts[0] == "uploads" and parts[1] == "chat"
-
-
-def _safe_session_component(value: str | None) -> str | None:
-    raw = (value or "").strip()
-    if not raw:
-        return None
-    safe = "".join(
-        ch if ch.isascii() and (ch.isalnum() or ch in "._-") else "_"
-        for ch in raw
-    ).strip("._-")
-    return safe or None
-
-
-def _request_upload_session_id(request: Request, dest: str) -> str | None:
-    for key in ("sessionID", "sessionId", "session_id", "session"):
-        value = request.query_params.get(key)
-        if value:
-            return _safe_session_component(value)
-
-    for key in ("x-flocks-session-id", "x-flocks-sessionid"):
-        value = request.headers.get(key)
-        if value:
-            return _safe_session_component(value)
-
-    parts = Path(dest).parts
-    if len(parts) >= 3 and parts[0] == "uploads" and parts[1] == "chat":
-        return _safe_session_component(parts[2])
-    return None
-
-
-def _resolve_chat_upload_dest(dest: str, session_id: str | None) -> str:
-    if _is_chat_upload_dest(dest):
-        return dest
-    if session_id and dest in {"", "upload", "uploads", "output", "outputs"}:
-        return f"uploads/chat/{session_id}"
-    raise ValueError("Chat uploads must be stored under uploads/chat/<session_id>")
 
 
 def _normalize_workspace_path(path: str | None) -> str:
@@ -368,18 +332,15 @@ async def delete_dir(
 
 @router.post("/upload", summary="Upload file(s)")
 async def upload_files(
-    request: Request,
     dest: str = Query("", description="Destination directory (relative)"),
     purpose: Optional[Literal["chat"]] = Query(None, description="Upload purpose"),
     files: List[UploadFile] = File(...),
 ):
     mgr = _get_manager()
     dest = _normalize_workspace_path(dest)
-    upload_session_id = _request_upload_session_id(request, dest)
-    is_chat_upload = purpose == "chat" or bool(upload_session_id) or _is_chat_upload_dest(dest)
+    is_chat_upload = _is_chat_upload_dest(dest)
     try:
         if is_chat_upload:
-            dest = _resolve_chat_upload_dest(dest, upload_session_id)
             dest_dir = mgr.resolve_user_workspace_path(dest)
             workspace_root = mgr.get_user_workspace_dir()
         else:

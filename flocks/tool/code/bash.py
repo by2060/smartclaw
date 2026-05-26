@@ -17,6 +17,7 @@ import shlex
 import tempfile
 import re
 import shutil
+import datetime as dt
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -73,6 +74,7 @@ All commands run in {directory} by default. Use the `workdir` parameter if you n
 
 IMPORTANT: This tool is for terminal operations like git, npm, docker, etc. DO NOT use it for file operations (reading, writing, editing, searching, finding files) - use the specialized tools for this instead.
 Generated reports, summaries, analysis documents, tables, JSON/CSV exports, and other user-facing output files MUST be written with the Write tool so they are saved under the Workspace outputs directory for the root session. Do not use Bash redirection, tee, Python one-liners, or shell scripts to create those files.
+When Python is executed via Bash, FLOCKS_OUTPUTS_DIR already points to the final session output directory. Use it directly and do not append YYYY-MM-DD or session_id again.
 
 Before executing the command, please follow these steps:
 
@@ -427,6 +429,59 @@ def _migrate_misrouted_project_workspace_outputs(
                     pass
         try:
             session_dir.rmdir()
+        except OSError:
+            pass
+
+    return migrated
+
+
+def _migrate_nested_session_outputs(ctx: ToolContext) -> list[dict[str, str]]:
+    """Move files back when a script appends date/session to FLOCKS_OUTPUTS_DIR."""
+    from flocks.workspace.manager import WorkspaceManager
+
+    manager = WorkspaceManager.get_instance()
+    session_id = _effective_output_session_id(ctx)
+    session_component = (
+        re.sub(r"[^A-Za-z0-9._-]+", "_", str(session_id)).strip("._-")
+        or "default-session"
+    )
+    output_dir = manager.get_outputs_dir(session_id, create=False)
+    day_component = output_dir.parent.name
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day_component):
+        day_component = dt.date.today().isoformat()
+
+    nested_root = output_dir / day_component / session_component
+    if not nested_root.is_dir():
+        return []
+
+    migrated: list[dict[str, str]] = []
+    for source_file in sorted(nested_root.rglob("*")):
+        if not source_file.is_file():
+            continue
+        rel_path = source_file.relative_to(nested_root)
+        rel_parts = rel_path.parts
+        while (
+            len(rel_parts) >= 3
+            and rel_parts[0] == day_component
+            and rel_parts[1] == session_component
+        ):
+            rel_parts = rel_parts[2:]
+        if not rel_parts:
+            continue
+        target_file = _next_available_path(output_dir / Path(*rel_parts))
+        target_file.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(source_file), str(target_file))
+        migrated.append({"from": str(source_file), "to": str(target_file)})
+
+    for empty_dir in sorted(nested_root.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+        if empty_dir.is_dir():
+            try:
+                empty_dir.rmdir()
+            except OSError:
+                pass
+    for empty_dir in (nested_root, nested_root.parent):
+        try:
+            empty_dir.rmdir()
         except OSError:
             pass
 
@@ -808,6 +863,7 @@ async def _execute_host(
         ctx,
         Instance.get_directory() or cwd,
     )
+    migrations.extend(_migrate_nested_session_outputs(ctx))
     return _attach_output_migrations(result, migrations)
 
 
@@ -900,6 +956,7 @@ async def _execute_sandboxed(
         extra_metadata={"sandbox": True, "container": sandbox.container_name},
     )
     migrations = _migrate_misrouted_project_workspace_outputs(ctx, sandbox.workspace_dir)
+    migrations.extend(_migrate_nested_session_outputs(ctx))
     return _attach_output_migrations(result, migrations)
 
 

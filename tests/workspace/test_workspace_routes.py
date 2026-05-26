@@ -238,13 +238,26 @@ class TestUpload:
     def test_chat_upload_rejects_disallowed_file_type(self, workspace_client):
         client = _client(workspace_client)
         r = client.post(
-            "/api/workspace/upload?purpose=chat&sessionID=ses_chat",
+            "/api/workspace/upload?dest=uploads/chat/ses_chat&purpose=chat",
             files=[("files", ("archive.zip", b"\x50\x4b\x03\x04", "application/zip"))],
         )
         assert r.status_code == 200
         result = r.json()["uploaded"][0]
         assert "Unsupported file type" in result["error"]
         assert not (_user_ws(workspace_client) / "uploads" / "chat" / "ses_chat" / "archive.zip").exists()
+
+    def test_purpose_chat_upload_to_non_chat_uploads_dir_is_unrestricted(self, workspace_client):
+        client = _client(workspace_client)
+        r = client.post(
+            "/api/workspace/upload?dest=uploads/custom&purpose=chat&sessionID=ses_chat",
+            files=[("files", ("archive.zip", b"\x50\x4b\x03\x04", "application/zip"))],
+        )
+        assert r.status_code == 200
+        result = r.json()["uploaded"][0]
+        assert result.get("error") is None
+        assert result["path"] == "uploads/custom/archive.zip"
+        assert result["sandbox_path"] is None
+        assert (_ws(workspace_client) / "uploads" / "custom" / "archive.zip").exists()
 
     def test_upload_multiple_files(self, workspace_client):
         client = _client(workspace_client)
@@ -282,7 +295,7 @@ class TestUpload:
         assert r.status_code == 200
         assert (_ws(workspace_client) / "new_folder" / "x.txt").exists()
 
-    def test_upload_with_session_id_defaults_to_chat_upload_dir(self, workspace_client):
+    def test_upload_with_session_id_does_not_default_to_chat_upload_dir(self, workspace_client):
         client = _client(workspace_client)
         r = client.post(
             "/api/workspace/upload?sessionID=ses_third_party",
@@ -290,15 +303,9 @@ class TestUpload:
         )
         assert r.status_code == 200
         result = r.json()["uploaded"][0]
-        assert result["path"] == "uploads/chat/ses_third_party/x.txt"
-        assert result["sandbox_path"] == "/workspace/uploads/chat/ses_third_party/x.txt"
-        assert (
-            _user_ws(workspace_client)
-            / "uploads"
-            / "chat"
-            / "ses_third_party"
-            / "x.txt"
-        ).exists()
+        assert result["path"] == "x.txt"
+        assert result["sandbox_path"] is None
+        assert (_ws(workspace_client) / "x.txt").exists()
 
     def test_upload_overwrites_duplicate_file_without_chat_purpose(self, workspace_client):
         client = _client(workspace_client)
@@ -323,11 +330,11 @@ class TestUpload:
     def test_chat_upload_renames_duplicate_file(self, workspace_client):
         client = _client(workspace_client)
         first = client.post(
-            "/api/workspace/upload?dest=uploads&purpose=chat&sessionID=ses_uploads",
+            "/api/workspace/upload?dest=uploads/chat/ses_uploads&purpose=chat&sessionID=ses_uploads",
             files=[("files", ("report.pdf", b"first", "application/pdf"))],
         )
         second = client.post(
-            "/api/workspace/upload?dest=uploads&purpose=chat&sessionID=ses_uploads",
+            "/api/workspace/upload?dest=uploads/chat/ses_uploads&purpose=chat&sessionID=ses_uploads",
             files=[("files", ("report.pdf", b"second", "application/pdf"))],
         )
         assert first.status_code == 200
@@ -353,7 +360,7 @@ class TestUpload:
         (uploads_dir / "report (1).pdf").write_bytes(b"second")
 
         r = _client(workspace_client).post(
-            "/api/workspace/upload?dest=uploads&purpose=chat&sessionID=ses_conflict",
+            "/api/workspace/upload?dest=uploads/chat/ses_conflict&purpose=chat&sessionID=ses_conflict",
             files=[("files", ("report.pdf", b"third", "application/pdf"))],
         )
 

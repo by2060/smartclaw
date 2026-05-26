@@ -230,6 +230,7 @@ class SystemPrompt:
             "Here is some useful information about the environment you are running in:",
             "<env>",
             f"  Workspace outputs directory: {outputs_dir}",
+            "  The Workspace outputs directory is the final session directory; do not append date or session_id again.",
             f"  Source code directory: {working_dir}",
             f"  Is directory a git repo: {'yes' if is_git else 'no'}",
             f"  Platform: {platform.system().lower()}",

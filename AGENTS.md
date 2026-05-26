@@ -18,20 +18,30 @@
 
 ```python
 import os, datetime
+from pathlib import Path
 from flocks.workspace.manager import WorkspaceManager
 
 # 在执行时动态取当日日期，不依赖 session 启动时的注入值
 ws = WorkspaceManager.get_instance()
-session_id = inputs.get('_session_id') or inputs.get('session_id') or 'default-session'
-output_dir = str(ws.get_outputs_dir(session_id, day=datetime.date.today()))
-os.makedirs(output_dir, exist_ok=True)
+session_id = (
+    inputs.get('_session_id')
+    or inputs.get('session_id')
+    or os.getenv('FLOCKS_SESSION_ID')
+    or 'default-session'
+)
+# FLOCKS_OUTPUTS_DIR 已经是最终会话输出目录，不要再追加日期或 session_id
+output_dir = Path(
+    os.getenv('FLOCKS_OUTPUTS_DIR')
+    or ws.get_outputs_dir(session_id, day=datetime.date.today())
+)
+output_dir.mkdir(parents=True, exist_ok=True)
 
 # 写报告
-tool.run('write', filePath=os.path.join(output_dir, 'final_report.md'), content=report)
+tool.run('write', filePath=str(output_dir / 'final_report.md'), content=report)
 # 写 LLM 中间输出
-artifacts_dir = os.path.join(output_dir, 'artifacts')
-os.makedirs(artifacts_dir, exist_ok=True)
-tool.run('write', filePath=os.path.join(artifacts_dir, 'payload_analysis.md'), content=llm_output)
+artifacts_dir = output_dir / 'artifacts'
+artifacts_dir.mkdir(parents=True, exist_ok=True)
+tool.run('write', filePath=str(artifacts_dir / 'payload_analysis.md'), content=llm_output)
 ```
 
 ### 何时可以使用其他路径

@@ -10,6 +10,7 @@ from flocks.tool.code.bash import (
     _is_flocks_plugin_write_path,
     _is_user_flocks_plugin_write_path,
     _migrate_misrouted_project_workspace_outputs,
+    _migrate_nested_session_outputs,
     _stream_output,
 )
 from flocks.tool.code import bash as bash_module
@@ -144,6 +145,39 @@ def test_migrate_misrouted_project_workspace_outputs(tmp_path: Path, monkeypatch
         / "ses_abc123"
         / "final_report.md"
     )
+    assert migrated == [{"from": str(wrong_file), "to": str(expected)}]
+    assert expected.read_text(encoding="utf-8") == "report"
+    assert not wrong_file.exists()
+
+
+def test_migrate_nested_session_outputs(tmp_path: Path, monkeypatch) -> None:
+    from flocks.config.config import Config
+    from flocks.workspace.manager import WorkspaceManager
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr("flocks.workspace.manager._user_home_dir", lambda: home)
+    WorkspaceManager._instance = None
+    Config._global_config = None
+    try:
+        session_id = "ses_abc123"
+        today = date.today().isoformat()
+        output_dir = WorkspaceManager.get_instance().get_outputs_dir(
+            session_id,
+            day=today,
+        )
+        wrong_dir = output_dir / today / session_id
+        wrong_file = wrong_dir / "final_report.md"
+        wrong_dir.mkdir(parents=True)
+        wrong_file.write_text("report", encoding="utf-8")
+
+        ctx = ToolContext(session_id=session_id, message_id="m-bash")
+        migrated = _migrate_nested_session_outputs(ctx)
+    finally:
+        WorkspaceManager._instance = None
+        Config._global_config = None
+
+    expected = output_dir / "final_report.md"
     assert migrated == [{"from": str(wrong_file), "to": str(expected)}]
     assert expected.read_text(encoding="utf-8") == "report"
     assert not wrong_file.exists()

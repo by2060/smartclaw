@@ -268,10 +268,10 @@ class TestWorkspaceUpload:
     async def test_chat_upload_rejects_disallowed_file_type(
         self, client: AsyncClient, mock_workspace: Path
     ):
-        """Chat uploads reject unsupported file types via purpose=chat."""
+        """Chat upload directories reject unsupported file types."""
         resp = await client.post(
             "/api/workspace/upload",
-            params={"purpose": "chat", "sessionID": "ses_chat"},
+            params={"dest": "uploads/chat/ses_chat", "purpose": "chat"},
             files={"files": ("archive.zip", io.BytesIO(b"zip"), "application/zip")},
         )
         assert resp.status_code == status.HTTP_200_OK
@@ -279,6 +279,23 @@ class TestWorkspaceUpload:
         assert "Unsupported file type" in result["error"]
         chat_root = mock_workspace.parent / "home" / ".flocks" / "workspace" / "uploads" / "chat" / "ses_chat"
         assert not (chat_root / "archive.zip").exists()
+
+    @pytest.mark.asyncio
+    async def test_purpose_chat_upload_to_non_chat_uploads_dir_is_unrestricted(
+        self, client: AsyncClient, mock_workspace: Path
+    ):
+        """purpose=chat does not force uploads/chat/<session> semantics."""
+        resp = await client.post(
+            "/api/workspace/upload",
+            params={"dest": "uploads/custom", "purpose": "chat", "sessionID": "ses_chat"},
+            files={"files": ("archive.zip", io.BytesIO(b"zip"), "application/zip")},
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        result = resp.json()["uploaded"][0]
+        assert result.get("error") is None
+        assert result["path"] == "uploads/custom/archive.zip"
+        assert result["sandbox_path"] is None
+        assert (mock_workspace / "uploads" / "custom" / "archive.zip").exists()
 
     @pytest.mark.parametrize("filename", ALL_SUPPORTED_UPLOAD_FILENAMES)
     @pytest.mark.asyncio
@@ -294,7 +311,7 @@ class TestWorkspaceUpload:
         create_sample_file(source)
         resp = await client.post(
             "/api/workspace/upload",
-            params={"purpose": "chat", "sessionID": "ses_supported"},
+            params={"dest": "uploads/chat/ses_supported", "purpose": "chat"},
             files={"files": (filename, io.BytesIO(source.read_bytes()), "application/octet-stream")},
         )
 
@@ -337,12 +354,12 @@ class TestWorkspaceUpload:
         """Chat uploads auto-rename duplicates to preserve attachment paths."""
         first = await client.post(
             "/api/workspace/upload",
-            params={"dest": "uploads", "purpose": "chat", "sessionID": "ses_uploads"},
+            params={"dest": "uploads/chat/ses_uploads", "purpose": "chat", "sessionID": "ses_uploads"},
             files={"files": ("report.pdf", io.BytesIO(b"first"), "application/pdf")},
         )
         second = await client.post(
             "/api/workspace/upload",
-            params={"dest": "uploads", "purpose": "chat", "sessionID": "ses_uploads"},
+            params={"dest": "uploads/chat/ses_uploads", "purpose": "chat", "sessionID": "ses_uploads"},
             files={"files": ("report.pdf", io.BytesIO(b"second"), "application/pdf")},
         )
         assert first.status_code == status.HTTP_200_OK
@@ -372,7 +389,7 @@ class TestWorkspaceUpload:
 
         resp = await client.post(
             "/api/workspace/upload",
-            params={"dest": "uploads", "purpose": "chat", "sessionID": "ses_conflict"},
+            params={"dest": "uploads/chat/ses_conflict", "purpose": "chat", "sessionID": "ses_conflict"},
             files={"files": ("report.pdf", io.BytesIO(b"third"), "application/pdf")},
         )
 
@@ -380,8 +397,8 @@ class TestWorkspaceUpload:
         assert "Too many conflicting filenames" in resp.json()["detail"]
         result = resp.json()["uploaded"][0]
         assert "Too many conflicting filenames" in result["error"]
-        assert (mock_workspace / "uploads" / "report.pdf").read_bytes() == b"first"
-        assert (mock_workspace / "uploads" / "report (1).pdf").read_bytes() == b"second"
+        assert (uploads_dir / "report.pdf").read_bytes() == b"first"
+        assert (uploads_dir / "report (1).pdf").read_bytes() == b"second"
 
 
 # ===========================================================================
