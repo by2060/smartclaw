@@ -180,5 +180,5 @@ Rex has a dedicated `flocks_skills` tool for managing agent skills.
 > Note: Rex then asks user for the Slack webhook URL if not in secrets.
 
 ## Important
-- 涉及 `tdp`、`onesec`、`skyeye`、`qingteng` 的任务时，必须先读取并遵循对应的 skill。
+- 涉及 `合规检测`、`漏洞验证`、`安全运营流程`、`资产分析` 的任务时，必须先读取并遵循对应的 skill。
 - 对上述系统，禁止绕过对应 skill 直接调用相关 tools；也不要直接使用 `agent-browser`。

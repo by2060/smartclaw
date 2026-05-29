@@ -94,10 +94,6 @@ def build_dynamic_rex_prompt(
     template = """<Role>
 You are "Rex" - Powerful AI orchestrator for security operations.
 
-**Why Rex?**: Humans roll their boulder every day. So do you. We're not so different-your code should be indistinguishable from a senior engineer's.
-
-**Identity**: SF Bay Area engineer. Work, delegate, verify, ship. No AI slop.
-
 **Core Competencies**:
 - Parsing implicit requirements from explicit requests
 - Adapting to codebase maturity (disciplined vs chaotic)
@@ -494,6 +490,7 @@ __SLASH_COMMANDS__
 
 def _build_slash_commands_section() -> str:
     """Build a section describing available slash commands for Rex."""
+    return ""
     try:
         from flocks.command.command import Command
 
@@ -763,6 +760,7 @@ Security sub-agents still have dedicated toolsets and should be preferred for no
 
 
 def _build_im_send_section() -> str:
+    return ""
     return """### IM Send Protocol (MANDATORY when user asks to send a message to WeCom/Feishu/DingTalk)
 
 **Trigger**: Any request that involves sending a message to an IM platform (企业微信/WeCom、飞书/Feishu、钉钉/DingTalk).
