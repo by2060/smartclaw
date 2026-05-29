@@ -858,6 +858,9 @@ class APIServiceMetadata(BaseModel):
     author: Optional[str] = None
     category: Optional[str] = None
     authentication: Optional[Dict[str, Any]] = None
+    authType: Optional[str] = None
+    authExt: Optional[List[Dict[str, Any]]] = None
+    customAuth: Optional[Dict[str, Any]] = None
     dependencies: Optional[List[str]] = None
     apis: Optional[List[Dict[str, Any]]] = None
     rate_limits: Optional[Dict[str, Any]] = None
@@ -903,6 +906,7 @@ class APIServiceCredentialField(BaseModel):
     config_key: str
     secret_id: Optional[str] = None
     default_value: Optional[str] = None
+    config_value: Optional[str] = None
 
 
 def _default_api_service_field_label(field_key: str) -> str:
@@ -1014,6 +1018,10 @@ def _normalize_api_service_credential_field(
     if description is not None and not isinstance(description, str):
         description = str(description)
 
+    config_value = raw_field.get("config_value")
+    if config_value is not None and not isinstance(config_value, str):
+        config_value = str(config_value)
+
     return APIServiceCredentialField(
         key=key,
         label=label,
@@ -1025,6 +1033,7 @@ def _normalize_api_service_credential_field(
         config_key=config_key,
         secret_id=secret_id,
         default_value=default_value,
+        config_value=config_value,
     )
 
 
@@ -1666,6 +1675,9 @@ def _load_provider_yaml_metadata(provider_id: str) -> Optional[Dict[str, Any]]:
             "description": prov.get("description"),
             "description_cn": prov.get("description_cn"),
             "auth": prov.get("auth"),
+            "authType": prov.get("authType"),
+            "authExt": prov.get("authExt"),
+            "customAuth": prov.get("customAuth"),
             "credential_fields": prov.get("credential_fields"),
             "defaults": prov.get("defaults", {}),
             "apis": tool_apis or None,

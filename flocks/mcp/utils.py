@@ -610,9 +610,9 @@ def generate_tool_name(server_name: str, tool_name: str) -> str:
         
     Examples:
         >>> generate_tool_name('ThreatBook', 'ip_query')
-        'threatbook_ip_query'
+        'ThreatBook_ip_query'
     """
-    return f"{sanitize_name(server_name)}_{sanitize_name(tool_name)}"
+    return f"{server_name}_{tool_name}"
 
 
 def calculate_schema_hash(schema: Dict[str, Any]) -> str:

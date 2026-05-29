@@ -540,12 +540,12 @@ class TestGenerateToolName:
     def test_basic(self):
         """Test basic generation"""
         name = generate_tool_name("ThreatBook", "ip_query")
-        assert name == "threatbook_ip_query"
-    
+        assert name == "ThreatBook_ip_query"
+
     def test_with_special_chars(self):
         """Test special character handling"""
         name = generate_tool_name("My Server", "my-tool")
-        assert name == "my_server_my-tool"
+        assert name == "My Server_my-tool"
 
 
 class TestCalculateSchemaHash:

@@ -3,11 +3,13 @@ from __future__ import annotations
 import re
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 _SAFE_COMPONENT_PATTERN = re.compile(r"[^A-Za-z0-9_]+")
 _PLACEHOLDER_PATTERN = re.compile(r"\{([^}]+)\}")
+_ALLOWED_AUTH_TYPES = {"smart", "iam6", "bearerToken", "basicAuth", "custom"}
+_ALLOWED_AUTH_EXT_INJECT_AS = {"header", "query_param", "body"}
 
 
 class DraftValidationIssue(BaseModel):
@@ -22,7 +24,10 @@ class ProviderDraft(BaseModel):
     service_id: Optional[str] = None
     description: str = ""
     description_cn: Optional[str] = None
+    authType: Optional[str] = None
     auth: Optional[dict[str, Any]] = None
+    authExt: Optional[list[dict[str, Any]]] = None
+    customAuth: Optional[dict[str, Any]] = None
     defaults: dict[str, Any] = Field(default_factory=dict)
     credential_fields: Optional[list[dict[str, Any]]] = None
     compound_secret: Optional[dict[str, Any]] = None
@@ -45,8 +50,23 @@ class ToolDraft(BaseModel):
 
 
 class APIToolDraft(BaseModel):
+    is_api_related: bool = True
     provider: ProviderDraft
     tools: list[ToolDraft] = Field(default_factory=list)
+
+
+class NonAPIToolDraftResult(BaseModel):
+    is_api_related: Literal[False] = False
+    irrelevant_reason: str
+
+    @model_validator(mode="after")
+    def validate_result(self) -> "NonAPIToolDraftResult":
+        if not self.irrelevant_reason.strip():
+            raise ValueError("Non-API draft generation results must include irrelevant_reason")
+        return self
+
+
+APIToolDraftGenerationResult = APIToolDraft | NonAPIToolDraftResult
 
 
 def safe_component(value: Any, fallback: str) -> str:
@@ -174,10 +194,65 @@ def validate_api_tool_draft(draft: APIToolDraft, *, check_collisions: bool = Tru
     elif not (base_url.startswith("http://") or base_url.startswith("https://")):
         issues.append(DraftValidationIssue(path="provider.defaults.base_url", message="base_url 必须以 http:// 或 https:// 开头"))
 
+    auth_type = provider.authType
+    if auth_type is not None:
+        if auth_type not in _ALLOWED_AUTH_TYPES:
+            issues.append(DraftValidationIssue(
+                path="provider.authType",
+                message="authType 必须是 smart、iam6、bearerToken、basicAuth 或 custom",
+            ))
+        elif auth_type in {"smart", "iam6"}:
+            auth_ext = provider.authExt
+            if not isinstance(auth_ext, list) or not auth_ext:
+                issues.append(DraftValidationIssue(path="provider.authExt", message="smart/iam6 认证必须配置 authExt"))
+            else:
+                has_authorization = False
+                for ext_index, item in enumerate(auth_ext):
+                    ext_path = f"provider.authExt[{ext_index}]"
+                    if not isinstance(item, dict):
+                        issues.append(DraftValidationIssue(path=ext_path, message="authExt 条目必须是对象"))
+                        continue
+                    inject_as = item.get("inject_as", "header")
+                    if inject_as not in _ALLOWED_AUTH_EXT_INJECT_AS:
+                        issues.append(DraftValidationIssue(path=f"{ext_path}.inject_as", message="authExt.inject_as 必须是 header、query_param 或 body"))
+                    if inject_as == "header":
+                        header_name = item.get("key")
+                        header_value = item.get("value")
+                        if isinstance(header_name, str) and header_name.lower() == "authorization" and isinstance(header_value, str) and header_value.strip():
+                            has_authorization = True
+                if not has_authorization:
+                    issues.append(DraftValidationIssue(path="provider.authExt", message="smart/iam6 认证必须通过 authExt 注入 Authorization header"))
+        elif auth_type == "bearerToken" and not isinstance(provider.auth, dict):
+            issues.append(DraftValidationIssue(path="provider.auth", message="bearerToken 认证必须配置 auth"))
+        elif auth_type == "basicAuth" and not isinstance(provider.credential_fields, list):
+            issues.append(DraftValidationIssue(path="provider.credential_fields", message="basicAuth 认证必须配置 credential_fields"))
+        elif auth_type == "custom":
+            issues.append(DraftValidationIssue(
+                severity="warning",
+                path="provider.customAuth",
+                message="customAuth 当前仅保留配置，不执行自定义认证程序",
+            ))
+
     if isinstance(provider.auth, dict):
         inject_as = provider.auth.get("inject_as")
         if inject_as and inject_as not in {"header", "query_param"}:
             issues.append(DraftValidationIssue(path="provider.auth.inject_as", message="auth.inject_as 必须是 header 或 query_param"))
+
+    if isinstance(provider.authExt, list):
+        for ext_index, item in enumerate(provider.authExt):
+            ext_path = f"provider.authExt[{ext_index}]"
+            if not isinstance(item, dict):
+                issues.append(DraftValidationIssue(path=ext_path, message="authExt 条目必须是对象"))
+                continue
+            inject_as = item.get("inject_as", "header")
+            if inject_as not in _ALLOWED_AUTH_EXT_INJECT_AS:
+                issues.append(DraftValidationIssue(path=f"{ext_path}.inject_as", message="authExt.inject_as 必须是 header、query_param 或 body"))
+            auth_ext_key = item.get("key")
+            auth_ext_value = item.get("value")
+            if not isinstance(auth_ext_key, str) or not auth_ext_key.strip():
+                issues.append(DraftValidationIssue(path=f"{ext_path}.key", message="authExt 必须配置 key"))
+            if not isinstance(auth_ext_value, str) or not auth_ext_value.strip():
+                issues.append(DraftValidationIssue(path=f"{ext_path}.value", message="authExt 必须配置 SM4 密文 value"))
 
     if not draft.tools:
         issues.append(DraftValidationIssue(path="tools", message="至少需要一个工具草稿"))
@@ -259,7 +334,10 @@ def compile_provider_yaml(provider: ProviderDraft) -> dict[str, Any]:
             "service_id",
             "description",
             "description_cn",
+            "authType",
             "auth",
+            "authExt",
+            "customAuth",
             "defaults",
             "credential_fields",
             "compound_secret",
