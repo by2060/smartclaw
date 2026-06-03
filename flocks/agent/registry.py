@@ -134,6 +134,7 @@ def _build_available_agents(agents: Dict[str, AgentInfo]) -> List[AvailableAgent
             name=agent.name,
             description=agent.description or "",
             metadata=metadata,
+            description_cn=agent.description_cn,
         ))
     return available
 
@@ -187,7 +188,12 @@ class Agent:
         categorized_tools = categorize_tools(available_tools)
         skills = await Skill.all()
         available_skills = [
-            AvailableSkill(name=s.name, description=s.description, location=s.source or "project")
+            AvailableSkill(
+                name=s.name,
+                description=s.description,
+                location=s.source or "project",
+                description_cn=s.description_cn,
+            )
             for s in skills
         ]
         category_configs = {**DEFAULT_CATEGORIES, **(cfg.categories or {})}

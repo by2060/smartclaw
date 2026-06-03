@@ -831,6 +831,7 @@ def yaml_to_tool(raw: dict, yaml_path: Path) -> Tool:
     info = ToolInfo(
         name=name,
         description=raw.get("description", ""),
+        description_cn=raw.get("description_cn") or None,
         category=category,
         parameters=parameters,
         enabled=raw.get("enabled", True),

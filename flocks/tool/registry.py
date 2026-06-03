@@ -1184,6 +1184,7 @@ class ToolRegistry:
                 info = ToolInfo(
                     name=name,
                     description=spec.get("description", ""),
+                    description_cn=spec.get("description_cn") or None,
                     category=category,
                     parameters=params,
                     source="plugin_py",

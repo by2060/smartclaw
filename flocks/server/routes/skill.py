@@ -160,6 +160,19 @@ class SkillCreateRequest(BaseModel):
     content: str = Field(..., description="Skill content (markdown)")
 
 
+def _build_skill_frontmatter(req: SkillCreateRequest) -> str:
+    import yaml
+
+    data = {
+        "name": req.name,
+        "description": req.description,
+    }
+    if req.description_cn:
+        data["description_cn"] = req.description_cn
+    body = yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+    return f"---\n{body}---\n\n"
+
+
 class SkillInstallRequest(BaseModel):
     """Request to install a skill from an external source"""
     source: str = Field(
@@ -290,6 +303,7 @@ def _skill_to_response(skill: SkillInfo, include_content: bool = False) -> Skill
     return SkillResponse(
         name=skill.name,
         description=skill.description,
+        description_cn=skill.description_cn,
         location=skill.location,
         source=skill.source,
         content=content,
@@ -485,7 +499,7 @@ async def create_skill(req: SkillCreateRequest, agent: Optional[str] = Query(Non
 
         skill_path = skill_dir / "SKILL.md"
 
-        frontmatter = f"---\nname: {req.name}\ndescription: {req.description}\n---\n\n"
+        frontmatter = _build_skill_frontmatter(req)
         full_content = frontmatter + req.content
 
         skill_path.write_text(full_content, encoding="utf-8")
@@ -498,6 +512,7 @@ async def create_skill(req: SkillCreateRequest, agent: Optional[str] = Query(Non
         return SkillResponse(
             name=req.name,
             description=req.description,
+            description_cn=req.description_cn,
             location=str(skill_path),
             # skill输出到项目级目录下修改
             source="project",
@@ -530,7 +545,7 @@ async def update_skill(
         if not skill:
             raise HTTPException(status_code=404, detail=f"Skill not found: {name}")
 
-        frontmatter = f"---\nname: {req.name}\ndescription: {req.description}\n---\n\n"
+        frontmatter = _build_skill_frontmatter(req)
         full_content = frontmatter + req.content
         is_rename = req.name != name
 
@@ -573,6 +588,7 @@ async def update_skill(
         return SkillResponse(
             name=req.name,
             description=req.description,
+            description_cn=req.description_cn,
             location=location,
             source=skill.source,
             content=full_content,

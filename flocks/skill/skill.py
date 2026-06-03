@@ -126,6 +126,11 @@ class Skill:
 
             name = (data.get("name") or "").strip()
             description = (data.get("description") or "").strip()
+            description_cn_raw = data.get("description_cn")
+            if description_cn_raw is None:
+                description_cn_raw = data.get("descriptionCn")
+            description_cn = str(description_cn_raw).strip() if description_cn_raw is not None else None
+            description_cn = description_cn or None
             category = (data.get("category") or "").strip().lower() or None
 
             if not cls._is_valid_name(name) or not cls._is_valid_description(description):
@@ -157,6 +162,7 @@ class Skill:
             return SkillInfo(
                 name=name,
                 description=description,
+                description_cn=description_cn,
                 location=filepath,
                 source=source,
                 category=category,
