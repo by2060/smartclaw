@@ -1,5 +1,6 @@
 name: rex-junior
 description: "Focused task executor. Same discipline, no delegation."
+description_cn: 专注的任务执行器，同源纪律，无委派能力
 mode: subagent
 hidden: false
 tags: [system]
@@ -25,4 +26,3 @@ tools:
   - background_cancel
   - session_list
   - channel_message
-

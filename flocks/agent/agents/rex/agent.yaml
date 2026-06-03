@@ -2,6 +2,7 @@ name: rex
 description: >-
   Powerful AI orchestrator for security operations. Analyzes threats,
   plans strategically, and delegates to specialized agents.
+description_cn: 强大的安全运维 AI 编排器，分析威胁、制定策略、调度专业智能体
 mode: primary
 hidden: false
 color: "#00CED1"

@@ -6,6 +6,7 @@ description: >-
   (eg. "how do API endpoints work?"). When calling this agent, specify the
   thoroughness level: "quick" for basic, "medium" for moderate, "very thorough"
   for comprehensive analysis across multiple locations and naming conventions.
+description_cn: 快速代码库探索智能体，擅长文件搜索和代码检索
 mode: subagent
 hidden: false
 tags: [system]

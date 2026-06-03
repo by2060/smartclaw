@@ -90,6 +90,17 @@ def _format_tools_for_prompt(tools: List[AvailableTool]) -> str:
     return "\n".join(lines)
 
 
+def _display_description(item: object) -> str:
+    description_cn = getattr(item, "description_cn", None)
+    if description_cn:
+        return description_cn
+    return getattr(item, "description", "") or ""
+
+
+def _first_sentence(description: str) -> str:
+    return description.split(".")[0] or description
+
+
 def build_key_triggers_section(
     agents: List[AvailableAgent],
     _skills: Optional[List[AvailableSkill]] = None,
@@ -134,7 +145,7 @@ def build_tool_selection_table(
             "|-------|------|-------------|",
         ]
         for agent in sorted_agents:
-            short_desc = agent.description.split(".")[0] or agent.description
+            short_desc = _first_sentence(_display_description(agent))
             rows.append(f"| `{agent.name}` | {agent.metadata.cost} | {short_desc} |")
 
     rows.append("")
@@ -203,7 +214,7 @@ def build_category_skills_delegation_guide(
 
     category_rows = [f"| `{c.name}` | {c.description or c.name} |" for c in categories]
     skill_rows = [
-        f"| `{s.name}` | {s.description.split('.')[0] or s.description} |"
+        f"| `{s.name}` | {_first_sentence(_display_description(s))} |"
         for s in skills
     ]
 
@@ -333,7 +344,7 @@ def build_ultrawork_section(
     if skills:
         lines.append("**Skills** (combine with categories - EVALUATE ALL for relevance):")
         for skill in skills:
-            short_desc = skill.description.split(".")[0] or skill.description
+            short_desc = _first_sentence(_display_description(skill))
             lines.append(f"- `{skill.name}`: {short_desc}")
         lines.append("")
 
@@ -347,7 +358,7 @@ def build_ultrawork_section(
         )
         lines.append("**Agents** (for specialized consultation/exploration):")
         for agent in sorted_agents:
-            short_desc = agent.description.split(".")[0] or agent.description
+            short_desc = _first_sentence(_display_description(agent))
             suffix = " (multiple)" if agent.name in ("explore", "librarian") else ""
             lines.append(f"- `{agent.name}{suffix}`: {short_desc}")
 

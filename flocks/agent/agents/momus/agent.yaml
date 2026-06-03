@@ -2,6 +2,7 @@ name: momus
 description: >-
   Expert reviewer for evaluating work plans against rigorous clarity,
   verifiability, and completeness standards.
+description_cn: 工作计划审核专家，验证计划的可执行性和引用有效性
 mode: subagent
 hidden: false
 tags: [system]

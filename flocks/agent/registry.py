@@ -114,12 +114,13 @@ def list_subagents() -> List[str]:
 # ---------------------------------------------------------------------------
 
 def _make_default_prompt_metadata(agent: AgentInfo) -> AgentPromptMetadata:
+    description = agent.description_cn or agent.description or f"Tasks requiring {agent.name}"
     return AgentPromptMetadata(
         category="plugin",
         cost="medium",
         triggers=[DelegationTrigger(
             domain=agent.name,
-            trigger=agent.description or f"Tasks requiring {agent.name}",
+            trigger=description,
         )],
     )
 

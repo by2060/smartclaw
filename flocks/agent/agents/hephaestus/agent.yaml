@@ -2,6 +2,7 @@ name: hephaestus
 description: >-
   Autonomous deep worker. Explores thoroughly before acting, uses
   explore/librarian agents for comprehensive context, completes tasks end-to-end.
+description_cn: 自主深度工作智能体，行动前全面探索，端到端完成任务
 mode: subagent
 hidden: false
 tags: [system]

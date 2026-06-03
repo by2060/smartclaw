@@ -3,6 +3,7 @@ description: >-
   Specialized codebase understanding agent for multi-repository analysis,
   searching remote codebases, retrieving official documentation, and finding
   implementation examples.
+description_cn: 代码库理解智能体，多仓库分析、文档检索、示例查找
 mode: subagent
 hidden: false
 tags: [system]

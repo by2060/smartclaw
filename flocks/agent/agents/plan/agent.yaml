@@ -1,4 +1,5 @@
 name: plan
+description_cn: 计划模式内部智能体，用于阅读代码并制定实施计划
 mode: subagent
 hidden: true
 delegatable: false

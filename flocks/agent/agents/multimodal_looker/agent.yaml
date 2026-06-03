@@ -3,6 +3,7 @@ description: >-
   Analyze media files (PDFs, images, diagrams) that require interpretation
   beyond raw text. Extracts specific information or summaries from documents,
   describes visual content.
+description_cn: 多模态文件分析智能体，处理 PDF、图片等非文本文件
 mode: subagent
 hidden: false
 tags: [system]

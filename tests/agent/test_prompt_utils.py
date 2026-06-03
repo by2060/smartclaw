@@ -18,7 +18,9 @@ import pytest
 from flocks.agent.agent import AvailableAgent, AvailableCategory, AvailableSkill, AvailableTool, AvailableWorkflow
 from flocks.agent.prompt_utils import (
     _format_tools_for_prompt,
+    build_category_skills_delegation_guide,
     build_tool_selection_table,
+    build_ultrawork_section,
     build_workflows_section,
     categorize_tools,
 )
@@ -223,6 +225,13 @@ class TestBuildToolSelectionTable:
         assert "explore" in output
         assert "CHEAP" in output
 
+    def test_agent_table_prefers_description_cn(self):
+        agent = self._make_agent("explore")
+        agent.description_cn = "中文探索描述"
+        output = build_tool_selection_table([agent], [])
+        assert "中文探索描述" in output
+        assert "explore agent" not in output
+
     def test_utility_agents_excluded(self):
         normal = self._make_agent("explore")
         utility = self._make_agent("utility_agent")
@@ -243,6 +252,47 @@ class TestBuildToolSelectionTable:
     def test_default_flow_hint_present(self):
         output = build_tool_selection_table([], [])
         assert "Default flow" in output
+
+
+class TestLocalizedDescriptions:
+
+    def _make_agent(self) -> AvailableAgent:
+        meta = MagicMock()
+        meta.cost = "CHEAP"
+        meta.category = "general"
+        meta.triggers = []
+        meta.key_trigger = None
+        return AvailableAgent(
+            name="oracle",
+            description="English oracle description.",
+            description_cn="中文 oracle 描述",
+            metadata=meta,
+        )
+
+    def test_category_skills_guide_prefers_skill_description_cn(self):
+        skill = AvailableSkill(
+            name="tool-builder",
+            description="English tool builder description.",
+            description_cn="中文工具构建描述",
+            location="project",
+        )
+        output = build_category_skills_delegation_guide([], [skill])
+        assert "中文工具构建描述" in output
+        assert "English tool builder" not in output
+
+    def test_ultrawork_section_prefers_description_cn(self):
+        agent = self._make_agent()
+        skill = AvailableSkill(
+            name="tool-builder",
+            description="English tool builder description.",
+            description_cn="中文工具构建描述",
+            location="project",
+        )
+        output = build_ultrawork_section([agent], [], [skill])
+        assert "中文 oracle 描述" in output
+        assert "中文工具构建描述" in output
+        assert "English oracle" not in output
+        assert "English tool builder" not in output
 
 
 # ===========================================================================

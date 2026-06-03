@@ -2,6 +2,7 @@ name: metis
 description: >-
   Pre-planning consultant that analyzes requests to identify hidden
   intentions, ambiguities, and AI failure points.
+description_cn: 预规划顾问，分析请求中的隐藏意图、歧义和潜在失败点
 mode: subagent
 hidden: false
 tags: [system]

@@ -2,6 +2,7 @@ name: oracle
 description: >-
   Read-only consultation agent. Reasoning specialist for debugging
   hard problems and high-difficulty architecture design.
+description_cn: 只读顾问智能体，深度推理专家，用于复杂问题分析和架构设计
 mode: subagent
 hidden: false
 tags: [system]
