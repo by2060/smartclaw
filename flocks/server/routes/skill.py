@@ -138,6 +138,7 @@ class SkillResponse(BaseModel):
     """Skill response"""
     name: str = Field(..., description="Skill name")
     description: str = Field(..., description="Skill description")
+    description_cn: Optional[str] = Field(None, description="Chinese UI description")
     location: str = Field(..., description="Path to SKILL.md")
     source: Optional[str] = Field(None, description="Discovery source")
     content: Optional[str] = Field(None, description="Full SKILL.md content")
@@ -155,6 +156,7 @@ class SkillCreateRequest(BaseModel):
     """Request to create a new skill"""
     name: str = Field(..., description="Skill name")
     description: str = Field(..., description="Skill description")
+    description_cn: Optional[str] = Field(None, description="Chinese UI description")
     content: str = Field(..., description="Skill content (markdown)")
 
 

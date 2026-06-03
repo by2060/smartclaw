@@ -61,6 +61,7 @@ class SkillInfo(BaseModel):
     """Skill information"""
     name: str = Field(..., description="Skill name")
     description: str = Field(..., description="Skill description")
+    description_cn: Optional[str] = Field(default=None, description="Chinese UI description")
     location: str = Field(..., description="Path to SKILL.md file")
     source: Optional[str] = Field(default=None, description="Discovery source")
     category: Optional[str] = Field(default=None, description="Skill category (e.g. 'system')")

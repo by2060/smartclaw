@@ -70,6 +70,7 @@ class AvailableAgent:
     name: str
     description: str
     metadata: AgentPromptMetadata
+    description_cn: Optional[str] = None
 
 
 @dataclass
@@ -85,6 +86,7 @@ class AvailableSkill:
     name: str
     description: str
     location: str
+    description_cn: Optional[str] = None
 
 
 @dataclass
