@@ -251,8 +251,9 @@ def validate_api_tool_draft(draft: APIToolDraft, *, check_collisions: bool = Tru
             auth_ext_value = item.get("value")
             if not isinstance(auth_ext_key, str) or not auth_ext_key.strip():
                 issues.append(DraftValidationIssue(path=f"{ext_path}.key", message="authExt 必须配置 key"))
-            if not isinstance(auth_ext_value, str) or not auth_ext_value.strip():
-                issues.append(DraftValidationIssue(path=f"{ext_path}.value", message="authExt 必须配置 SM4 密文 value"))
+            # 不校验 value 是否为空
+            # if not isinstance(auth_ext_value, str) or not auth_ext_value.strip():
+            #     issues.append(DraftValidationIssue(path=f"{ext_path}.value", message="authExt 必须配置 SM4 密文 value"))
 
     if not draft.tools:
         issues.append(DraftValidationIssue(path="tools", message="至少需要一个工具草稿"))

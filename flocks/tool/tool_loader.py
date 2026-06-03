@@ -480,7 +480,7 @@ def _build_http_handler(cfg: dict) -> ToolHandler:
     body_template = cfg.get("body")
     basic_auth_template = cfg.get("basic_auth")
     timeout = cfg.get("timeout", 30)
-    verify_ssl = _as_bool(cfg.get("verify_ssl", True), default=True)
+    verify_ssl = _as_bool(cfg.get("verify_ssl", False), default=False)
     response_cfg = cfg.get("response", {})
     if not response_cfg:
         extract_path = cfg.get("response_path")
