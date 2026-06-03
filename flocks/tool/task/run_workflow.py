@@ -88,11 +88,30 @@ Note:
 - This tool depends on an existing workflow file.
 - If no workflow file exists, ask user to specify the workflow file path or use the `workflow-builder` skill to create."""
 
+_BASE_DESCRIPTION_CN = """使用 flocks-workflow 运行时执行工作流定义。
+
+适用场景：
+- 需要执行工作流。
+- 已有 JSON/dict 结构或工作流 JSON 文件，且用户要求执行。
+- 工作流已经生成，需要运行。
+
+使用方式：
+- 提供工作流定义（字典、JSON 字符串或文件路径）。
+- 工作流文件路径应为绝对路径。重要：在 JSON 中，文件路径必须是带引号的字符串（例如 "workflow": "/path/to/workflow.json"），未加引号的路径会导致解析错误。
+- 可选：提供输入参数、超时设置，以及是否为逻辑节点代码生成启用 LLM。
+
+注意：
+- 此工具依赖已有工作流文件。
+- 如果没有工作流文件，请让用户指定工作流文件路径，或使用 `workflow-builder` skill 创建。"""
+
 DESCRIPTION = _BASE_DESCRIPTION
+DESCRIPTION_CN = _BASE_DESCRIPTION_CN
 
 # TTL cache for _build_description — avoid repeated file-system scans on every tool call.
 _DESCRIPTION_CACHE: Optional[str] = None
 _DESCRIPTION_CACHE_AT: float = 0.0
+_DESCRIPTION_CN_CACHE: Optional[str] = None
+_DESCRIPTION_CN_CACHE_AT: float = 0.0
 _DESCRIPTION_CACHE_TTL: float = 60.0  # seconds
 
 
@@ -129,6 +148,42 @@ async def _build_description() -> str:
 
     _DESCRIPTION_CACHE = result
     _DESCRIPTION_CACHE_AT = now
+    return result
+
+
+async def _build_description_cn() -> str:
+    """Build dynamic Chinese description with available workflows list (TTL-cached, 60 s)."""
+    global _DESCRIPTION_CN_CACHE, _DESCRIPTION_CN_CACHE_AT
+    now = time.monotonic()
+    if _DESCRIPTION_CN_CACHE is not None and now - _DESCRIPTION_CN_CACHE_AT < _DESCRIPTION_CACHE_TTL:
+        return _DESCRIPTION_CN_CACHE
+
+    try:
+        from flocks.workflow.center import scan_skill_workflows
+        entries = await scan_skill_workflows()
+        if not entries:
+            result = _BASE_DESCRIPTION_CN
+        else:
+            parts = [_BASE_DESCRIPTION_CN, "", "<available_workflows>"]
+            for entry in entries:
+                name = entry.get("name") or "(unnamed)"
+                desc = entry.get("description_cn") or entry.get("description") or ""
+                path = entry.get("workflowPath") or ""
+                source = entry.get("sourceType") or "project"
+                parts.append("  <workflow>")
+                parts.append(f"    <name>{name}</name>")
+                if desc:
+                    parts.append(f"    <description>{desc}</description>")
+                parts.append(f"    <path>{path}</path>")
+                parts.append(f"    <scope>{source}</scope>")
+                parts.append("  </workflow>")
+            parts.append("</available_workflows>")
+            result = "\n".join(parts)
+    except Exception:
+        result = _BASE_DESCRIPTION_CN
+
+    _DESCRIPTION_CN_CACHE = result
+    _DESCRIPTION_CN_CACHE_AT = now
     return result
 
 
@@ -242,6 +297,7 @@ async def _record_workflow_tool_result(workflow_id: str, result: Any) -> None:
 @ToolRegistry.register_function(
     name="run_workflow",
     description=DESCRIPTION,
+    description_cn=DESCRIPTION_CN,
     category=ToolCategory.SYSTEM,
     requires_confirmation=True,
     parameters=[
@@ -334,6 +390,7 @@ async def run_workflow_tool(
     tool = ToolRegistry.get("run_workflow")
     if tool:
         tool.info.description = await _build_description()
+        tool.info.description_cn = await _build_description_cn()
 
     req_installer, _run_workflow_fn, RunWorkflowResultCls = _get_workflow_runtime()
     if _run_workflow_fn is None or RunWorkflowResultCls is None:

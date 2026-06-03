@@ -522,6 +522,12 @@ async def _ask_human_with_timeout(
         "All commands are safety-checked before execution: destructive operations are automatically blocked. "
         "Supports multi-round interaction — call repeatedly to investigate based on previous findings."
     ),
+    description_cn=(
+        "通过 SSH 在远程 Linux 主机上执行只读的取证调查命令。"
+        "在安全调查中使用此工具检查入侵指标、追踪攻击路径、分析进程、网络连接、日志和持久化机制。"
+        "所有命令执行前都会经过安全检查，破坏性操作会被自动阻止。"
+        "支持多轮交互，可根据前一次发现重复调用继续调查。"
+    ),
     category=ToolCategory.TERMINAL,
     parameters=[
         ToolParameter(

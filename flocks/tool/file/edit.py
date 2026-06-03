@@ -58,7 +58,7 @@ async def _resolve_sandbox_file_path(
 
 
 # Description matching Flocks' edit.txt
-DESCRIPTION = """Performs exact string replacements in files. 
+DESCRIPTION = """Performs exact string replacements in files.
 
 Usage:
 - You must use your `Read` tool at least once before editing a file. CRITICAL: After each successful edit, the file content changes. You MUST re-read the file with `Read` before making any further edits to that file, otherwise oldString will not match the updated content and the edit will fail.
@@ -66,8 +66,19 @@ Usage:
 - ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
 - Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.
 - The edit will FAIL if `oldString` is not found in the file with an error "oldString not found in content".
-- The edit will FAIL if `oldString` is found multiple times in the file with an error "oldString found multiple times and requires more code context to uniquely identify the intended match". Either provide a larger string with more surrounding context to make it unique or use `replaceAll` to change every instance of `oldString`. 
+- The edit will FAIL if `oldString` is found multiple times in the file with an error "oldString found multiple times and requires more code context to uniquely identify the intended match". Either provide a larger string with more surrounding context to make it unique or use `replaceAll` to change every instance of `oldString`.
 - Use `replaceAll` for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance."""
+
+DESCRIPTION_CN = """在文件中执行精确字符串替换。
+
+用法：
+- 编辑文件前必须至少使用一次 Read 工具。重要：每次成功编辑后文件内容都会改变；继续编辑同一文件前必须重新用 Read 读取，否则 oldString 可能无法匹配更新后的内容。
+- 编辑 Read 工具输出中的文本时，必须保留行号前缀之后的精确缩进（tab/空格）。行号前缀格式为：NNNNN|（5 位补零行号、竖线和一个空格）。其中 `| ` 之后才是实际文件内容。oldString 或 newString 中不要包含任何行号前缀。
+- 始终优先编辑代码库中的现有文件。除非明确需要，不要创建新文件。
+- 仅在用户明确要求时使用 emoji；不要主动向文件中添加 emoji。
+- 如果文件中找不到 oldString，编辑会失败并返回 "oldString not found in content"。
+- 如果 oldString 在文件中出现多次，编辑会失败并提示需要更多上下文以唯一定位目标；请提供更大的上下文，或使用 replaceAll 替换所有匹配项。
+- replaceAll 适用于跨文件内容替换或重命名变量等场景。"""
 
 
 # Similarity thresholds for block anchor fallback matching
@@ -474,6 +485,7 @@ def replace(content: str, old_string: str, new_string: str, replace_all: bool = 
 @ToolRegistry.register_function(
     name="edit",
     description=DESCRIPTION,
+    description_cn=DESCRIPTION_CN,
     category=ToolCategory.FILE,
     parameters=[
         ToolParameter(

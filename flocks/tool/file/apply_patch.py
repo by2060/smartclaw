@@ -60,6 +60,28 @@ content of new file
 Use the edit tool for simple string replacements.
 Use apply_patch for complex multi-file changes."""
 
+DESCRIPTION_CN = """应用补丁来修改文件。
+
+此工具用于高级补丁式编辑，支持：
+- 创建文件（add）
+- 修改文件（update）
+- 删除文件（delete）
+- 文件移动（带 move_path 的 update）
+
+补丁格式：
+*** Begin Patch
+*** Add File: path/to/new/file.py
+新文件内容
+*** Update File: path/to/existing/file.py
+@@@ ... @@@
+-old line
++new line
+*** Delete File: path/to/delete.py
+*** End Patch
+
+简单字符串替换请使用 edit 工具。
+复杂的多文件修改请使用 apply_patch。"""
+
 
 @dataclass
 class PatchChunk:
@@ -276,6 +298,7 @@ def _readonly_workspace_patch_error(action: str = "Patch") -> ToolResult:
 @ToolRegistry.register_function(
     name="apply_patch",
     description=DESCRIPTION,
+    description_cn=DESCRIPTION_CN,
     category=ToolCategory.FILE,
     parameters=[
         ToolParameter(

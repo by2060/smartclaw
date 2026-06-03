@@ -69,6 +69,7 @@ def evict_session_memory(session_id: str) -> None:
 @ToolRegistry.register_function(
     name="memory_search",
     description="Search project memory using a natural language query.",
+    description_cn="使用自然语言查询搜索项目记忆。",
     category=ToolCategory.SEARCH,
     parameters=[
         ToolParameter(
@@ -149,6 +150,7 @@ async def memory_search_tool(
 @ToolRegistry.register_function(
     name="memory_get",
     description="Retrieve memory file content by path, optionally filtered by line range.",
+    description_cn="按路径读取记忆文件内容，可选按行范围过滤。",
     category=ToolCategory.FILE,
     parameters=[
         ToolParameter(
@@ -202,6 +204,7 @@ async def memory_get_tool(
 @ToolRegistry.register_function(
     name="memory_write",
     description="Write content to memory files for long-term recall.",
+    description_cn="将内容写入记忆文件，用于长期回忆。",
     category=ToolCategory.FILE,
     parameters=[
         ToolParameter(

@@ -37,6 +37,13 @@ DESCRIPTION = """- Fast file pattern matching tool that works with any codebase 
 - When you are doing an open-ended search that may require multiple rounds of globbing and grepping, use the Task tool instead
 - You have the capability to call multiple tools in a single response. It is always better to speculatively perform multiple searches as a batch that are potentially useful."""
 
+DESCRIPTION_CN = """- 快速文件模式匹配工具，适用于任何规模的代码库
+- 支持类似 "**/*.js" 或 "src/**/*.ts" 的 glob 模式
+- 返回按修改时间排序的匹配文件路径
+- 当需要按文件名模式查找文件时使用此工具
+- 当进行开放式搜索且可能需要多轮 glob 和 grep 时，请改用 Task 工具
+- 你可以在单次响应中调用多个工具；对于可能有用的搜索，优先批量并行执行"""
+
 
 def find_ripgrep() -> Optional[str]:
     """Find ripgrep executable"""
@@ -123,6 +130,7 @@ def fallback_glob(
 @ToolRegistry.register_function(
     name="glob",
     description=DESCRIPTION,
+    description_cn=DESCRIPTION_CN,
     category=ToolCategory.SEARCH,
     parameters=[
         ToolParameter(

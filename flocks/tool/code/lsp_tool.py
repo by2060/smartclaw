@@ -56,10 +56,30 @@ Parameters:
 - line: Line number (1-based)
 - character: Character offset (1-based)"""
 
+DESCRIPTION_CN = """执行 LSP（语言服务器协议）操作以提供代码智能能力。
+
+支持的操作：
+- goToDefinition：跳转到符号定义位置
+- findReferences：查找符号的所有引用
+- hover：获取符号的类型或文档信息
+- documentSymbol：列出文件中的所有符号
+- workspaceSymbol：在工作区中搜索符号
+- goToImplementation：查找接口的实现
+- prepareCallHierarchy：获取指定位置的调用层级项
+- incomingCalls：查找函数的调用方
+- outgoingCalls：查找函数调用的其他函数
+
+参数：
+- operation：要执行的 LSP 操作
+- filePath：文件路径
+- line：行号（从 1 开始）
+- character：字符偏移量（从 1 开始）"""
+
 
 @ToolRegistry.register_function(
     name="lsp",
     description=DESCRIPTION,
+    description_cn=DESCRIPTION_CN,
     category=ToolCategory.CODE,
     parameters=[
         ToolParameter(

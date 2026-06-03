@@ -44,9 +44,30 @@ Parameters:
 - type: Search type - auto, fast, or deep"""
 
 
+def get_description_cn() -> str:
+    """Get Chinese tool description with current date"""
+    today = datetime.now().strftime("%Y-%m-%d")
+    return f"""搜索网络以获取任意主题的实时信息。
+
+适用场景：
+- 需要训练数据中可能没有的最新信息
+- 当前事件或技术新闻
+- 库、框架或工具的文档
+- 验证当前事实
+
+今日日期：{today}
+搜索近期信息时请使用当前年份。
+
+参数：
+- query：搜索查询，越具体结果越好
+- numResults：返回结果数量（默认 8）
+- type：搜索类型，auto、fast 或 deep"""
+
+
 @ToolRegistry.register_function(
     name="websearch",
     description=get_description(),
+    description_cn=get_description_cn(),
     category=ToolCategory.SEARCH,
     parameters=[
         ToolParameter(

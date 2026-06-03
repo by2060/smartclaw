@@ -40,6 +40,23 @@ Returns:
 - node_id, outputs, stdout, error, traceback, duration_ms, success
 """
 
+DESCRIPTION_CN = """隔离执行单个工作流节点，用于逐步测试。
+
+当按节点（BFS 顺序）测试工作流时使用此工具：
+1. 使用第一个节点和示例输入数据调用。
+2. 将每个节点的 `outputs` 作为下一个节点的 `inputs`。
+3. 修复 `workflow.json` 中的错误，然后重新运行失败节点，直到 `success=true`。
+4. 所有节点通过后，使用 `run_workflow` 运行完整工作流。
+
+参数：
+- workflow：工作流定义（dict）或 workflow.json 的绝对路径。
+- node_id：要执行的节点 ID（必须存在于工作流中）。
+- inputs：节点输入数据（下游节点可使用前一节点的 outputs）。
+
+返回：
+- node_id、outputs、stdout、error、traceback、duration_ms、success
+"""
+
 
 def _load_workflow_dict(workflow: Union[Dict[str, Any], str]) -> Dict[str, Any]:
     """Resolve workflow parameter to a dict."""
@@ -124,6 +141,7 @@ def _format_node_result(result: Dict[str, Any]) -> str:
 @ToolRegistry.register_function(
     name="run_workflow_node",
     description=DESCRIPTION,
+    description_cn=DESCRIPTION_CN,
     category=ToolCategory.SYSTEM,
     requires_confirmation=False,
     parameters=[

@@ -20,10 +20,14 @@ DESCRIPTION = """This tool is called internally when a tool call has invalid arg
 Do not call this tool directly. If you see this error, please retry the original tool
 with corrected arguments that satisfy the expected schema."""
 
+DESCRIPTION_CN = """当工具调用参数无效时，系统会在内部调用此工具。
+不要直接调用此工具。如果看到此错误，请使用满足预期 schema 的修正参数重试原始工具。"""
+
 
 @ToolRegistry.register_function(
     name="invalid",
     description=DESCRIPTION,
+    description_cn=DESCRIPTION_CN,
     category=ToolCategory.SYSTEM,
     parameters=[
         ToolParameter(

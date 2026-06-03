@@ -32,6 +32,7 @@ def _find_task(manager, task_id: str) -> Optional[BackgroundTask]:
 @ToolRegistry.register_function(
     name="background_output",
     description="Check background task status/output by task_id or session_id. Optionally block until complete.",
+    description_cn="根据 task_id 或 session_id 查看后台任务状态和输出，可选阻塞直到完成。",
     category=ToolCategory.SYSTEM,
     parameters=[
         ToolParameter(

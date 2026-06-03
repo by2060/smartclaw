@@ -181,6 +181,16 @@ def _truncate_output(output: str, max_bytes: int = MAX_OUTPUT_BYTES) -> tuple[st
         "e.g. '.flocks/plugins/agents/host-forensics/scripts/triage.sh'. "
         "Absolute paths and '~' home-directory paths are also accepted."
     ),
+    description_cn=(
+        "通过单个 SSH 连接在远程 Linux 主机上执行本地 shell 脚本。"
+        "脚本会从本地文件系统读取（通常是 skill 的 scripts/ 目录），经过破坏性操作安全扫描后在远程主机执行。\n\n"
+        "适用场景：执行 skill 或插件 agent 定义的取证调查脚本，例如 .flocks/plugins/agents/host-forensics/scripts/triage.sh。"
+        "脚本会作为单个 SSH 会话运行，适合批量数据收集。\n\n"
+        "输出：结构化文本，使用 ### SECTION_NAME ### 标记不同类别的数据。"
+        "如果脚本中检测到危险操作（rm、chmod、写重定向等），执行会被阻止并报告违规项。\n\n"
+        "脚本路径：优先使用相对于当前工作目录（workspace root）的路径，例如 '.flocks/plugins/agents/host-forensics/scripts/triage.sh'。"
+        "也接受绝对路径和 '~' home 目录路径。"
+    ),
     category=ToolCategory.TERMINAL,
     parameters=[
         ToolParameter(

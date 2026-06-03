@@ -91,6 +91,21 @@ Question format:
 
 The user's answers will be returned for you to continue with."""
 
+DESCRIPTION_CN = """向用户提问并等待响应。
+
+适用场景：
+- 在进行重大更改前需要确认
+- 需要在多个选项之间获取用户偏好
+- 需要澄清模糊指令
+
+问题格式：
+- 每个问题包含文本提示
+- 可选 header 用于提供上下文
+- 提供可供用户选择的选项列表
+- 选项包含 label 和可选 description
+
+用户的回答会返回给你，以便继续执行。"""
+
 
 async def default_question_handler(
     session_id: str,
@@ -122,6 +137,7 @@ async def default_question_handler(
 @ToolRegistry.register_function(
     name="question",
     description=DESCRIPTION,
+    description_cn=DESCRIPTION_CN,
     category=ToolCategory.SYSTEM,
     parameters=[
         ToolParameter(

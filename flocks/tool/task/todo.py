@@ -56,10 +56,39 @@ Usage:
 - Mark complete IMMEDIATELY after finishing
 - Only ONE task in_progress at a time"""
 
+TODOWRITE_DESCRIPTION_CN = """使用此工具为当前 SecOps 会话创建并管理结构化任务列表。这有助于跟踪进度、组织复杂任务并体现执行完整性。
+
+何时使用：
+1. 复杂多步骤任务（3 个以上不同步骤）
+2. 需要仔细规划的非平凡任务
+3. 用户明确要求 todo list
+4. 用户提供多个任务
+
+何时不使用：
+1. 单个直接任务
+2. 没有组织收益的简单任务
+3. 少于 3 个简单步骤即可完成的任务
+
+任务状态：
+- pending：尚未开始
+- in_progress：正在处理
+- completed：已成功完成
+
+用法：
+- 创建具体、可执行的条目
+- 将复杂任务拆解为可管理步骤
+- 实时更新状态
+- 完成后立即标记完成
+- 同一时间只能有一个任务处于 in_progress"""
+
 
 TODOREAD_DESCRIPTION = """Use this tool to read your current todo list.
 
 Returns the current state of all todo items for this session."""
+
+TODOREAD_DESCRIPTION_CN = """使用此工具读取当前 todo list。
+
+返回此会话中所有 todo 项的当前状态。"""
 
 
 def get_todos(session_id: str) -> List[Dict[str, Any]]:
@@ -75,6 +104,7 @@ def set_todos(session_id: str, todos: List[Dict[str, Any]]) -> None:
 @ToolRegistry.register_function(
     name="todowrite",
     description=TODOWRITE_DESCRIPTION,
+    description_cn=TODOWRITE_DESCRIPTION_CN,
     category=ToolCategory.SYSTEM,
     parameters=[
         ToolParameter(
@@ -145,6 +175,7 @@ async def todowrite_tool(
 @ToolRegistry.register_function(
     name="todoread",
     description=TODOREAD_DESCRIPTION,
+    description_cn=TODOREAD_DESCRIPTION_CN,
     category=ToolCategory.SYSTEM,
     parameters=[]
 )

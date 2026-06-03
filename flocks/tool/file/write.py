@@ -57,6 +57,15 @@ Usage:
 - If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.
 - Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked."""
 
+DESCRIPTION_CN = """将文件写入本地文件系统。
+
+用法：
+- 如果指定路径已存在文件，此工具会覆盖该文件
+- Agent 生成的报告、摘要等文档输出会路由到根会话的 Workspace outputs 目录，无论沙箱模式或请求路径如何
+- 对于 Workspace outputs 目录中的 Agent 生成文件，此工具会选择带编号的文件名，而不是覆盖已有文件
+- 如果目标是现有文件，必须先使用 Read 工具读取文件内容；否则此工具会失败
+- 仅在用户明确要求时使用 emoji；不要主动向文件中写入 emoji"""
+
 
 def generate_diff(filepath: str, old_content: str, new_content: str) -> str:
     """
@@ -497,6 +506,7 @@ async def _resolve_sandbox_file_path(
 @ToolRegistry.register_function(
     name="write",
     description=DESCRIPTION,
+    description_cn=DESCRIPTION_CN,
     category=ToolCategory.FILE,
     parameters=[
         ToolParameter(

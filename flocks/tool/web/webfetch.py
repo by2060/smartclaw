@@ -36,6 +36,15 @@ Usage:
 - Has a default timeout of 30 seconds (configurable up to 120 seconds)
 - Response size is limited to 5MB"""
 
+DESCRIPTION_CN = """从指定 URL 获取内容，并以可读格式返回。
+
+用法：
+- URL 必须是完整、有效的 URL，并以 http:// 或 https:// 开头
+- 默认以 markdown 格式返回内容（HTML 会被转换）
+- 支持 text、markdown 和 html 输出格式
+- 默认超时时间为 30 秒（最多可配置到 120 秒）
+- 响应大小限制为 5MB"""
+
 
 class HTMLTextExtractor(HTMLParser):
     """Extract text content from HTML, skipping script/style tags"""
@@ -161,6 +170,7 @@ def extract_text_from_html(html: str) -> str:
 @ToolRegistry.register_function(
     name="webfetch",
     description=DESCRIPTION,
+    description_cn=DESCRIPTION_CN,
     category=ToolCategory.BROWSER,
     parameters=[
         ToolParameter(

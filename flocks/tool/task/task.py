@@ -148,10 +148,32 @@ Usage notes:
 - run_in_background=false: waits for completion and returns results inline
 - Pass session_id to continue a previous agent with full context"""
 
+DESCRIPTION_CN = """启动新的 agent，自主处理复杂的多步骤任务。
+
+适用场景：
+- 任务需要多个步骤或研究
+- 需要并行探索代码
+- 任务可以委派给专门的 agent
+
+可用子 agent 类型：
+- hephaestus：面向目标的端到端自主深度执行 worker
+- explore：用于快速搜索的代码探索 agent
+- librarian：用于代码库理解、远程代码库和官方文档的专门 agent
+- hephaestus：面向目标执行的自主深度 worker
+- oracle：只读咨询、困难调试和架构设计
+
+使用说明：
+- 提供清晰的简短描述（3-5 个词）
+- 提供带上下文的详细 prompt
+- run_in_background=true：立即返回 task_id，稍后用 background_output 收集结果
+- run_in_background=false：等待完成并内联返回结果
+- 传入 session_id 可继续之前的 agent，并保留完整上下文"""
+
 
 @ToolRegistry.register_function(
     name="task",
     description=DESCRIPTION,
+    description_cn=DESCRIPTION_CN,
     category=ToolCategory.SYSTEM,
     parameters=[
         ToolParameter(

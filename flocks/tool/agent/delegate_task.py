@@ -201,6 +201,14 @@ def _derive_task_description(
         "run_in_background defaults to false (sync). "
         "Use EITHER subagent_type OR category — NEVER both simultaneously."
     ),
+    description_cn=(
+        "通过类别或直接选择 agent 来启动 agent 任务。"
+        "必需参数：prompt。"
+        "load_skills 可选，默认为 []。"
+        "description 可选，省略时会自动生成。"
+        "run_in_background 默认为 false（同步）。"
+        "subagent_type 和 category 二选一，不能同时使用。"
+    ),
     category=ToolCategory.SYSTEM,
     parameters=[
         ToolParameter(

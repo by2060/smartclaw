@@ -64,6 +64,21 @@ def _truncate_skill_description(description: str, name: str) -> str:
     return description[:head_size] + marker + description[-tail_size:]
 
 
+def _truncate_skill_description_cn(description: str, name: str) -> str:
+    """Cap a single skill's Chinese description with a Chinese truncation marker."""
+    if len(description) <= MAX_SKILL_DESCRIPTION_PREVIEW_CHARS:
+        return description
+
+    marker = f' … [已截断；行动前请通过 skill(name="{name}") 加载完整 SKILL.md] … '
+    available = MAX_SKILL_DESCRIPTION_PREVIEW_CHARS - len(marker)
+    if available < 80:
+        return description[: MAX_SKILL_DESCRIPTION_PREVIEW_CHARS - 1] + "…"
+
+    head_size = (available * 3) // 5
+    tail_size = available - head_size
+    return description[:head_size] + marker + description[-tail_size:]
+
+
 def build_description(skills: List[SkillInfo]) -> str:
     """Build tool description with available skills.
 
@@ -105,6 +120,39 @@ def build_description(skills: List[SkillInfo]) -> str:
     parts.append("</available_skills>")
 
     # Join with space like Flocks does: .join(" ")
+    return " ".join(parts)
+
+
+def build_description_cn(skills: List[SkillInfo]) -> str:
+    """Build Chinese tool description with available skills."""
+    if not skills:
+        return "加载 skill 以获取特定任务的详细说明。当前没有可用 skills。"
+
+    parts = [
+        "加载 skill 以获取特定任务的详细说明。",
+        "Skills 提供专门知识和分步指导。",
+        "当任务匹配某个可用 skill 的描述时使用此工具。",
+        (
+            "重要：下方每个 <description> 都只是预览，可能被截断到 "
+            f"{MAX_SKILL_DESCRIPTION_PREVIEW_CHARS} 个字符。"
+            "它足以判断某个 skill 是否适用，但不足以执行该 skill。"
+            "一旦选择某个 skill，必须先调用 skill(name=\"<skill-name>\") "
+            "加载完整 SKILL.md，然后再运行其步骤或调用该 skill 管理的工具。"
+        ),
+        "<available_skills>",
+    ]
+
+    for skill in skills:
+        description = getattr(skill, "description_cn", None) or skill.description
+        preview = _truncate_skill_description_cn(description, skill.name)
+        parts.extend([
+            "  <skill>",
+            f"    <name>{skill.name}</name>",
+            f"    <description>{preview}</description>",
+            "  </skill>",
+        ])
+
+    parts.append("</available_skills>")
     return " ".join(parts)
 
 
@@ -229,6 +277,7 @@ async def get_all_skills(agent_name: str | None = None) -> List[dict]:
         {
             "name": skill.name,
             "description": skill.description,
+            "description_cn": skill.description_cn,
             "location": skill.location,
         }
         for skill in skills
@@ -264,15 +313,21 @@ async def get_skill(name: str, agent_name: str | None = None) -> dict | None:
     return {
         "name": skill.name,
         "description": skill.description,
+        "description_cn": skill.description_cn,
         "location": skill.location,
         "content": content,
     }
 
 
+SKILL_TOOL_DESCRIPTION = "Load a skill to get detailed instructions for a specific task. Available skills are listed in the description."
+SKILL_TOOL_DESCRIPTION_CN = "加载 skill 以获取特定任务的详细说明。可用 skills 会列在描述中。"
+
+
 # Register the tool (description will be updated dynamically on first call)
 @ToolRegistry.register_function(
     name="skill",
-    description="Load a skill to get detailed instructions for a specific task. Available skills are listed in the description.",
+    description=SKILL_TOOL_DESCRIPTION,
+    description_cn=SKILL_TOOL_DESCRIPTION_CN,
     category=ToolCategory.SYSTEM,
     parameters=[
         ToolParameter(
@@ -298,5 +353,6 @@ async def skill_tool(
         if agent:
             skills = filter_agent_skills(agent, skills)
         tool.info.description = build_description(skills)
-    
+        tool.info.description_cn = build_description_cn(skills)
+
     return await skill_tool_impl(ctx, name)

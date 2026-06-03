@@ -15,6 +15,7 @@ SENSITIVE_DIRS = {
 @ToolRegistry.register_function(
     name="file_search",
     description="Search for files by name pattern or content within a directory. Supports glob patterns for filenames and regex for content search.",
+    description_cn="在目录中按文件名模式或内容搜索文件。文件名支持 glob 模式，内容搜索支持正则表达式。",
     parameters=[
         {
             "name": "pattern",

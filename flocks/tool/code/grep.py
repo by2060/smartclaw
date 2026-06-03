@@ -42,6 +42,15 @@ DESCRIPTION = """- Fast content search tool that works with any codebase size
 - If you need to identify/count the number of matches within files, use the Bash tool with `rg` (ripgrep) directly. Do NOT use `grep`.
 - When you are doing an open-ended search that may require multiple rounds of globbing and grepping, use the Task tool instead"""
 
+DESCRIPTION_CN = """- 快速内容搜索工具，适用于任何规模的代码库
+- 使用正则表达式搜索文件内容
+- 支持完整正则语法，例如 "log.*Error"、"function\\s+\\w+"
+- 可通过 include 参数按文件模式过滤，例如 "*.js"、"*.{ts,tsx}"
+- 返回至少包含一个匹配项的文件路径和行号，并按修改时间排序
+- 当需要查找包含特定模式的文件时使用此工具
+- 如需识别或统计文件内的匹配数量，请直接使用 Bash 工具调用 `rg`（ripgrep），不要使用 `grep`
+- 当进行开放式搜索且可能需要多轮 glob 和 grep 时，请改用 Task 工具"""
+
 
 def find_ripgrep() -> Optional[str]:
     """
@@ -212,6 +221,7 @@ async def ripgrep_search(
 @ToolRegistry.register_function(
     name="grep",
     description=DESCRIPTION,
+    description_cn=DESCRIPTION_CN,
     category=ToolCategory.SEARCH,
     parameters=[
         ToolParameter(

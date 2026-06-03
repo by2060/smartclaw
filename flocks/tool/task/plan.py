@@ -36,6 +36,20 @@ In plan mode:
 - Changes to non-plan files are restricted
 - Use plan_exit when the plan is complete and approved"""
 
+PLAN_ENTER_DESCRIPTION_CN = """切换到计划模式以创建详细实施计划。
+
+适用场景：
+- 任务复杂，需要先进行研究
+- 修改前需要探索代码库
+- 用户要求计划或想讨论方案
+- 存在重要架构决策
+
+在计划模式中：
+- 你将作为 "plan" agent 运行
+- 专注于研究、分析和创建计划文档
+- 对非计划文件的修改会受限
+- 当计划完成并获批后，使用 plan_exit 退出"""
+
 
 PLAN_EXIT_DESCRIPTION = """Exit plan mode and return to build mode.
 
@@ -48,6 +62,18 @@ This will:
 - Ask user for confirmation
 - Switch to the "rex" agent
 - Allow full file editing capabilities"""
+
+PLAN_EXIT_DESCRIPTION_CN = """退出计划模式并返回构建模式。
+
+适用场景：
+- 计划文档已经完成
+- 用户已经批准计划
+- 已准备开始实施
+
+此操作会：
+- 向用户请求确认
+- 切换到 "rex" agent
+- 允许完整的文件编辑能力"""
 
 
 # Callback for agent switching (to be set by application)
@@ -102,6 +128,7 @@ async def _ask_user(ctx: ToolContext, question: str, header: str, options: list)
 @ToolRegistry.register_function(
     name="plan_enter",
     description=PLAN_ENTER_DESCRIPTION,
+    description_cn=PLAN_ENTER_DESCRIPTION_CN,
     category=ToolCategory.SYSTEM,
     parameters=[]
 )
@@ -163,6 +190,7 @@ async def plan_enter_tool(
 @ToolRegistry.register_function(
     name="plan_exit",
     description=PLAN_EXIT_DESCRIPTION,
+    description_cn=PLAN_EXIT_DESCRIPTION_CN,
     category=ToolCategory.SYSTEM,
     parameters=[]
 )

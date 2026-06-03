@@ -126,6 +126,11 @@ async def _http_session_send(
         "Resolves the target channel and chat automatically from session_id. "
         "Use channel_type to target a specific channel when the session has multiple bindings."
     ),
+    description_cn=(
+        "向绑定到 session 的 IM 渠道（企业微信 / 飞书 / 钉钉）发送消息。"
+        "会根据 session_id 自动解析目标渠道和聊天对象。"
+        "当 session 有多个绑定时，可使用 channel_type 指定目标渠道。"
+    ),
     category=ToolCategory.SYSTEM,
     parameters=[
         ToolParameter(

@@ -134,6 +134,17 @@ def _normalize_task_create_inputs(
         "Embed both into description and user_prompt. "
         "If the user cannot provide a session_id, do NOT create the task."
     ),
+    description_cn=(
+        "创建新任务（队列任务、一次性定时任务或周期性定时任务）。"
+        "仅当用户明确要求延迟/稍后执行时调用，例如“加入队列”“稍后做”“每天 8 点执行”“今晚 6 点执行一次”。"
+        "不要为即时请求创建任务。\n\n"
+        "重要：创建前需要澄清调度类型。"
+        "当用户提到具体时间但没有明确表示重复执行时，必须先确认是只执行一次还是按该时间重复执行。\n"
+        "周期性信号使用 type=scheduled, run_once=false；一次性信号使用 type=scheduled, run_once=true；仅排队任务使用 type=queued 且不带 schedule。\n\n"
+        "重要：创建涉及 IM 平台（企业微信/WeCom、飞书/Feishu、钉钉/DingTalk）的消息任务前，"
+        "必须先解析目标 session_id 和 channel_type，并写入 description 与 user_prompt。"
+        "如果用户无法提供 session_id，不要创建任务。"
+    ),
     category=ToolCategory.SYSTEM,
     parameters=[
         ToolParameter(
@@ -424,6 +435,23 @@ _VALID_TYPES = {"scheduled"} | _EXECUTION_TYPES
         "- 'Which scheduled tasks are disabled?' -> call with status='disabled'.\n"
         "- 'Show old paused tasks' -> call with status='paused'."
     ),
+    description_cn=(
+        "列出任务，并支持可选过滤。\n\n"
+        "路由规则（调用前务必阅读）：\n"
+        "- 不传参数：列出定时任务定义（schedulers）。\n"
+        "- status='active'：列出活跃定时任务。\n"
+        "- status='disabled'：列出已禁用定时任务。\n"
+        "- 旧的 status='paused' 仍被接受，并按查询目标映射为禁用的 scheduler 或已取消的 execution。\n"
+        "- status='running' / 'completed' / 'failed' / 'pending' / 'queued' / 'cancelled'：列出对应状态的任务执行记录。\n"
+        "- type='scheduled'：强制列出 schedulers。\n"
+        "- type='execution'：强制列出 executions。\n"
+        "- type='queued'：type='execution' 的旧别名。\n\n"
+        "常见场景：\n"
+        "- “有多少定时任务？”/“列出定时任务”：不传参数调用。\n"
+        "- “当前有多少任务正在运行？”：使用 status='running'。\n"
+        "- “哪些定时任务被禁用了？”：使用 status='disabled'。\n"
+        "- “显示旧的暂停任务”：使用 status='paused'。"
+    ),
     category=ToolCategory.SYSTEM,
     parameters=[
         ToolParameter(
@@ -554,6 +582,7 @@ async def task_list(
 @ToolRegistry.register_function(
     name="task_status",
     description="Get detailed status and result of a specific task",
+    description_cn="获取指定任务的详细状态和结果。",
     category=ToolCategory.SYSTEM,
     parameters=[
         ToolParameter(
@@ -610,6 +639,14 @@ async def task_status(ctx: ToolContext, task_id: str) -> ToolResult:
         "task_update(task_id='tsk_xxx', action='disable')\n"
         "Bad example:\n"
         "task_update(task_id='tsk_xxx', fields='{\"cron\":\"*/10 * * * *\"}')"
+    ),
+    description_cn=(
+        "更新任务。默认 action=update，可修改 scheduler 字段，例如 title、description、priority、cron、run_once、run_at、cron_description、timezone 和 user_prompt。"
+        "支持对定时任务执行 enable/disable，也支持对执行任务执行 cancel/retry。\n\n"
+        "重要：\n"
+        "- 更新字段应作为顶层参数传入，不要包装在 `fields` 对象或 JSON 字符串中。\n"
+        "- 停止定时任务请使用 action='disable'、'pause' 或 'stop'；恢复请使用 action='enable'、'resume' 或 'start'。\n"
+        "- 修改调度时，也要传入反映新调度的人类可读 `title` 和 `cron_description`，否则 UI 中显示的任务标题可能仍是旧文案。"
     ),
     category=ToolCategory.SYSTEM,
     parameters=[
@@ -784,6 +821,7 @@ async def task_update(
 @ToolRegistry.register_function(
     name="task_delete",
     description="Delete a task permanently",
+    description_cn="永久删除任务。",
     category=ToolCategory.SYSTEM,
     parameters=[
         ToolParameter(
@@ -814,6 +852,7 @@ async def task_delete(ctx: ToolContext, task_id: str) -> ToolResult:
 @ToolRegistry.register_function(
     name="task_rerun",
     description="Rerun a task. If it is active, it will be cancelled and a new execution will be created.",
+    description_cn="重新运行任务。如果任务正在活跃运行，会先取消它并创建新的执行记录。",
     category=ToolCategory.SYSTEM,
     parameters=[
         ToolParameter(

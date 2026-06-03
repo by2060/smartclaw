@@ -106,6 +106,10 @@ async def _enrich_with_channels(sessions_dict: list[dict]) -> list[dict]:
         "列出 Flocks 的所有 Session 元数据。"
         "可按 project_id、status、category 过滤，支持分页。"
     ),
+    description_cn=(
+        "列出 Flocks 的所有 Session 元数据。"
+        "可按 project_id、status、category 过滤，支持分页。"
+    ),
     category=ToolCategory.SYSTEM,
     parameters=[
         ToolParameter(
@@ -200,6 +204,7 @@ async def session_list(
 @ToolRegistry.register_function(
     name="session_get",
     description="获取指定 session 的完整元数据，包含时间戳、agent、状态、摘要等。",
+    description_cn="获取指定 session 的完整元数据，包含时间戳、agent、状态、摘要等。",
     category=ToolCategory.SYSTEM,
     parameters=[
         ToolParameter(
@@ -229,6 +234,7 @@ async def session_get(ctx: ToolContext, session_id: str) -> ToolResult:
 @ToolRegistry.register_function(
     name="session_create",
     description="创建一个新的 Flocks Session。",
+    description_cn="创建一个新的 Flocks Session。",
     category=ToolCategory.SYSTEM,
     parameters=[
         ToolParameter(
@@ -301,6 +307,10 @@ async def session_create(
 @ToolRegistry.register_function(
     name="session_update",
     description=(
+        "更新指定 session 的元数据字段。"
+        "支持修改标题、agent、model、provider、memory_enabled 等。"
+    ),
+    description_cn=(
         "更新指定 session 的元数据字段。"
         "支持修改标题、agent、model、provider、memory_enabled 等。"
     ),
@@ -401,6 +411,10 @@ async def session_update(
         "删除指定 session（软删除）。"
         "同时会递归删除其所有子 session，并清空消息记录。"
     ),
+    description_cn=(
+        "删除指定 session（软删除）。"
+        "同时会递归删除其所有子 session，并清空消息记录。"
+    ),
     category=ToolCategory.SYSTEM,
     requires_confirmation=True,
     parameters=[
@@ -440,6 +454,7 @@ async def session_delete(ctx: ToolContext, session_id: str) -> ToolResult:
 @ToolRegistry.register_function(
     name="session_archive",
     description="归档或取消归档指定 session。归档后 session 仍可查询，但不再活跃。",
+    description_cn="归档或取消归档指定 session。归档后 session 仍可查询，但不再活跃。",
     category=ToolCategory.SYSTEM,
     parameters=[
         ToolParameter(

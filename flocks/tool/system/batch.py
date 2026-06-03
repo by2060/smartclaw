@@ -41,10 +41,27 @@ Format:
 - tool_calls: Array of {tool: "tool_name", parameters: {...}}
 - commands: Legacy alias for tool_calls using {tool: "tool_name", args: {...}}"""
 
+DESCRIPTION_CN = """并行执行多个工具调用以获得最佳性能。
+
+适用场景：
+- 需要运行多个相互独立的操作
+- 操作之间不依赖彼此结果
+- 希望最大化吞吐量
+
+限制：
+- 每批最多 25 个工具调用
+- 不能批量调用 batch 工具自身
+- 外部工具（MCP）不能批量调用
+
+格式：
+- tool_calls：数组，元素形如 {tool: "tool_name", parameters: {...}}
+- commands：tool_calls 的旧别名，元素可使用 {tool: "tool_name", args: {...}}"""
+
 
 @ToolRegistry.register_function(
     name="batch",
     description=DESCRIPTION,
+    description_cn=DESCRIPTION_CN,
     category=ToolCategory.SYSTEM,
     parameters=[
         ToolParameter(

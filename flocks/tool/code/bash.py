@@ -105,6 +105,44 @@ Usage notes:
   - AVOID using `cd <directory> && <command>`. Use the `workdir` parameter to change directories instead."""
 
 
+def get_description_cn(directory: str) -> str:
+    """Get Chinese tool description with directory placeholder replaced"""
+    return f"""在持久化 Shell 会话中执行 bash 命令，支持可选超时设置，并确保适当的处理和安全措施。
+
+所有命令默认在 {directory} 目录下执行。如果需要在其他目录运行命令，请使用 `workdir` 参数。避免使用 `cd <directory> && <command>` 模式，请改用 `workdir`。
+
+重要：此工具用于 git、npm、docker 等终端操作。不要用它进行文件读写、编辑、搜索或查找等文件操作；请使用专门工具。
+Agent 生成的报告、摘要、分析文档、表格、JSON/CSV 导出和其他面向用户的输出文件必须使用 Write 工具写入，以便保存到根会话的 Workspace outputs 目录。不要用 Bash 重定向、tee、Python one-liner 或 shell 脚本创建这些文件。
+
+执行命令前，请遵循以下步骤：
+
+1. 目录验证：
+   - 如果命令会创建新目录或文件，先使用 `ls` 验证父目录存在且位置正确
+   - 例如，在运行 "mkdir foo/bar" 之前，先使用 `ls foo` 检查 "foo" 存在且是预期父目录
+
+2. 命令执行：
+   - 始终用双引号包裹包含空格的文件路径，例如 rm "path with spaces/file.txt"
+   - 正确引用示例：
+     - mkdir "/Users/name/My Documents"（正确）
+     - mkdir /Users/name/My Documents（错误，会失败）
+     - python "/path/with spaces/script.py"（正确）
+     - python /path/with spaces/script.py（错误，会失败）
+   - 确认引用正确后再执行命令。
+   - 捕获命令输出。
+
+使用说明：
+  - command 参数必填。
+  - 可以指定可选 timeout（毫秒）。未指定时，命令会在 120000ms（2 分钟）后超时。
+  - 建议提供清晰、简短的 description，用 5-10 个词说明命令作用。
+  - 如果输出超过 {MAX_OUTPUT_LINES} 行或 {MAX_OUTPUT_BYTES} 字节，会被截断，完整输出会写入文件。
+  - 避免使用 Bash 执行 `find`、`grep`、`cat`、`head`、`tail`、`sed`、`awk` 或 `echo` 命令。请改用专门工具：Glob、Grep、Read、Edit、Write。
+  - 发起多个命令时：
+    - 如果命令互相独立且可以并行，在单次响应中发起多个 Bash 工具调用。
+    - 如果命令之间存在依赖，使用单个 Bash 调用并用 '&&' 串联。
+    - 仅当需要顺序执行但不关心前一个命令是否失败时，才使用 ';'
+  - 避免使用 `cd <directory> && <command>`。请使用 `workdir` 参数切换目录。"""
+
+
 def _build_error_message(
     *,
     output: str,
@@ -697,6 +735,7 @@ async def _resolve_sandbox_workdir(
 @ToolRegistry.register_function(
     name="bash",
     description=get_description(os.getcwd()),
+    description_cn=get_description_cn(os.getcwd()),
     category=ToolCategory.TERMINAL,
     parameters=[
         ToolParameter(name="command", type=ParameterType.STRING, description="The command to execute", required=True),

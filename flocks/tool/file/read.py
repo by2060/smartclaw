@@ -57,6 +57,19 @@ Usage:
 - You can read image files using this tool.
 - Do not use this tool to extract text from PDF, Word, Excel, PowerPoint, or HTML documents. Use doc_parser first, then read the generated Markdown if needed."""
 
+DESCRIPTION_CN = """读取本地文件系统中的文件。你可以使用此工具直接访问任何文件。
+如果用户提供文件路径，应假设该路径有效。尝试读取不存在的文件是允许的；工具会返回错误。
+
+用法：
+- filePath 参数必须是绝对路径，不能是相对路径
+- 默认从文件开头读取最多 2000 行
+- 对于超过 2000 行的文件，必须使用 offset 和 limit 分段读取（例如 offset=0 limit=2000，然后 offset=2000 limit=2000）
+- 任何超过 2000 字符的行都会被截断
+- 结果以 cat -n 格式返回，行号从 1 开始
+- 你可以在单次响应中调用多个工具；批量读取可能相关的文件通常更好
+- 如果读取的文件存在但内容为空，你会收到系统提醒而不是文件内容
+- 可以使用此工具读取图片文件"""
+
 
 def is_binary_file(filepath: str) -> bool:
     """
@@ -157,6 +170,7 @@ async def _resolve_sandbox_file_path(ctx: ToolContext, filepath: str) -> tuple[O
 @ToolRegistry.register_function(
     name="read",
     description=DESCRIPTION,
+    description_cn=DESCRIPTION_CN,
     category=ToolCategory.FILE,
     parameters=[
         ToolParameter(

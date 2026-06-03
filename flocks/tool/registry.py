@@ -1264,6 +1264,7 @@ class ToolRegistry:
             @cls.register_function(
                 name="echo",
                 description="Echo back the input message",
+                description_cn="回显输入消息",
                 category=ToolCategory.SYSTEM,
                 native=True,
                 parameters=[
@@ -1282,6 +1283,7 @@ class ToolRegistry:
             @cls.register_function(
                 name="get_time",
                 description="Get current date and time",
+                description_cn="获取当前日期和时间",
                 category=ToolCategory.SYSTEM,
                 native=True,
                 parameters=[]

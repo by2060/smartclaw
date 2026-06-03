@@ -731,6 +731,10 @@ def _run_extractors(file_path: Path) -> tuple[str, str, list[str]]:
         "result to an .md file. If output_path is omitted, the markdown file "
         "is written to the Flocks workspace outputs directory for today."
     ),
+    description_cn=(
+        "将 PDF、Office 或 HTML 文档解析为 Markdown，并写入 .md 文件。"
+        "如果省略 output_path，Markdown 文件会写入今天的 Flocks workspace outputs 目录。"
+    ),
     category=ToolCategory.FILE,
     parameters=[
         ToolParameter(

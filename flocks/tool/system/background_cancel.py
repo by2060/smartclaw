@@ -18,6 +18,7 @@ from flocks.task.background import get_background_manager
 @ToolRegistry.register_function(
     name="background_cancel",
     description="Cancel a background task by task_id or cancel all.",
+    description_cn="根据 task_id 取消后台任务，或取消所有后台任务。",
     category=ToolCategory.SYSTEM,
     parameters=[
         ToolParameter(

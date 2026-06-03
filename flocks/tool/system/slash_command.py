@@ -33,11 +33,30 @@ _COMMAND_DESCRIPTIONS = {
     "ask":       "Ask a question without making changes",
 }
 
+_COMMAND_DESCRIPTIONS_CN = {
+    "tools":     "按类别列出所有可用工具",
+    "skills":    "列出所有可用 skills 及其描述",
+    "workflows": "列出所有可用 workflows 及其描述和文件路径",
+    "help":      "显示可用命令",
+    "tasks":     "显示任务中心概览",
+    "queue":     "显示任务队列状态",
+    "compact":   "总结当前对话",
+    "plan":      "为任务创建计划",
+    "ask":       "在不做修改的情况下提问",
+}
+
 _TOOL_DESCRIPTION = (
     "Execute a slash command to perform common operations.\n"
     "Use when the user wants to run a command like /tools, /skills, /help, etc.\n\n"
     "Available commands:\n"
     + "\n".join(f"- {cmd}: {desc}" for cmd, desc in _COMMAND_DESCRIPTIONS.items())
+)
+
+_TOOL_DESCRIPTION_CN = (
+    "执行 slash command 以完成常见操作。\n"
+    "当用户想运行 /tools、/skills、/help 等命令时使用。\n\n"
+    "可用命令：\n"
+    + "\n".join(f"- {cmd}: {desc}" for cmd, desc in _COMMAND_DESCRIPTIONS_CN.items())
 )
 
 _HELP_TEXT = (
@@ -126,6 +145,7 @@ def format_tools_catalog_summary(
 @ToolRegistry.register_function(
     name="run_slash_command",
     description=_TOOL_DESCRIPTION,
+    description_cn=_TOOL_DESCRIPTION_CN,
     category=ToolCategory.SYSTEM,
     parameters=[
         ToolParameter(

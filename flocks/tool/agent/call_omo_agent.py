@@ -32,6 +32,11 @@ ALLOWED_AGENTS = ["explore", "librarian"]
         "run_in_background defaults to false (sync). Set true for async with task_id. "
         "Pass session_id to continue a previous agent with full context."
     ),
+    description_cn=(
+        "启动 explore/librarian agent。"
+        "run_in_background 默认为 false（同步）；设为 true 时异步返回 task_id。"
+        "传入 session_id 可继续之前的 agent，并保留完整上下文。"
+    ),
     category=ToolCategory.SYSTEM,
     parameters=[
         ToolParameter(

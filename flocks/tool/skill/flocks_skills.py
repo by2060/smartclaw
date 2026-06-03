@@ -83,6 +83,53 @@ install deps, and remove skills.  Use this tool (not bash) for any
   Example: flocks_skills(subcommand="remove", args="old-skill")
 """
 
+_DESCRIPTION_CN = """\
+管理 agent skills：搜索注册表、安装、检查依赖状态、安装依赖和移除 skills。任何 `flocks skills` 操作都应使用此工具，而不是 bash。
+
+重要区分：
+  • 搜索外部公共注册表中可用、但尚未安装的 skills：
+      → 使用此工具并设置 subcommand="find"
+  • 查看当前 Flocks 实例中已经安装的 skills：
+      → 使用 run_slash_command(command="skills")，不是此工具
+
+## 子命令
+
+**find <query>**
+  按关键字搜索外部公共 skill 注册表。
+  这不会显示已安装 skills，而是发现可安装的 skills。
+  → 在告诉用户“我不能做 X”之前使用，可能存在匹配 skill。
+  → 要列出已安装 skills，请使用 run_slash_command(command="skills")。
+  示例：flocks_skills(subcommand="find", args="malware phishing")
+
+**install <source>**
+  从外部源安装 skill。
+  source 格式：
+    github:<owner>/<repo>/<skill-dir>   例如 github:octocat/skills/find-ioc
+    clawhub:<name>                      例如 clawhub:ndr-alert-analysis
+    https://...                         直接 SKILL.md URL
+    /local/path 或 ./relative           本地目录
+  → 安装后务必调用 status 检查是否缺少依赖。
+  示例：flocks_skills(subcommand="install", args="github:owner/repo/skill-name")
+
+**status**
+  显示所有已发现 skills 及其可用性信息（缺失的二进制或环境变量）。
+  → 安装后或用户询问“哪些 skills 已就绪？”时运行。
+  示例：flocks_skills(subcommand="status")
+
+**install-deps <skill-name>**
+  安装 skill 的 SKILL.md 中声明的工具依赖（brew 包、npm 全局包、uv/pip 包、go 二进制）。
+  → 当 status 显示某个 skill 不可用时运行。
+  示例：flocks_skills(subcommand="install-deps", args="find-ioc")
+
+**list**
+  列出所有本地发现的 skills，包含来源和描述。
+  示例：flocks_skills(subcommand="list")
+
+**remove <skill-name>**
+  从 ~/.flocks 卸载用户管理的 skill。
+  示例：flocks_skills(subcommand="remove", args="old-skill")
+"""
+
 # Allowed subcommands — enforced to prevent arbitrary shell injection via args.
 # Ordered for consistent display in tool schema enum and error messages.
 _ALLOWED_SUBCOMMANDS = frozenset(
@@ -146,6 +193,7 @@ def _flocks_executable() -> Optional[str]:
 @ToolRegistry.register_function(
     name="flocks_skills",
     description=_DESCRIPTION,
+    description_cn=_DESCRIPTION_CN,
     category=ToolCategory.SYSTEM,
     parameters=[
         ToolParameter(

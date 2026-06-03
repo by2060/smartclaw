@@ -40,10 +40,28 @@ Tips:
 - Include the security tool or technology if relevant
 - Use higher tokensNum for comprehensive documentation"""
 
+DESCRIPTION_CN = """搜索安全示例、文档和 API 使用模式。
+
+适用场景：
+- 需要特定安全工具或框架的示例
+- 需要 API 文档和使用模式
+- 需要特定编程任务的最佳实践
+- 需要实现参考
+
+参数：
+- query：搜索查询，例如 'YARA malware detection rules'、'Suricata IDS signatures'
+- tokensNum：返回上下文的 token 数量（1000-50000，默认 5000）
+
+提示：
+- 尽量明确安全工具或框架
+- 相关时包含安全工具或技术名称
+- 需要完整文档时使用更大的 tokensNum"""
+
 
 @ToolRegistry.register_function(
     name="codesearch",
     description=DESCRIPTION,
+    description_cn=DESCRIPTION_CN,
     category=ToolCategory.SEARCH,
     parameters=[
         ToolParameter(

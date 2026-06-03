@@ -37,10 +37,22 @@ Use this when:
 - Before adding a new provider (to check if it already exists)
 - Before adding a model (to find the correct provider_id)"""
 
+LIST_PROVIDERS_DESC_CN = """列出所有已配置的 AI 模型提供商及其模型。
+
+返回提供商名称、ID、连接状态和可用模型。
+
+重要：在使用 add_provider 或 add_model 前，始终先调用此工具，以了解已有提供商及其正确 ID。
+
+适用场景：
+- 用户询问可用模型或提供商
+- 添加新提供商前，检查它是否已存在
+- 添加模型前，查找正确的 provider_id"""
+
 
 @ToolRegistry.register_function(
     name="list_providers",
     description=LIST_PROVIDERS_DESC,
+    description_cn=LIST_PROVIDERS_DESC_CN,
     category=ToolCategory.SYSTEM,
     parameters=[
         ToolParameter(
@@ -124,10 +136,22 @@ use add_model to add specific models to it.
 Example: add a provider named "MyLLM" with base_url "https://api.myllm.com/v1"
 """
 
+ADD_PROVIDER_DESC_CN = """添加新的自定义 AI 模型提供商（OpenAI 兼容 API endpoint）。
+
+重要：仅在创建一个尚不存在的全新提供商时使用此工具。
+如果用户想向已有提供商添加模型，请改用 add_model。
+始终先调用 list_providers 检查提供商是否已存在。
+
+该提供商会注册为 OpenAI 兼容 endpoint。添加后，使用 add_model 为其添加具体模型。
+
+示例：添加名为 "MyLLM"、base_url 为 "https://api.myllm.com/v1" 的提供商
+"""
+
 
 @ToolRegistry.register_function(
     name="add_provider",
     description=ADD_PROVIDER_DESC,
+    description_cn=ADD_PROVIDER_DESC_CN,
     category=ToolCategory.SYSTEM,
     requires_confirmation=True,
     parameters=[
@@ -243,10 +267,34 @@ Examples:
     → provider_id="Anthropic", model_id="claude-4"
 """
 
+ADD_MODEL_DESC_CN = """向已有提供商添加模型。
+
+当用户想向已经配置的提供商添加特定模型时使用。
+
+关键规则：
+
+1. provider_id：传入用户使用的精确名称（例如 "三方模型"）。
+   工具会自动解析为正确的内部 ID。
+
+2. model_id：传入用户输入的完整模型标识符，包括冒号前的任何前缀。不要拆分或删除其中任何部分。
+   例如，"apigptopen:gpt-4.1" 是一个完整 model_id，不要拆成 "apigptopen" 和 "gpt-4.1"。
+
+只有 provider_id 和 model_id 是必需的。其他参数可选。
+
+示例：
+  - 用户："在三方模型下加 apigptopen:gpt-4.1"
+    → provider_id="三方模型", model_id="apigptopen:gpt-4.1"
+  - 用户："在三方模型下加 gpt-4o"
+    → provider_id="三方模型", model_id="gpt-4o"
+  - 用户："给 Anthropic 加 claude-4"
+    → provider_id="Anthropic", model_id="claude-4"
+"""
+
 
 @ToolRegistry.register_function(
     name="add_model",
     description=ADD_MODEL_DESC,
+    description_cn=ADD_MODEL_DESC_CN,
     category=ToolCategory.SYSTEM,
     requires_confirmation=True,
     parameters=[

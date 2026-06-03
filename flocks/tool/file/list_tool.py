@@ -59,6 +59,8 @@ LIMIT = 100
 # Description matching Flocks' ls.txt
 DESCRIPTION = """Lists files and directories in a given path. The path parameter must be absolute; omit it to use the current workspace directory. You can optionally provide an array of glob patterns to ignore with the ignore parameter. You should generally prefer the Glob and Grep tools, if you know which directories to search."""
 
+DESCRIPTION_CN = """列出给定路径中的文件和目录。path 参数必须是绝对路径；省略时使用当前工作区目录。可以通过 ignore 参数提供要忽略的 glob 模式数组。如果已经知道要搜索的目录，通常应优先使用 Glob 和 Grep 工具。"""
+
 
 def find_ripgrep() -> Optional[str]:
     """Find ripgrep executable"""
@@ -245,6 +247,7 @@ def render_directory_tree(files: List[str], base_path: str) -> str:
 @ToolRegistry.register_function(
     name="list",
     description=DESCRIPTION,
+    description_cn=DESCRIPTION_CN,
     category=ToolCategory.FILE,
     parameters=[
         ToolParameter(
