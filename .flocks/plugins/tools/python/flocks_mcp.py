@@ -37,6 +37,11 @@ log = Log.create(service="tool.flocks_mcp")
         "Use 'remove' to delete a server from config and disconnect it. "
         "Use 'connect' / 'disconnect' to control an already-configured server's connection."
     ),
+    description_cn=(
+        "管理 Flocks 中注册的 MCP 服务。使用 list 查看所有服务及状态；"
+        "使用 add 注册并连接新的 MCP 服务；使用 remove 从配置中删除并断开；"
+        "使用 connect / disconnect 控制已配置服务的连接状态。"
+    ),
     category=ToolCategory.SYSTEM,
     parameters=[
         ToolParameter(

@@ -830,6 +830,7 @@ def _validate_python_decorated_function(
 
     name = _const_str(_kwarg_value(call, "name"))
     description = _const_str(_kwarg_value(call, "description"))
+    description_cn = _const_str(_kwarg_value(call, "description_cn"))
     category_node = _kwarg_value(call, "category")
     parameters_node = _kwarg_value(call, "parameters")
 
@@ -855,6 +856,11 @@ def _validate_python_decorated_function(
         )
     else:
         report.ok(section, f"description present ({len(description.strip())} chars)")
+
+    if not description_cn or not description_cn.strip():
+        report.fail(section, "decorator missing or empty 'description_cn='")
+    else:
+        report.ok(section, f"description_cn present ({len(description_cn.strip())} chars)")
 
     if category_node is None:
         report.warn(

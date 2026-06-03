@@ -59,6 +59,7 @@ You are a specialized {role} agent.
 - List concrete capabilities, not vague descriptions
 - Define a structured output format so callers can use results directly
 - Constraints must be consistent with the declared `tools` allowlist (e.g. a read-only agent should not claim it can edit files)
+- 当用户使用中文时，生成的 `agent.yaml` description、`prompt.md` 正文和最终说明应优先使用中文；配置字段、文件名、工具名保持英文原样。
 
 ### 3. Generate YAML Config File
 

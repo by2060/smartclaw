@@ -86,14 +86,14 @@ description: >
   security incident investigation.
 ```
 
-### Bilingual descriptions for API services
+### Bilingual descriptions
 
-For **API service integrations (Mode A under `api/`)**, always provide:
+For **all generated tools in every mode**, always provide:
 
 - `description`: English description
 - `description_cn`: Chinese description
 
-This applies to service-level metadata such as `_provider.yaml`, and also to metadata JSON files when the service uses that format. The Web UI uses `description_cn` for Chinese locales and falls back to `description` otherwise.
+This applies to API service metadata such as `_provider.yaml`, YAML tool files, metadata JSON files when the service uses that format, and Python tool decorators. The Web UI uses `description_cn` for Chinese locales and falls back to `description` otherwise.
 
 Recommended rule:
 
@@ -386,6 +386,7 @@ from flocks.tool.registry import (
 @ToolRegistry.register_function(
     name="my_tool",
     description="Example tool that does X. Use when the user needs Y.",
+    description_cn="示例工具，用于执行 X；当用户需要 Y 时使用。",
     category=ToolCategory.CUSTOM,
     parameters=[
         ToolParameter(name="query", type=ParameterType.STRING, description="Search query"),
@@ -486,7 +487,7 @@ The validator checks (this list is enforced, not aspirational):
 **Python tools (Mode B)**
 - `from flocks.tool.registry import ...` is present
 - `@ToolRegistry.register_function` is on at least one function
-- The decorator carries `name`, `description`, `category`, `parameters`
+- The decorator carries `name`, `description`, `description_cn`, `category`, `parameters`
 - Every `ToolParameter(name=...)` matches an actual function argument
   (and the function is `async def`, with `ctx` as the first parameter)
 - The function returns a `ToolResult(...)`

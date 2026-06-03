@@ -139,6 +139,7 @@ class TestPythonTool:
             @ToolRegistry.register_function(
                 name="my_python_tool",
                 description="Does something useful for the agent in a local context.",
+                description_cn="在本地上下文中为智能体执行有用操作。",
                 category="custom",
                 parameters=[
                     {"name": "text", "type": "string", "description": "Input text"},
@@ -149,6 +150,23 @@ class TestPythonTool:
         """)
         report = validate_python_tool(p)
         assert report.fail_count == 0, report.issues
+
+    def test_missing_description_cn_is_a_failure(self, tmp_path):
+        p = write(tmp_path, "missing_description_cn.py", """\
+            from flocks.tool.registry import ToolRegistry, ToolResult
+
+            @ToolRegistry.register_function(
+                name="missing_description_cn",
+                description="Does something useful for the agent in a local context.",
+                category="custom",
+                parameters=[],
+            )
+            async def missing_description_cn(ctx) -> ToolResult:
+                return ToolResult(output="ok")
+        """)
+        report = validate_python_tool(p)
+        assert report.fail_count > 0
+        assert any("description_cn" in issue.message for issue in report.issues)
 
     def test_missing_register_decorator_is_a_failure(self, tmp_path):
         p = write(tmp_path, "no_decorator.py", """\
@@ -165,6 +183,7 @@ class TestPythonTool:
             @ToolRegistry.register_function(
                 name="sync_fn",
                 description="A synchronous function that should be async.",
+                description_cn="一个本应声明为异步函数的同步函数。",
                 category="custom",
                 parameters=[],
             )

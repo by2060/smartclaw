@@ -294,6 +294,10 @@ async def retrieve_from_dify_kb(
         "The dataset scope is the intersection of the current session's "
         "userContext.knowledgeBaseIds and the current agent's kb field."
     ),
+    description_cn=(
+        "查询 Dify 知识库并返回检索记录。数据集范围由当前会话的 "
+        "userContext.knowledgeBaseIds 与当前 Agent 的 kb 字段共同限定。"
+    ),
     category=ToolCategory.SEARCH,
     tags=["dify", "knowledge-base", "rag", "retrieval"],
     parameters=[
