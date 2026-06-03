@@ -11,6 +11,7 @@ import { providerAPI } from '@/api/provider';
 import { toolAPI } from '@/api/tool';
 import LoadingSpinner from '@/components/common/LoadingSpinner';
 import { getCatalogDescription, getMetadataDescription } from '@/utils/mcpCatalog';
+import { getLocalizedToolDescription } from '../toolDisplay';
 import { EnabledBadge } from './badges';
 import { buildMCPConfigFromForm, buildMCPFormDataFromConfig, getMCPFormError, MCPFormFields } from '../ToolSheets';
 import type { MCPFormData, ConnStatus as MCPConnStatus } from '../ToolSheets';
@@ -72,7 +73,7 @@ export function MCPServerDetailPanel({
   onRemove?: () => void;
   onSelectTool: (tool: Tool) => void;
 }) {
-  const { t } = useTranslation('tool');
+  const { t, i18n } = useTranslation('tool');
   const [detailTab, setDetailTab] = useState<'overview' | 'tools' | 'resources'>('overview');
   const [serverDetail, setServerDetail] = useState<MCPServerDetail | null>(null);
   const [formData, setFormData] = useState<MCPFormData | null>(null);
@@ -329,7 +330,7 @@ export function MCPServerDetailPanel({
                   {serverTools.map((tool) => (
                     <tr key={tool.name} onClick={() => onSelectTool(tool)} className="hover:bg-red-50 cursor-pointer transition-colors">
                       <td className="px-4 py-3"><span className="text-sm font-medium text-gray-900 font-mono break-all">{tool.name}</span></td>
-                      <td className="px-4 py-3"><span className="text-sm text-gray-600 line-clamp-2 leading-relaxed">{tool.description}</span></td>
+                      <td className="px-4 py-3"><span className="text-sm text-gray-600 line-clamp-2 leading-relaxed">{getLocalizedToolDescription(tool, i18n.language)}</span></td>
                     </tr>
                   ))}
                 </tbody>
@@ -964,7 +965,7 @@ export function APIServiceDetailPanel({
                   {serviceTools.map((tool) => (
                     <tr key={tool.name} className="hover:bg-gray-50">
                       <td className="px-5 py-2.5 truncate"><span className="text-sm font-medium text-gray-900 font-mono">{tool.name}</span></td>
-                      <td className="px-5 py-2.5"><span className="text-sm text-gray-600 line-clamp-1">{tool.description}</span></td>
+                      <td className="px-5 py-2.5"><span className="text-sm text-gray-600 line-clamp-1">{getLocalizedToolDescription(tool, i18n.language)}</span></td>
                       <td className="px-5 py-2.5 whitespace-nowrap"><EnabledBadge enabled={tool.enabled} /></td>
                       <td className="px-5 py-2.5 whitespace-nowrap"><button onClick={() => onSelectTool(tool)} className="text-sm text-red-600 hover:text-red-800">{t('detail.testDetail')}</button></td>
                     </tr>

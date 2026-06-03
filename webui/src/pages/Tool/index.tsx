@@ -1510,7 +1510,7 @@ function MCPServerDetailPanel({
                         <span className="text-sm font-medium text-gray-900 font-mono break-all">{tool.name}</span>
                       </td>
                       <td className="px-4 py-3">
-                        <span className="text-sm text-gray-600 line-clamp-2 leading-relaxed">{tool.description}</span>
+                        <span className="text-sm text-gray-600 line-clamp-2 leading-relaxed">{getLocalizedToolDescription(tool, i18n.language)}</span>
                       </td>
                     </tr>
                   ))}
@@ -1631,7 +1631,7 @@ function MCPToolDetailPanel({ tool, onClose }: { tool: Tool; onClose: () => void
           <div className="space-y-5">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">{t('toolDetail.description')}</label>
-              <p className="text-sm text-gray-600 leading-relaxed">{tool.description || t('toolDetail.noDescription')}</p>
+              <p className="text-sm text-gray-600 leading-relaxed">{getLocalizedToolDescription(tool, i18n.language) || t('toolDetail.noDescription')}</p>
             </div>
             {tool.parameters && tool.parameters.length > 0 && (
               <div>
@@ -2819,7 +2819,7 @@ function APIServiceDetailPanel({
                     {serviceTools.map((tool) => (
                       <tr key={tool.name} className="hover:bg-gray-50">
                         <td className="px-5 py-2.5 truncate"><span className="text-sm font-medium text-gray-900 font-mono">{tool.name}</span></td>
-                        <td className="px-5 py-2.5"><span className="text-sm text-gray-600 line-clamp-1">{tool.description}</span></td>
+                        <td className="px-5 py-2.5"><span className="text-sm text-gray-600 line-clamp-1">{getLocalizedToolDescription(tool, i18n.language)}</span></td>
                         <td className="px-5 py-2.5 whitespace-nowrap"><EnabledBadge enabled={tool.enabled} /></td>
                         <td className="px-5 py-2.5 whitespace-nowrap"><button onClick={() => onSelectTool(tool)} className="text-sm text-sky-700 hover:text-sky-900">{t('detail.testDetail')}</button></td>
                       </tr>
@@ -3233,7 +3233,7 @@ function ToolTable({
                   </td>
                   {/* description */}
                   <td className="px-6 py-4">
-                    <span className="text-sm text-gray-600 line-clamp-1 max-w-sm">{tool.description}</span>
+                    <span className="text-sm text-gray-600 line-clamp-1 max-w-sm">{getLocalizedToolDescription(tool, i18n.language)}</span>
                   </td>
                   {/* status */}
                   <td className="px-6 py-4 whitespace-nowrap">
@@ -3764,4 +3764,3 @@ const LANG_COLORS: Record<string, string> = {
 // CatalogBrowser removed — catalog UI is now inline in MCPTabContent / APITabContent
 
 // (CatalogBrowser component removed — catalog UI is inline in MCPTabContent / APITabContent)
-

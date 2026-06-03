@@ -11,6 +11,7 @@ import type { MCPCatalogCategory, MCPCatalogEntry, MCPServer } from '@/types';
 import LoadingSpinner from '@/components/common/LoadingSpinner';
 import EmptyState from '@/components/common/EmptyState';
 import { getCatalogDescription, getMetadataDescription } from '@/utils/mcpCatalog';
+import { getLocalizedToolDescription } from '../toolDisplay';
 import { MCPServerDetailPanel } from './ServiceDetailPanel';
 
 const DETAIL_DRAWER_WIDTH = 560;
@@ -204,7 +205,9 @@ export default function MCPTabContent({
         entry.id.toLowerCase().includes(q) ||
         entry.tags.some((tag) => tag.toLowerCase().includes(q)) ||
         (toolsByServer[entry.id] || []).some(
-          (tool) => tool.name.toLowerCase().includes(q) || tool.description.toLowerCase().includes(q),
+          (tool) => tool.name.toLowerCase().includes(q)
+            || tool.description.toLowerCase().includes(q)
+            || (tool.description_cn || '').toLowerCase().includes(q),
         )
       );
     }
@@ -341,7 +344,9 @@ export default function MCPTabContent({
         server.name.toLowerCase().includes(q) ||
         (server.url && server.url.toLowerCase().includes(q)) ||
         (toolsByServer[server.name] || []).some(
-          (tool) => tool.name.toLowerCase().includes(q) || tool.description.toLowerCase().includes(q)
+          (tool) => tool.name.toLowerCase().includes(q)
+            || tool.description.toLowerCase().includes(q)
+            || (tool.description_cn || '').toLowerCase().includes(q)
         )
     );
   }, [servers, searchQuery, toolsByServer]);
@@ -704,7 +709,7 @@ export default function MCPTabContent({
 }
 
 function MCPToolDetailPanel({ tool, onClose }: { tool: Tool; onClose: () => void }) {
-  const { t } = useTranslation('tool');
+  const { t, i18n } = useTranslation('tool');
   const [section, setSection] = useState<'info' | 'test'>('info');
   const [testParams, setTestParams] = useState('{}');
   const [testResult, setTestResult] = useState<any>(null);
@@ -757,7 +762,7 @@ function MCPToolDetailPanel({ tool, onClose }: { tool: Tool; onClose: () => void
           <div className="space-y-5">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">{t('detail.tableDesc')}</label>
-              <p className="text-sm text-gray-600 leading-relaxed">{tool.description || t('detail.noDescription')}</p>
+              <p className="text-sm text-gray-600 leading-relaxed">{getLocalizedToolDescription(tool, i18n.language) || t('detail.noDescription')}</p>
             </div>
             {tool.parameters && tool.parameters.length > 0 && (
               <div>

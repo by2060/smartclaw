@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next';
 import type { Tool } from '@/api/tool';
 import type { SortState, ColumnFilters } from '../types';
 import { SOURCE_BADGE, CATEGORY_LABEL_KEY } from '../constants';
+import { getLocalizedToolDescription } from '../toolDisplay';
 import SortFilterHeader from './SortFilterHeader';
 import Pagination from './Pagination';
 import { EnabledBadge } from './badges';
@@ -37,7 +38,7 @@ export default function ToolTable({
   onPageChange,
   onSelect,
 }: ToolTableProps) {
-  const { t } = useTranslation('tool');
+  const { t, i18n } = useTranslation('tool');
   const getSourceLabel = (v: string) => {
     const sb = SOURCE_BADGE[v] ?? SOURCE_BADGE.custom;
     return sb.labelKey ? t(sb.labelKey) : (sb.label ?? v);
@@ -117,7 +118,7 @@ export default function ToolTable({
                     <span className="text-sm font-medium text-gray-900 font-mono">{tool.name}</span>
                   </td>
                   <td className="px-6 py-4">
-                    <span className="text-sm text-gray-600 line-clamp-1 max-w-sm">{tool.description}</span>
+                    <span className="text-sm text-gray-600 line-clamp-1 max-w-sm">{getLocalizedToolDescription(tool, i18n.language)}</span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <EnabledBadge enabled={tool.enabled} />

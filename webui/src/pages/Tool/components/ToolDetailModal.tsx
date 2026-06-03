@@ -7,6 +7,7 @@ import {
 import type { Tool } from '@/api/tool';
 import { canDirectlyTestTool, toolAPI } from '@/api/tool';
 import { SOURCE_BADGE, CATEGORY_LABEL_KEY } from '../constants';
+import { getLocalizedToolDescription } from '../toolDisplay';
 import { EnabledBadge } from './badges';
 
 interface ToolDetailModalProps {
@@ -29,7 +30,7 @@ function buildParamsTemplate(tool: Tool): string {
 }
 
 export default function ToolDetailModal({ tool, initialSection, onClose }: ToolDetailModalProps) {
-  const { t } = useTranslation('tool');
+  const { t, i18n } = useTranslation('tool');
   const [section, setSection] = useState<'info' | 'test'>(initialSection || 'info');
   const defaultParams = useMemo(() => buildParamsTemplate(tool), [tool]);
   const [testParams, setTestParams] = useState(defaultParams);
@@ -115,7 +116,7 @@ export default function ToolDetailModal({ tool, initialSection, onClose }: ToolD
             <div className="space-y-5">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">{t('toolDetail.description')}</label>
-                <p className="text-sm text-gray-600 leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{tool.description}</p>
+                <p className="text-sm text-gray-600 leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{getLocalizedToolDescription(tool, i18n.language)}</p>
               </div>
               <div className="flex flex-wrap gap-4">
                 <div>
