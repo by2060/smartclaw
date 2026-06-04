@@ -266,7 +266,7 @@ async def _validate_session_message_context(
     )
 
 
-def _build_http_tool_context(
+async def _build_http_tool_context(
     *,
     tool_name: str,
     tool_info: ToolInfo,
@@ -279,6 +279,10 @@ def _build_http_tool_context(
     effective_message_id = message_id or f"http-tool:{tool_name}"
 
     if session_id:
+        from flocks.session.session import Session
+
+        output_session_id = await Session.resolve_root_session_id(session_id)
+
         async def permission_callback(request) -> None:
             metadata = dict(request.metadata or {})
             metadata.setdefault("messageID", effective_message_id)
@@ -298,6 +302,10 @@ def _build_http_tool_context(
             message_id=effective_message_id,
             agent=agent_name,
             permission_callback=permission_callback,
+            extra={
+                "main_session_key": output_session_id,
+                "output_session_id": output_session_id,
+            },
         )
 
     if _requires_session_backed_context(tool_info):
@@ -340,7 +348,7 @@ async def _execute_with_http_context(
         session_id=session_id,
         message_id=message_id,
     )
-    ctx = _build_http_tool_context(
+    ctx = await _build_http_tool_context(
         tool_name=tool_name,
         tool_info=tool_info,
         session_id=validated_session_id,

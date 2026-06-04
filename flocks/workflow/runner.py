@@ -65,6 +65,18 @@ def _load_config_data() -> Dict[str, Any]:
     return {}
 
 
+def _resolve_root_session_id_sync(session_id: Optional[str]) -> Optional[str]:
+    if not session_id:
+        return None
+    try:
+        from flocks.session.session import Session
+
+        return _run_coro_sync(Session.resolve_root_session_id(str(session_id)))
+    except Exception as exc:
+        _logger.debug("workflow runtime: failed to resolve root session: %s", exc)
+        return str(session_id)
+
+
 def _resolve_workflow_runtime_preference(tool_context: Optional[Any]) -> Literal["sandbox", "host"]:
     """Resolve workflow runtime preference only from sandbox.mode."""
     _ = tool_context
@@ -139,8 +151,14 @@ def _resolve_sandbox_payload_from_config(tool_context: Optional[Any]) -> Optiona
     main_session_key = "main"
     workspace_dir = os.getcwd()
     if isinstance(extra, dict):
-        main_session_key = str(extra.get("main_session_key") or main_session_key)
+        main_session_key = str(
+            extra.get("output_session_id")
+            or extra.get("main_session_key")
+            or main_session_key
+        )
         workspace_dir = str(extra.get("workspace_dir") or workspace_dir)
+    if main_session_key == "main" and session_key != "workflow-default-session":
+        main_session_key = _resolve_root_session_id_sync(session_key) or main_session_key
 
     try:
         sandbox_ctx = _run_coro_sync(
@@ -165,6 +183,7 @@ def _resolve_sandbox_payload_from_config(tool_context: Optional[Any]) -> Optiona
         "container_workdir": sandbox_ctx.container_workdir,
         "workspace_access": sandbox_ctx.workspace_access,
         "agent_workspace_dir": sandbox_ctx.agent_workspace_dir,
+        "project_plugins_dir": getattr(sandbox_ctx, "project_plugins_dir", None),
         "upload_mounts": sandbox_ctx.upload_mounts,
     }
     env = getattr(getattr(sandbox_ctx, "docker", None), "env", None)
@@ -412,6 +431,7 @@ def run_workflow(
                 or extra.get("main_session_key")
             )
         workflow_session_id = workflow_session_id or getattr(tool_context, "session_id", None)
+        workflow_session_id = _resolve_root_session_id_sync(workflow_session_id)
     initial_inputs = _build_initial_inputs(
         inputs,
         workflow_path_for_engine,

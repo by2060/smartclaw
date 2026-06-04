@@ -844,6 +844,36 @@ class TestFileToolSandboxPaths:
     """文件工具沙箱路径限制测试."""
 
     @pytest.mark.asyncio
+    async def test_read_workspace_plugin_path_uses_project_plugins_dir(self, tmp_path):
+        from flocks.tool.file.read import _resolve_sandbox_file_path
+        from flocks.tool.registry import ToolContext
+
+        project_plugins = tmp_path / "project" / ".flocks" / "plugins"
+        script_path = project_plugins / "skills" / "demo" / "scripts" / "run.py"
+        script_path.parent.mkdir(parents=True)
+        script_path.write_text("print('ok')", encoding="utf-8")
+
+        ctx = ToolContext(
+            session_id="test",
+            message_id="msg1",
+            extra={
+                "sandbox": {
+                    "workspace_dir": str(tmp_path / "sandbox_ws"),
+                    "container_workdir": "/workspace",
+                    "agent_workspace_dir": str(tmp_path / "project" / "subdir"),
+                    "project_plugins_dir": str(project_plugins),
+                }
+            },
+        )
+
+        resolved, error = await _resolve_sandbox_file_path(
+            ctx, "/workspace/.flocks/plugins/skills/demo/scripts/run.py"
+        )
+
+        assert error is None
+        assert resolved == str(script_path)
+
+    @pytest.mark.asyncio
     async def test_read_sandbox_path_resolution(self):
         """read 工具的沙箱路径解析 — 正常路径."""
         from flocks.tool.file.read import _resolve_sandbox_file_path
@@ -1001,6 +1031,8 @@ class TestBashSandboxHelpers:
                     "container_name": "flocks-sbx-test",
                     "workspace_dir": "/tmp/ws",
                     "container_workdir": "/workspace",
+                    "agent_workspace_dir": "/tmp/project/subdir",
+                    "project_plugins_dir": "/tmp/project/.flocks/plugins",
                 }
             },
         )
@@ -1008,6 +1040,48 @@ class TestBashSandboxHelpers:
         assert cfg is not None
         assert cfg.container_name == "flocks-sbx-test"
         assert cfg.workspace_dir == "/tmp/ws"
+        assert cfg.agent_workspace_dir == "/tmp/project/subdir"
+        assert cfg.project_plugins_dir == "/tmp/project/.flocks/plugins"
+
+    def test_rewrite_project_plugin_host_paths_for_sandbox(self, tmp_path):
+        from flocks.sandbox.types import BashSandboxConfig
+        from flocks.tool.code.bash import _rewrite_project_plugin_host_paths_for_sandbox
+
+        project_plugins = tmp_path / "project" / ".flocks" / "plugins"
+        script_path = project_plugins / "skills" / "demo" / "scripts" / "run.py"
+        cfg = BashSandboxConfig(
+            container_name="flocks-sbx-test",
+            workspace_dir=str(tmp_path / "sandbox_ws"),
+            container_workdir="/workspace",
+            project_plugins_dir=str(project_plugins),
+        )
+
+        rewritten = _rewrite_project_plugin_host_paths_for_sandbox(
+            f'python "{script_path}"',
+            cfg,
+        )
+
+        assert rewritten == 'python "/workspace/.flocks/plugins/skills/demo/scripts/run.py"'
+
+    @pytest.mark.asyncio
+    async def test_resolve_sandbox_workdir_allows_project_plugins(self, tmp_path):
+        from flocks.sandbox.types import BashSandboxConfig
+        from flocks.tool.code.bash import _resolve_sandbox_workdir
+
+        project_plugins = tmp_path / "project" / ".flocks" / "plugins"
+        script_dir = project_plugins / "skills" / "demo" / "scripts"
+        script_dir.mkdir(parents=True)
+        cfg = BashSandboxConfig(
+            container_name="flocks-sbx-test",
+            workspace_dir=str(tmp_path / "sandbox_ws"),
+            container_workdir="/workspace",
+            project_plugins_dir=str(project_plugins),
+        )
+
+        host_workdir, container_workdir = await _resolve_sandbox_workdir(str(script_dir), cfg)
+
+        assert host_workdir == str(script_dir)
+        assert container_workdir == "/workspace/.flocks/plugins/skills/demo/scripts"
 
     def test_get_sandbox_config_from_ctx_none(self):
         """无沙箱配置时返回 None."""
@@ -1218,6 +1292,30 @@ class TestStreamProcessorSandboxMeta:
 
 class TestWorkspace:
     """沙箱工作区管理测试."""
+
+    def test_resolve_project_plugins_dir_prefers_worktree(self, tmp_path, monkeypatch):
+        from flocks.sandbox import context as context_module
+
+        project = tmp_path / "project"
+        subdir = project / "nested" / "subdir"
+        plugins = project / ".flocks" / "plugins"
+        plugins.mkdir(parents=True)
+        subdir.mkdir(parents=True)
+
+        monkeypatch.setattr(
+            context_module.Instance,
+            "get_worktree",
+            staticmethod(lambda: str(project)),
+        )
+        monkeypatch.setattr(
+            context_module.Instance,
+            "get_directory",
+            staticmethod(lambda: str(subdir)),
+        )
+
+        resolved = context_module._resolve_project_plugins_dir(str(subdir))
+
+        assert resolved == plugins
 
     @pytest.mark.asyncio
     async def test_ensure_sandbox_workspace_creates_dir(self):

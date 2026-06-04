@@ -241,6 +241,48 @@ class TestToolRouteSecurity:
         assert payload["output"] == "hello:http-tool"
 
     @pytest.mark.asyncio
+    async def test_http_tool_context_with_child_session_scopes_outputs_to_root(self):
+        from flocks.server.routes import tool as tool_routes
+
+        root = await Session.create(
+            project_id="default",
+            directory=str(Path.cwd()),
+            title="root-output-session",
+            agent="rex",
+        )
+        child = await Session.create(
+            project_id="default",
+            directory=str(Path.cwd()),
+            title="child-output-session",
+            parent_id=root.id,
+            agent="rex",
+        )
+        message = await Message.create(
+            session_id=child.id,
+            role=MessageRole.USER,
+            content="child message",
+            agent="rex",
+        )
+
+        ctx = await tool_routes._build_http_tool_context(
+            tool_name="http_child_output_session_tool",
+            tool_info=ToolInfo(
+                name="http_child_output_session_tool",
+                description="reports output session context",
+                category=ToolCategory.CUSTOM,
+                source="custom",
+            ),
+            session_id=child.id,
+            message_id=message.id,
+            agent="rex",
+        )
+
+        assert ctx.session_id == child.id
+        assert ctx.message_id == message.id
+        assert ctx.extra["output_session_id"] == root.id
+        assert ctx.extra["main_session_key"] == root.id
+
+    @pytest.mark.asyncio
     async def test_execute_rejects_message_outside_session(
         self,
         client: AsyncClient,

@@ -283,6 +283,8 @@ async def _build_workflow_tool_context(
         )
         effective_message_id = message.id
 
+    output_session_id = await Session.resolve_root_session_id(effective_session_id)
+
     return ToolContext(
         session_id=effective_session_id,
         message_id=effective_message_id,
@@ -290,7 +292,8 @@ async def _build_workflow_tool_context(
         event_publish_callback=publish_event,
         extra={
             "workspace_dir": workspace_dir,
-            "main_session_key": effective_session_id,
+            "main_session_key": output_session_id,
+            "output_session_id": output_session_id,
         },
     )
 

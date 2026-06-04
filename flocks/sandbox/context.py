@@ -7,6 +7,7 @@
 """
 
 import os
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .config import resolve_sandbox_config_for_agent
@@ -23,9 +24,57 @@ from .uploads import get_session_upload_mounts, upload_mount_binds
 from .workspace import ensure_sandbox_workspace
 
 from flocks.utils.log import Log
+from flocks.project.instance import Instance
 from flocks.workspace.manager import WorkspaceManager
 
 log = Log.create(service="sandbox.context")
+
+
+def _path_or_none(value: Optional[str]) -> Optional[Path]:
+    if not value:
+        return None
+    try:
+        return Path(os.path.expanduser(value)).resolve()
+    except OSError:
+        return Path(os.path.expanduser(value)).absolute()
+
+
+def _iter_candidate_project_roots(agent_workspace_dir: str) -> list[Path]:
+    candidates = [
+        _path_or_none(Instance.get_worktree()),
+        _path_or_none(Instance.get_directory()),
+        _path_or_none(agent_workspace_dir),
+        _path_or_none(os.getcwd()),
+    ]
+    roots: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        if candidate.parent == candidate and str(candidate) in {"/", "\\"}:
+            continue
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        roots.append(candidate)
+    return roots
+
+
+def _resolve_project_plugins_dir(agent_workspace_dir: str) -> Path:
+    """Resolve the project-level plugins directory from the project/worktree root."""
+
+    for root in _iter_candidate_project_roots(agent_workspace_dir):
+        current = root
+        while True:
+            flocks_dir = current / ".flocks"
+            plugins_dir = flocks_dir / "plugins"
+            if plugins_dir.exists() or flocks_dir.exists():
+                return plugins_dir
+            if current.parent == current:
+                break
+            current = current.parent
+    return Path(agent_workspace_dir).expanduser() / ".flocks" / "plugins"
 
 
 async def resolve_sandbox_context(
@@ -137,20 +186,21 @@ async def resolve_sandbox_context(
     user_workspace_dir = workspace_manager.get_user_workspace_dir()
     user_outputs_root = user_workspace_dir / "outputs"
     user_outputs_root.mkdir(parents=True, exist_ok=True)
-    project_plugins_dir = os.path.join(agent_workspace_dir, ".flocks", "plugins")
-    os.makedirs(project_plugins_dir, exist_ok=True)
-    '''output_binds = [
-        f"{output_dir.resolve()}:{container_workdir}/outputs",
-        f"{output_dir.resolve()}:{container_workdir}/output",
-        f"{artifacts_dir.resolve()}:{container_workdir}/artifacts",
-        f"{user_outputs_root.resolve()}:{container_workdir}/.flocks/workspace/outputs:rw",
-    ]'''
+    resolved_output_dir = output_dir.resolve()
+    resolved_outputs_root = user_outputs_root.resolve()
+    try:
+        output_scope = resolved_output_dir.relative_to(resolved_outputs_root).as_posix()
+    except ValueError:
+        output_scope = output_dir.name
+    container_output_dir = f"{container_workdir}/outputs/{output_scope}".rstrip("/")
+    container_artifacts_dir = f"{container_output_dir}/artifacts"
+    project_plugins_dir = _resolve_project_plugins_dir(agent_workspace_dir)
+    project_plugins_dir.mkdir(parents=True, exist_ok=True)
     output_binds = [
-        f"{output_dir.resolve()}:{container_workdir}/outputs:rw",
-        f"{artifacts_dir.resolve()}:{container_workdir}/artifacts:rw"
+        f"{resolved_output_dir}:{container_output_dir}:rw",
     ]
     plugin_binds = [
-        f"{os.path.abspath(project_plugins_dir)}:{container_workdir}/.flocks/plugins:rw",
+        f"{project_plugins_dir.resolve()}:{container_workdir}/.flocks/plugins:rw",
     ]
     artifact_binds = [*upload_binds, *output_binds, *plugin_binds]
     if artifact_binds:
@@ -161,8 +211,9 @@ async def resolve_sandbox_context(
                 binds.append(bind)
         env = dict(docker_cfg.env or {})
         env["FLOCKS_WORKSPACE_DIR"] = container_workdir
-        env["FLOCKS_OUTPUTS_DIR"] = f"{container_workdir}/outputs"
-        env["FLOCKS_ARTIFACTS_DIR"] = f"{container_workdir}/outputs/artifacts"
+        env["FLOCKS_OUTPUTS_DIR"] = container_output_dir
+        env["FLOCKS_ARTIFACTS_DIR"] = container_artifacts_dir
+        env["FLOCKS_PROJECT_PLUGINS_DIR"] = f"{container_workdir}/.flocks/plugins"
         env["FLOCKS_SESSION_ID"] = output_session_key
         docker_cfg.binds = binds
         docker_cfg.env = env
@@ -191,6 +242,7 @@ async def resolve_sandbox_context(
         session_key=raw_session_key,
         workspace_dir=effective_workspace_dir,
         agent_workspace_dir=agent_workspace_dir,
+        project_plugins_dir=str(project_plugins_dir),
         workspace_access=cfg.workspace_access,
         container_name=container_name,
         container_workdir=cfg.docker.workdir,
