@@ -13,6 +13,6 @@ class TestRexPromptBuilder:
             available_workflows=[],
         )
 
-        assert "Agent names come from the **Agents** / **Delegation Table** sections" in prompt
-        assert "`tool_search` searches tools only" in prompt
-        assert "do NOT use it to verify whether an agent exists" in prompt
+        assert "智能体名称来自本提示词中的 **智能体** / **委派表** 部分" in prompt
+        assert "`tool_search` 只搜索工具" in prompt
+        assert "不要用它验证智能体是否存在" in prompt

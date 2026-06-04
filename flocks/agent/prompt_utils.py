@@ -44,6 +44,8 @@ def categorize_tools(tool_names: List[str]) -> List[AvailableTool]:
 # ---------------------------------------------------------------------------
 
 # Human-readable labels for ToolCategory values shown in the prompt
+# NOTE: Keep these in English - they are internal developer-facing labels
+# that match ToolCategory enum values and are consumed by LLMs
 _CATEGORY_LABELS: Dict[str, str] = {
     "file":     "File",
     "code":     "Code / Shell",
@@ -109,9 +111,9 @@ def build_key_triggers_section(
     if not key_triggers:
         return ""
     return (
-        "### Key Triggers (check BEFORE classification):\n\n"
+        "### 关键触发词（分类前必查）：\n\n"
         + "\n".join(key_triggers)
-        + '\n- **"Look into" + "create PR"** → Not just research. Full implementation cycle expected.'
+        + '\n- **"看看" + "创建 PR"** → 不仅是研究。预期完整实现周期。'
     )
 
 
@@ -121,14 +123,14 @@ def build_tool_selection_table(
     _skills: Optional[List[AvailableSkill]] = None,
 ) -> str:
     tools = tools or []
-    rows: List[str] = ["### Tool & Agent Selection:"]
+    rows: List[str] = ["### 工具与智能体选择："]
 
     if tools:
         tools_block = _format_tools_for_prompt(tools)
         if tools_block:
             rows += [
                 "",
-                "**Available Tools**:",
+                "**可用工具**：",
                 tools_block,
             ]
 
@@ -139,17 +141,17 @@ def build_tool_selection_table(
     if sorted_agents:
         rows += [
             "",
-            "**Agents** (delegate when task is complex or specialised):",
+            "**智能体**（任务复杂或专业时委派）：",
             "",
-            "| Agent | Cost | When to Use |",
-            "|-------|------|-------------|",
+            "| 智能体 | 成本 | 使用场景 |",
+            "|--------|------|----------|",
         ]
         for agent in sorted_agents:
             short_desc = _first_sentence(_display_description(agent))
             rows.append(f"| `{agent.name}` | {agent.metadata.cost} | {short_desc} |")
 
     rows.append("")
-    rows.append("**Default flow**: explore/librarian (background) + tools → oracle (if required)")
+    rows.append("**默认流程**：explore/librarian（后台）+ 工具 → oracle（如需）")
     return "\n".join(rows)
 
 
@@ -162,10 +164,10 @@ def build_explore_section(agents: List[AvailableAgent]) -> str:
     left = [f"| {w} |  |" for w in avoid_when]
     right = [f"|  | {w} |" for w in use_when]
     return (
-        "### Explore Agent = Contextual Grep\n\n"
-        "Use it as a **peer tool**, not a fallback. Fire liberally.\n\n"
-        "| Use Direct Tools | Use Explore Agent |\n"
-        "|------------------|-------------------|\n"
+        "### Explore 智能体 = 上下文 Grep\n\n"
+        "作为**同级工具**使用，非降级方案。大胆调用。\n\n"
+        "| 直接使用工具 | 使用 Explore 智能体 |\n"
+        "|--------------|---------------------|\n"
         + "\n".join(left + right)
     )
 
@@ -177,27 +179,27 @@ def build_librarian_section(agents: List[AvailableAgent]) -> str:
     use_when = librarian_agent.metadata.use_when or []
     triggers = "\n".join([f'- "{w}"' for w in use_when])
     return (
-        "### Librarian Agent = Reference Grep\n\n"
-        "Search **external references** (docs, OSS, web). Fire proactively when unfamiliar libraries are involved.\n\n"
-        "| Contextual Grep (Internal) | Reference Grep (External) |\n"
-        "|----------------------------|---------------------------|\n"
-        "| Search OUR codebase | Search EXTERNAL resources |\n"
-        "| Find patterns in THIS repo | Find examples in OTHER repos |\n"
-        "| How does our code work? | How does this library work? |\n"
-        "| Project-specific logic | Official API documentation |\n"
-        "| | Library best practices & quirks |\n"
-        "| | OSS implementation examples |\n\n"
-        "**Trigger phrases** (fire librarian immediately):\n"
+        "### Librarian 智能体 = 参考 Grep\n\n"
+        "搜索**外部参考**（文档、OSS、Web）。涉及陌生库时主动调用。\n\n"
+        "| 上下文 Grep（内部） | 参考 Grep（外部） |\n"
+        "|---------------------|-------------------|\n"
+        "| 搜索我们的代码库 | 搜索外部资源 |\n"
+        "| 在本仓库找模式 | 在其他仓库找示例 |\n"
+        "| 我们的代码怎么工作？ | 这个库怎么工作？ |\n"
+        "| 项目特定逻辑 | 官方 API 文档 |\n"
+        "| | 库最佳实践与特性 |\n"
+        "| | OSS 实现示例 |\n\n"
+        "**触发短语**（立即调用 librarian）：\n"
         + triggers
     )
 
 
 def build_delegation_table(agents: List[AvailableAgent]) -> str:
     rows: List[str] = [
-        "### Delegation Table:",
+        "### 委派表：",
         "",
-        "| Domain | Delegate To | Trigger |",
-        "|--------|-------------|---------|",
+        "| 领域 | 委派给 | 触发条件 |",
+        "|------|--------|----------|",
     ]
     for agent in agents:
         for trigger in agent.metadata.triggers:
@@ -219,55 +221,55 @@ def build_category_skills_delegation_guide(
     ]
 
     return (
-        "### Category + Skills Delegation System\n\n"
-        "**delegate_task() combines categories and skills for optimal task execution.**\n\n"
-        "#### Available Categories (Domain-Optimized Models)\n\n"
-        "Each category is configured with a model optimized for that domain. Read the description to understand when to use it.\n\n"
-        "| Category | Domain / Best For |\n"
-        "|----------|-------------------|\n"
+        "### 分类 + 技能委派系统\n\n"
+        "**delegate_task() 结合分类和技能实现最优任务执行。**\n\n"
+        "#### 可用分类（领域优化模型）\n\n"
+        "每个分类配置一个针对该领域优化的模型。阅读描述了解何时使用。\n\n"
+        "| 分类 | 领域 / 最佳用途 |\n"
+        "|------|----------------|\n"
         + "\n".join(category_rows)
-        + "\n\n#### Available Skills (Domain Expertise Injection)\n\n"
-        "Skills inject specialized instructions into the subagent. Read the description to understand when each skill applies.\n\n"
-        "| Skill | Expertise Domain |\n"
-        "|-------|------------------|\n"
+        + "\n\n#### 可用技能（领域专业注入）\n\n"
+        "技能将专业指令注入子智能体。阅读描述了解每个技能的适用场景。\n\n"
+        "| 技能 | 专业领域 |\n"
+        "|------|----------|\n"
         + "\n".join(skill_rows)
         + "\n\n---\n\n"
-        "### MANDATORY: Category + Skill Selection Protocol\n\n"
-        "**STEP 1: Select Category**\n"
-        "- Read each category's description\n"
-        "- Match task requirements to category domain\n"
-        "- Select the category whose domain BEST fits the task\n\n"
-        "**STEP 2: Evaluate ALL Skills**\n"
-        "For EVERY skill listed above, ask yourself:\n"
-        '> "Does this skill\'s expertise domain overlap with my task?"\n\n'
-        "- If YES → INCLUDE in `load_skills=[...]`\n"
-        "- If NO → You MUST justify why (see below)\n\n"
-        "**STEP 3: Justify Omissions**\n\n"
-        "If you choose NOT to include a skill that MIGHT be relevant, you MUST provide:\n\n"
+        "### 强制：分类 + 技能选择协议\n\n"
+        "**步骤 1：选择分类**\n"
+        "- 阅读每个分类的描述\n"
+        "- 将任务需求与分类领域匹配\n"
+        "- 选择领域最匹配任务的分类\n\n"
+        "**步骤 2：评估所有技能**\n"
+        "对上述每个技能，问自己：\n"
+        '> "这个技能的专业领域与我的任务有重叠吗？"\n\n'
+        "- 是 → 包含在 `load_skills=[...]` 中\n"
+        "- 否 → 必须说明原因（见下）\n\n"
+        "**步骤 3：说明省略原因**\n\n"
+        "如果选择不包含可能相关的技能，必须提供：\n\n"
         "```\n"
-        'SKILL EVALUATION for "[skill-name]":\n'
-        "- Skill domain: [what the skill description says]\n"
-        "- Task domain: [what your task is about]\n"
-        "- Decision: OMIT\n"
-        "- Reason: [specific explanation of why domains don't overlap]\n"
+        '技能评估 "[skill-name]":\n'
+        "- 技能领域：[技能描述所说的]\n"
+        "- 任务领域：[你的任务关于什么]\n"
+        "- 决定：省略\n"
+        "- 原因：[具体解释为何领域不重叠]\n"
         "```\n\n"
-        "**WHY JUSTIFICATION IS MANDATORY:**\n"
-        "- Forces you to actually READ skill descriptions\n"
-        "- Prevents lazy omission of potentially useful skills\n"
-        "- Subagents are STATELESS - they only know what you tell them\n"
-        "- Missing a relevant skill = suboptimal output\n\n"
+        "**为何必须说明原因：**\n"
+        "- 强制你真正阅读技能描述\n"
+        "- 防止懒惰地省略有用的技能\n"
+        "- 子智能体无状态 —— 它们只知道你告诉的内容\n"
+        "- 漏掉相关技能 = 次优输出\n\n"
         "---\n\n"
-        "### Delegation Pattern\n\n"
+        "### 委派模式\n\n"
         "```typescript\n"
         "delegate_task(\n"
         '  category="[selected-category]",\n'
-        '  load_skills=["skill-1", "skill-2"],  // Include ALL relevant skills\n'
+        '  load_skills=["skill-1", "skill-2"],  // 包含所有相关技能\n'
         '  prompt="..."\n'
         ")\n"
         "```\n\n"
-        "**ANTI-PATTERN (will produce poor results):**\n"
+        "**反模式（将产生差结果）：**\n"
         "```typescript\n"
-        'delegate_task(category="...", load_skills=[], run_in_background=false, prompt="...")  // Empty load_skills without justification\n'
+        'delegate_task(category="...", load_skills=[], run_in_background=false, prompt="...")  // 空 load_skills 且无说明\n'
         "```"
     )
 
@@ -281,48 +283,48 @@ def build_oracle_section(agents: List[AvailableAgent]) -> str:
 
     return (
         "<Oracle_Usage>\n"
-        "## Oracle — Read-Only High-IQ Consultant\n\n"
-        "Oracle is a read-only, expensive, high-quality reasoning model for debugging and architecture. Consultation only.\n\n"
-        "### WHEN to Consult:\n\n"
-        "| Trigger | Action |\n"
-        "|---------|--------|\n"
-        + "\n".join([f"| {w} | Oracle FIRST, then implement |" for w in use_when])
-        + "\n\n### WHEN NOT to Consult:\n\n"
+        "## Oracle —— 只读高智商顾问\n\n"
+        "Oracle 是只读、昂贵、高质量推理模型，用于调试和架构。仅作咨询。\n\n"
+        "### 何时咨询：\n\n"
+        "| 触发条件 | 操作 |\n"
+        "|----------|------|\n"
+        + "\n".join([f"| {w} | 先 Oracle，再实现 |" for w in use_when])
+        + "\n\n### 何时不咨询：\n\n"
         + "\n".join([f"- {w}" for w in avoid_when])
-        + "\n\n### Usage Pattern:\n"
-        'Briefly announce "Consulting Oracle for [reason]" before invocation.\n\n'
-        "**Exception**: This is the ONLY case where you announce before acting. For all other work, start immediately without status updates.\n"
+        + "\n\n### 使用模式：\n"
+        '调用前简短声明"为 [原因] 咨询 Oracle"。\n\n'
+        "**例外**：这是唯一需要先声明再行动的情况。其他工作直接开始，无需状态更新。\n"
         "</Oracle_Usage>"
     )
 
 
 def build_hard_blocks_section() -> str:
     blocks = [
-        "| Type error suppression (`as any`, `@ts-ignore`) | Never |",
-        "| Commit without explicit request | Never |",
-        "| Speculate about unread code | Never |",
-        "| Leave code in broken state after failures | Never |",
+        "| 类型错误抑制（`as any`、`@ts-ignore`） | 永不 |",
+        "| 未经明确请求提交 | 永不 |",
+        "| 猜测未读代码 | 永不 |",
+        "| 失败后留下破损代码 | 永不 |",
     ]
     return (
-        "## Hard Blocks (NEVER violate)\n\n"
-        "| Constraint | No Exceptions |\n"
-        "|------------|---------------|\n"
+        "## 硬性约束（永不违反）\n\n"
+        "| 约束 | 无例外 |\n"
+        "|------|--------|\n"
         + "\n".join(blocks)
     )
 
 
 def build_anti_patterns_section() -> str:
     patterns = [
-        "| **Type Safety** | `as any`, `@ts-ignore`, `@ts-expect-error` |",
-        "| **Error Handling** | Empty catch blocks `catch(e) {}` |",
-        "| **Testing** | Deleting failing tests to \"pass\" |",
-        "| **Search** | Firing agents for single-line typos or obvious syntax errors |",
-        "| **Debugging** | Shotgun debugging, random changes |",
+        "| **类型安全** | `as any`、`@ts-ignore`、`@ts-expect-error` |",
+        "| **错误处理** | 空 catch 块 `catch(e) {}` |",
+        "| **测试** | 删除失败测试以'通过' |",
+        "| **搜索** | 为单行拼写错误或明显语法错误调用智能体 |",
+        "| **调试** | 散弹式调试、随机改动 |",
     ]
     return (
-        "## Anti-Patterns (BLOCKING violations)\n\n"
-        "| Category | Forbidden |\n"
-        "|----------|-----------|\n"
+        "## 反模式（阻塞性违规）\n\n"
+        "| 类别 | 禁止 |\n"
+        "|------|------|\n"
         + "\n".join(patterns)
     )
 
@@ -335,14 +337,14 @@ def build_ultrawork_section(
     lines: List[str] = []
 
     if categories:
-        lines.append("**Categories** (for implementation tasks):")
+        lines.append("**分类**（用于实现任务）：")
         for cat in categories:
             short_desc = cat.description or cat.name
             lines.append(f"- `{cat.name}`: {short_desc}")
         lines.append("")
 
     if skills:
-        lines.append("**Skills** (combine with categories - EVALUATE ALL for relevance):")
+        lines.append("**技能**（与分类结合使用 —— 评估所有相关性）：")
         for skill in skills:
             short_desc = _first_sentence(_display_description(skill))
             lines.append(f"- `{skill.name}`: {short_desc}")
@@ -356,10 +358,10 @@ def build_ultrawork_section(
             if a.name in ultrawork_agent_priority
             else 999
         )
-        lines.append("**Agents** (for specialized consultation/exploration):")
+        lines.append("**智能体**（用于专业咨询/探索）：")
         for agent in sorted_agents:
             short_desc = _first_sentence(_display_description(agent))
-            suffix = " (multiple)" if agent.name in ("explore", "librarian") else ""
+            suffix = "（可多次）" if agent.name in ("explore", "librarian") else ""
             lines.append(f"- `{agent.name}{suffix}`: {short_desc}")
 
     return "\n".join(lines)
@@ -378,20 +380,20 @@ def build_workflows_section(workflows: List[AvailableWorkflow]) -> str:
     global_wfs = [w for w in workflows if w.source != "project"]
 
     rows: List[str] = [
-        "### Available Workflows",
+        "### 可用工作流",
         "",
-        "| Workflow | Description | Path | Scope |",
-        "|----------|-------------|------|-------|",
+        "| 工作流 | 描述 | 路径 | 范围 |",
+        "|--------|------|------|------|",
     ]
     for w in project_wfs:
         short_desc = w.description.split("\n")[0] if w.description else ""
-        rows.append(f"| `{w.name}` | {short_desc} | `{w.path}` | project |")
+        rows.append(f"| `{w.name}` | {short_desc} | `{w.path}` | 项目 |")
     for w in global_wfs:
         short_desc = w.description.split("\n")[0] if w.description else ""
-        rows.append(f"| `{w.name}` | {short_desc} | `{w.path}` | global |")
+        rows.append(f"| `{w.name}` | {short_desc} | `{w.path}` | 全局 |")
 
     rows += [
         "",
-        '**Usage**: `run_workflow(workflow="<path>", inputs={...})`',
+        '**用法**：`run_workflow(workflow="<path>", inputs={...})`',
     ]
     return "\n".join(rows)

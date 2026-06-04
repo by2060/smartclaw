@@ -208,7 +208,7 @@ class TestBuildToolSelectionTable:
     def test_contains_available_tools_header(self):
         tools = [AvailableTool(name="bash", category="terminal")]
         output = build_tool_selection_table([], tools)
-        assert "Available Tools" in output
+        assert "可用工具" in output
 
     def test_tools_rendered_in_output(self):
         tools = [
@@ -251,7 +251,7 @@ class TestBuildToolSelectionTable:
 
     def test_default_flow_hint_present(self):
         output = build_tool_selection_table([], [])
-        assert "Default flow" in output
+        assert "默认流程" in output
 
 
 class TestLocalizedDescriptions:
@@ -326,12 +326,12 @@ class TestBuildWorkflowsSection:
     def test_project_scope_label(self):
         wf = self._make_workflow(source="project")
         output = build_workflows_section([wf])
-        assert "project" in output
+        assert "项目" in output
 
     def test_global_scope_label(self):
         wf = self._make_workflow(source="global")
         output = build_workflows_section([wf])
-        assert "global" in output
+        assert "全局" in output
 
     def test_project_workflows_before_global(self):
         project_wf = self._make_workflow(name="proj_wf", source="project")
@@ -358,7 +358,7 @@ class TestBuildWorkflowsSection:
     def test_section_header_present(self):
         wf = self._make_workflow()
         output = build_workflows_section([wf])
-        assert "Available Workflows" in output
+        assert "可用工作流" in output
 
     def test_path_column_in_table(self):
         wf = self._make_workflow(path="/home/user/.flocks/workflow/ndr/workflow.json")
@@ -368,7 +368,7 @@ class TestBuildWorkflowsSection:
     def test_table_has_path_header(self):
         wf = self._make_workflow()
         output = build_workflows_section([wf])
-        assert "Path" in output
+        assert "路径" in output
 
     def test_multiline_description_uses_first_line_only(self):
         wf = self._make_workflow(description="First line.\nSecond line.")
