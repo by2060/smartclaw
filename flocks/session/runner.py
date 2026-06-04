@@ -23,7 +23,7 @@ from flocks.utils.log import Log
 from flocks.utils.id import Identifier
 from flocks.session.session import Session, SessionInfo
 from flocks.session.message import Message, MessageInfo, MessageRole
-from flocks.session.prompt import SystemPrompt, SessionPrompt
+from flocks.session.prompt import SystemPrompt, SessionPrompt, get_prompt_locale
 from flocks.session.core.status import SessionStatus, SessionStatusRetry, SessionStatusBusy
 from flocks.session.lifecycle.retry import SessionRetry
 from flocks.session.lifecycle.compaction import SessionCompaction, CompactionPolicy
@@ -1344,8 +1344,9 @@ class SessionRunner:
         '''
         # 输出按会话隔离新增
         output_session_id = await self._resolve_output_session_id()
+        prompt_locale = get_prompt_locale()
         cache_key = (
-            f"system_prompts:{self.session.id}:{output_session_id}:{agent.name}:{self.provider_id}:{self.model_id}:{tool_revision}"
+            f"system_prompts:{self.session.id}:{output_session_id}:{agent.name}:{self.provider_id}:{self.model_id}:{prompt_locale}:{tool_revision}"
         )
         # -------------end-----------------
         cached = self._static_cache.get(cache_key)

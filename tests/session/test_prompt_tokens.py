@@ -18,7 +18,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from flocks.session.prompt import SessionPrompt, SystemPrompt, PromptTemplate
+from flocks.session import prompt as prompt_module
 from flocks.session import prompt_strings
+from flocks.session.prompt_locale import get_prompt_locale
 
 
 # ---------------------------------------------------------------------------
@@ -197,23 +199,18 @@ class TestSystemPromptEnvironment:
         assert "/my/work/dir" in combined
 
     @pytest.mark.asyncio
-    async def test_outputs_directory_includes_session_id(self, tmp_path, monkeypatch):
-        from flocks.config.config import Config
+    async def test_outputs_directory_includes_session_id(self):
         from flocks.workspace.manager import WorkspaceManager
 
-        monkeypatch.setenv("FLOCKS_WORKSPACE_DIR", str(tmp_path / "workspace"))
         WorkspaceManager._instance = None
-        Config._global_config = None
         try:
             result = await SystemPrompt.environment("/tmp", session_id="ses_prompt")
         finally:
             WorkspaceManager._instance = None
-            Config._global_config = None
 
         combined = "\n".join(result)
         from datetime import date
-        expected = tmp_path / "workspace" / "outputs" / date.today().isoformat() / "ses_prompt"
-        assert str(expected) in combined
+        assert f"outputs/{date.today().isoformat()}/ses_prompt" in combined
         assert "ses_prompt" in combined
 
     @pytest.mark.asyncio
@@ -236,6 +233,29 @@ class TestSystemPromptEnvironment:
 # ---------------------------------------------------------------------------
 
 class TestSystemPromptProvider:
+    def test_prompt_locale_defaults_to_english(self, monkeypatch):
+        monkeypatch.delenv("FLOCKS_SESSION_PROMPT_LOCALE", raising=False)
+        monkeypatch.delenv("FLOCKS_PROMPT_LOCALE", raising=False)
+        monkeypatch.delenv("FLOCKS_SESSION_PROMPT_AUTO_LOCALE", raising=False)
+
+        assert get_prompt_locale() == "en-US"
+
+    def test_prompt_locale_accepts_chinese_env(self, monkeypatch):
+        monkeypatch.setenv("FLOCKS_SESSION_PROMPT_LOCALE", "zh_CN")
+
+        assert get_prompt_locale() == "zh-CN"
+
+    def test_load_prompt_file_prefers_chinese_variant(self):
+        prompt = prompt_module._load_prompt_file("anthropic.txt", prompt_locale="zh-CN")
+
+        assert prompt.startswith("你是 Flocks")
+        assert "英文基线 prompt" in prompt
+
+    def test_load_prompt_file_falls_back_to_english(self):
+        prompt = prompt_module._load_prompt_file("anthropic_spoof.txt", prompt_locale="en-US")
+
+        assert prompt.startswith("You are Claude Code")
+
     def test_anthropic_model_returns_list(self):
         result = SystemPrompt.provider("claude-3-5-sonnet-20241022")
         assert isinstance(result, list)

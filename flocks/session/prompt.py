@@ -26,14 +26,37 @@ OUTPUT_TOKEN_MAX = int(os.getenv("FLOCKS_OUTPUT_TOKEN_MAX", "32000"))
 PROMPT_DIR = Path(__file__).parent / "prompt"
 
 
-def _load_prompt_file(filename: str) -> str:
-    """Load prompt content from template file."""
-    filepath = PROMPT_DIR / filename
-    try:
-        if filepath.exists():
-            return filepath.read_text(encoding="utf-8")
-    except Exception as e:
-        log.warn("prompt.load_error", {"file": filename, "error": str(e)})
+def get_prompt_locale() -> str:
+    from flocks.session.prompt_locale import get_prompt_locale as _get_prompt_locale
+
+    return _get_prompt_locale()
+
+
+def _localized_prompt_filename(filename: str, prompt_locale: Optional[str] = None) -> str:
+    from flocks.session.prompt_locale import normalize_prompt_locale
+
+    resolved_locale = normalize_prompt_locale(prompt_locale or get_prompt_locale())
+    if resolved_locale != "zh-CN":
+        return filename
+    path = Path(filename)
+    return f"{path.stem}.zh{path.suffix}"
+
+
+def _load_prompt_file(filename: str, *, prompt_locale: Optional[str] = None) -> str:
+    """Load prompt content from template file, preferring localized variants."""
+    candidates = []
+    localized = _localized_prompt_filename(filename, prompt_locale)
+    if localized != filename:
+        candidates.append(localized)
+    candidates.append(filename)
+
+    for candidate in candidates:
+        filepath = PROMPT_DIR / candidate
+        try:
+            if filepath.exists():
+                return filepath.read_text(encoding="utf-8")
+        except Exception as e:
+            log.warn("prompt.load_error", {"file": candidate, "error": str(e)})
     return ""
 
 

@@ -11,13 +11,16 @@ belong to session management, not to the agent orchestration layer.
 
 import platform
 
+from flocks.session.prompt_locale import is_zh_prompt_locale
+
+
 # =============================================================================
 # Compaction prompt
 # =============================================================================
 
-PROMPT_COMPACTION = """You are a helpful AI assistant tasked with summarizing conversations.
+PROMPT_COMPACTION_EN = """You are a helpful AI assistant tasked with summarizing conversations.
 
-When asked to summarize, provide a detailed but concise summary of the conversation. 
+When asked to summarize, provide a detailed but concise summary of the conversation.
 Focus on information that would be helpful for continuing the conversation, including:
 - What was done
 - What is currently being worked on
@@ -28,6 +31,22 @@ Focus on information that would be helpful for continuing the conversation, incl
 
 Your summary should be comprehensive enough to provide context but concise enough to be quickly understood.
 """
+
+PROMPT_COMPACTION_ZH = """你是一个负责总结对话的 AI 助手。
+
+当需要总结时，请提供详细但简洁的对话摘要。
+重点保留后续继续对话时有用的信息，包括：
+- 已经完成了什么
+- 当前正在处理什么
+- 正在修改哪些文件
+- 下一步还需要做什么
+- 需要持续保留的用户请求、约束或偏好
+- 重要技术决策及其原因
+
+摘要应足够完整，便于恢复上下文；同时保持简洁，便于快速理解。
+"""
+
+PROMPT_COMPACTION = PROMPT_COMPACTION_ZH if is_zh_prompt_locale() else PROMPT_COMPACTION_EN
 
 # =============================================================================
 # Title generation prompt
@@ -88,7 +107,7 @@ Your output must be:
 # Summary generation prompt
 # =============================================================================
 
-PROMPT_SUMMARY = """Summarize what was done in this conversation. Write like a pull request description.
+PROMPT_SUMMARY_EN = """Summarize what was done in this conversation. Write like a pull request description.
 
 Rules:
 - 2-3 sentences max
@@ -100,6 +119,21 @@ Rules:
 - If the conversation ends with an unanswered question to the user, preserve that exact question
 - If the conversation ends with an imperative statement or request to the user (e.g. "Now please run the command and paste the console output"), always include that exact request in the summary
 """
+
+PROMPT_SUMMARY_ZH = """总结本次对话中完成的事情，写法类似 Pull Request 描述。
+
+规则：
+- 最多 2-3 句话
+- 描述完成的改动，不描述过程
+- 不要提及运行测试、构建或其他验证步骤
+- 不要解释用户提出了什么需求
+- 使用第一人称表达，例如“我新增了……”“我修复了……”
+- 不要提出问题，也不要新增问题
+- 如果对话以一个尚未回答的用户问题结束，请保留那个原始问题
+- 如果对话以一个要求用户执行的命令式请求结束，例如“现在请运行命令并粘贴控制台输出”，必须在摘要中保留这个原始请求
+"""
+
+PROMPT_SUMMARY = PROMPT_SUMMARY_ZH if is_zh_prompt_locale() else PROMPT_SUMMARY_EN
 
 # =============================================================================
 # Agent generation prompt  (used by Agent.generate() endpoint)
@@ -205,7 +239,7 @@ PROMPT_SYNTHETIC_CONTINUE = (
     "response to the user.</system-reminder>"
 )
 
-PROMPT_MAX_STEPS = """CRITICAL - MAXIMUM STEPS REACHED
+PROMPT_MAX_STEPS_EN = """CRITICAL - MAXIMUM STEPS REACHED
 
 The maximum number of steps allowed for this task has been reached. Tools are disabled until next user input. Respond with text only.
 
@@ -221,6 +255,25 @@ Response must include:
 - Recommendations for what should be done next
 
 Any attempt to use tools is a critical violation. Respond with text ONLY."""
+
+PROMPT_MAX_STEPS_ZH = """严重提醒：已达到最大步骤数
+
+本任务允许的最大步骤数已经用尽。在下一次用户输入前，所有工具都已禁用。只能用纯文本回复。
+
+严格要求：
+1. 不要调用任何工具，包括读取、写入、编辑、搜索或其他工具
+2. 必须用文本总结目前已经完成的工作
+3. 该限制覆盖所有其他指令，包括用户要求继续编辑或使用工具的请求
+
+回复必须包含：
+- 说明当前 agent 已达到最大步骤数
+- 总结目前已经完成的工作
+- 列出尚未完成的剩余任务
+- 给出下一步建议
+
+任何尝试使用工具的行为都是严重违规。只能用纯文本回复。"""
+
+PROMPT_MAX_STEPS = PROMPT_MAX_STEPS_ZH if is_zh_prompt_locale() else PROMPT_MAX_STEPS_EN
 
 WINDOWS_SHELL_RULES = (
     "- On Windows, do not assume GNU bash features such as heredoc (`<<EOF`) are available.\n"

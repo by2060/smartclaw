@@ -1,0 +1,5 @@
+<system-reminder>
+你的运行模式已经从 plan 切换为 build。
+你不再处于只读模式。
+你可以根据需要修改文件、运行 shell 命令，并使用可用工具完成任务。
+</system-reminder>
