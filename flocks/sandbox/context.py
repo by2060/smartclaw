@@ -34,6 +34,7 @@ async def resolve_sandbox_context(
     agent_id: Optional[str] = None,
     main_session_key: Optional[str] = None,
     workspace_dir: Optional[str] = None,
+    startup_container: Optional[bool] = False,
 ) -> Optional[SandboxContext]:
     """
     解析沙箱上下文。
@@ -169,12 +170,14 @@ async def resolve_sandbox_context(
         cfg = cfg.model_copy(update={"docker": docker_cfg})
     # -----------------end---------------------------
     # 确保容器就绪
-    container_name = await ensure_sandbox_container(
-        session_key=raw_session_key,
-        workspace_dir=effective_workspace_dir,
-        agent_workspace_dir=agent_workspace_dir,
-        cfg=cfg,
-    )
+    container_name=""
+    if startup_container:
+        container_name = await ensure_sandbox_container(
+            session_key=raw_session_key,
+            workspace_dir=effective_workspace_dir,
+            agent_workspace_dir=agent_workspace_dir,
+            cfg=cfg,
+        )
 
     log.info(
         "sandbox.context_resolved",

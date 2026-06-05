@@ -79,6 +79,7 @@ async def test_real_docker_workflow_requirements_install_and_marker_cache() -> N
                 agent_id="rex",
                 main_session_key="main",
                 workspace_dir=workspace_dir,
+                startup_container=True,
             )
             assert sandbox_ctx is not None
             container_name = sandbox_ctx.container_name

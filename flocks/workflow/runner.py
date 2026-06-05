@@ -150,6 +150,7 @@ def _resolve_sandbox_payload_from_config(tool_context: Optional[Any]) -> Optiona
                 agent_id=agent_id,
                 main_session_key=main_session_key,
                 workspace_dir=workspace_dir,
+                startup_container=True,  # workflow 执行时需要启动容器
             )
         )
     except Exception as exc:

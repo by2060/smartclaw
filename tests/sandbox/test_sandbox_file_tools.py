@@ -582,6 +582,7 @@ async def test_sandbox_context_mounts_main_session_uploads(monkeypatch, tmp_path
             session_key="ses_child_uploads",
             main_session_key="ses_main_uploads",
             workspace_dir=str(tmp_path / "project"),
+            startup_container=True,
         )
 
         assert sandbox_ctx is not None
@@ -590,8 +591,7 @@ async def test_sandbox_context_mounts_main_session_uploads(monkeypatch, tmp_path
         assert "/workspace/uploads/chat/ses_main_uploads" in mounted_dirs
         binds = set(captured_container_kwargs["cfg"].docker.binds or [])
         output_dir = WorkspaceManager.get_instance().get_outputs_dir("ses_main_uploads")
-        assert f"{output_dir.resolve()}:/workspace/outputs" in binds
-        assert f"{output_dir.resolve()}:/workspace/output" in binds
-        assert f"{(output_dir / 'artifacts').resolve()}:/workspace/artifacts" in binds
+        assert f"{output_dir.resolve()}:/workspace/outputs:rw" in binds
+        assert f"{(output_dir / 'artifacts').resolve()}:/workspace/artifacts:rw" in binds
     finally:
         WorkspaceManager._instance = previous_instance

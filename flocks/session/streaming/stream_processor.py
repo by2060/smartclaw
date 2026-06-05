@@ -1051,6 +1051,13 @@ class StreamProcessor:
             if tool_name not in sandbox_aware_tools:
                 return result
 
+            # if tool_name not in {"bash", "read", "write", "edit", "run_workflow"}:
+            #     return result
+
+            # 只有 bash/workflow 工具才需要实际运行容器，文件工具只需工作区路径
+            container_required_tools = {"bash", "run_workflow", "run_workflow_node"}
+            needs_container = tool_name in container_required_tools
+
             if not self._sandbox_context_resolved:
                 config_data = await self._load_config_data()
                 self._sandbox_context_cache = await resolve_sandbox_context(
@@ -1059,8 +1066,20 @@ class StreamProcessor:
                     agent_id=self.agent.name,
                     main_session_key=self._main_session_key,
                     workspace_dir=self._workspace_dir,
+                    startup_container=needs_container,
                 )
                 self._sandbox_context_resolved = True
+            elif needs_container and self._sandbox_context_cache and not self._sandbox_context_cache.container_name:
+                # 上下文已缓存但未启动容器，当前工具需要容器时补充启动
+                config_data = await self._load_config_data()
+                self._sandbox_context_cache = await resolve_sandbox_context(
+                    config_data=config_data,
+                    session_key=self._session_key,
+                    agent_id=self.agent.name,
+                    main_session_key=self._main_session_key,
+                    workspace_dir=self._workspace_dir,
+                    startup_container=True,
+                )
             sandbox_ctx = self._sandbox_context_cache
             if not sandbox_ctx:
                 return result

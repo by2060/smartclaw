@@ -232,6 +232,7 @@ def test_run_workflow_uses_sandbox_runtime_when_sandbox_mode_on(
             workspace_access="rw",
             agent_workspace_dir="/tmp/workspace/.flocks/agents/build",
             env={"HELLO": "1"},
+            upload_mounts=[],
         )
 
     monkeypatch.setattr("flocks.workflow.runner.SandboxPythonExecRuntime", FakeSandboxRuntime)

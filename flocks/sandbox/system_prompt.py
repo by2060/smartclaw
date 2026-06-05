@@ -35,6 +35,7 @@ async def build_sandbox_system_prompt(
         agent_id=agent_id,
         main_session_key=main_session_key,
         workspace_dir=workspace_dir,
+        startup_container = False,  # 仅构建提示，不启动容器
     )
     if not sandbox_ctx:
         return None
