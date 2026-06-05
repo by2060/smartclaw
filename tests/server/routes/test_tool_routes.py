@@ -241,6 +241,48 @@ class TestToolRouteSecurity:
         assert payload["output"] == "hello:http-tool"
 
     @pytest.mark.asyncio
+    async def test_http_tool_context_with_child_session_scopes_outputs_to_root(self):
+        from flocks.server.routes import tool as tool_routes
+
+        root = await Session.create(
+            project_id="default",
+            directory=str(Path.cwd()),
+            title="root-output-session",
+            agent="rex",
+        )
+        child = await Session.create(
+            project_id="default",
+            directory=str(Path.cwd()),
+            title="child-output-session",
+            parent_id=root.id,
+            agent="rex",
+        )
+        message = await Message.create(
+            session_id=child.id,
+            role=MessageRole.USER,
+            content="child message",
+            agent="rex",
+        )
+
+        ctx = await tool_routes._build_http_tool_context(
+            tool_name="http_child_output_session_tool",
+            tool_info=ToolInfo(
+                name="http_child_output_session_tool",
+                description="reports output session context",
+                category=ToolCategory.CUSTOM,
+                source="custom",
+            ),
+            session_id=child.id,
+            message_id=message.id,
+            agent="rex",
+        )
+
+        assert ctx.session_id == child.id
+        assert ctx.message_id == message.id
+        assert ctx.extra["output_session_id"] == root.id
+        assert ctx.extra["main_session_key"] == root.id
+
+    @pytest.mark.asyncio
     async def test_execute_rejects_message_outside_session(
         self,
         client: AsyncClient,
@@ -396,7 +438,7 @@ class TestAPIToolDraftRoutes:
         monkeypatch: pytest.MonkeyPatch,
     ):
         from flocks.tool import api_tool_draft_llm
-        from flocks.tool.api_tool_draft import APIToolDraft, ProviderDraft, ToolDraft
+        from flocks.tool.api_tool_draft import APIToolDraft, NonAPIToolDraftResult, ProviderDraft, ToolDraft
 
         async def fake_generate_api_tool_draft(
             *,
@@ -410,6 +452,7 @@ class TestAPIToolDraftRoutes:
             assert tool_name_prefix is None
             assert model_id is None
             return APIToolDraft(
+                is_api_related=True,
                 provider=ProviderDraft(
                     id="smc_4a_sync",
                     name="SMC 4A Sync",
@@ -441,9 +484,49 @@ class TestAPIToolDraftRoutes:
         assert response.status_code == 200, response.text
         draft = response.json()["draft"]
         assert draft["provider"]["id"] == "postman_api_draft_demo"
+        assert draft["is_api_related"] is True
+        assert "is_api_related" not in response.json()
         assert draft["provider"]["service_id"] == "postman_api_draft_demo"
         assert "version" not in draft["provider"]
         assert draft["tools"][0]["provider"] == "postman_api_draft_demo"
+
+    @pytest.mark.asyncio
+    async def test_generate_returns_non_api_related_result_without_draft_validation(
+        self,
+        client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        from flocks.tool import api_tool_draft_llm
+        from flocks.tool.api_tool_draft import NonAPIToolDraftResult
+
+        async def fake_generate_api_tool_draft(
+            *,
+            source_context: str,
+            auth_hint=None,
+            tool_name_prefix=None,
+            model_id=None,
+        ):
+            assert "meeting notes" in source_context
+            return NonAPIToolDraftResult(
+                is_api_related=False,
+                irrelevant_reason="输入材料与 API 接口无关。",
+            )
+
+        monkeypatch.setattr(api_tool_draft_llm, "generate_api_tool_draft", fake_generate_api_tool_draft)
+
+        response = await client.post(
+            "/api/tools/drafts",
+            json={"sources": [{"type": "text", "source_type": "text", "content": "meeting notes"}]},
+        )
+
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert "is_api_related" not in payload
+        assert payload["draft"] == {
+            "is_api_related": False,
+            "irrelevant_reason": "输入材料与 API 接口无关。",
+        }
+        assert payload["issues"] == []
 
     @pytest.mark.asyncio
     async def test_confirm_writes_provider_yaml_and_registers_tool(
@@ -523,6 +606,420 @@ class TestAPIToolDraftRoutes:
         assert tool_yaml["handler"]["response"] == {"extract": "data"}
         assert ToolRegistry.get(tool_name) is not None
 
+        ToolRegistry._tools.pop(tool_name, None)
+        if tool_name in ToolRegistry._plugin_tool_names:
+            ToolRegistry._plugin_tool_names.remove(tool_name)
+
+    @pytest.mark.asyncio
+    async def test_confirm_upsert_overwrites_provider_and_tool(
+        self,
+        client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ):
+        import yaml
+        from flocks.project.instance import Instance
+
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+        monkeypatch.setattr(Instance, "get_directory", classmethod(lambda cls: str(project_dir)))
+
+        tool_name = "draft_confirm_upsert_sample"
+        provider_id = "draft_confirm_upsert_provider"
+        ToolRegistry._tools.pop(tool_name, None)
+        if tool_name in ToolRegistry._plugin_tool_names:
+            ToolRegistry._plugin_tool_names.remove(tool_name)
+
+        response = await client.post(
+            "/api/tools/drafts/confirm",
+            json={
+                "draft": {
+                    "provider": {
+                        "id": provider_id,
+                        "name": "Original Provider",
+                        "description": "Original provider",
+                        "defaults": {"base_url": "https://api.example.com", "timeout": 30},
+                    },
+                    "tools": [
+                        {
+                            "name": tool_name,
+                            "description": "Original description",
+                            "inputSchema": {"type": "object", "properties": {}},
+                            "handler": {"type": "http", "method": "GET", "url": "{base_url}/original"},
+                        }
+                    ],
+                }
+            },
+        )
+        assert response.status_code == 201, response.text
+
+        response = await client.post(
+            "/api/tools/drafts/confirm",
+            json={
+                "mode": "upsert",
+                "draft": {
+                    "provider": {
+                        "id": provider_id,
+                        "name": "Updated Provider",
+                        "description": "Updated provider",
+                        "defaults": {"base_url": "https://api.updated.example.com", "timeout": 60},
+                    },
+                    "tools": [
+                        {
+                            "name": tool_name,
+                            "description": "Updated description",
+                            "inputSchema": {"type": "object", "properties": {}},
+                            "handler": {"type": "http", "method": "GET", "url": "{base_url}/updated"},
+                        }
+                    ],
+                },
+            },
+        )
+        assert response.status_code == 201, response.text
+
+        provider_path = project_dir / ".flocks" / "plugins" / "tools" / "api" / provider_id / "_provider.yaml"
+        tool_path = project_dir / ".flocks" / "plugins" / "tools" / "api" / provider_id / f"{tool_name}.yaml"
+        provider_yaml = yaml.safe_load(provider_path.read_text(encoding="utf-8"))
+        tool_yaml = yaml.safe_load(tool_path.read_text(encoding="utf-8"))
+
+        assert provider_yaml["name"] == "Updated Provider"
+        assert provider_yaml["defaults"]["base_url"] == "https://api.updated.example.com"
+        assert tool_yaml["description"] == "Updated description"
+        assert tool_yaml["handler"]["url"] == "{base_url}/updated"
+        assert ToolRegistry.get(tool_name).info.description == "Updated description"
+
+        ToolRegistry._tools.pop(tool_name, None)
+        if tool_name in ToolRegistry._plugin_tool_names:
+            ToolRegistry._plugin_tool_names.remove(tool_name)
+
+    @pytest.mark.asyncio
+    async def test_confirm_upsert_rejects_cross_provider_tool_collision(
+        self,
+        client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ):
+        from flocks.project.instance import Instance
+
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+        monkeypatch.setattr(Instance, "get_directory", classmethod(lambda cls: str(project_dir)))
+
+        tool_name = "draft_confirm_cross_provider_sample"
+        original_provider_id = "draft_confirm_original_provider"
+        other_provider_id = "draft_confirm_other_provider"
+        ToolRegistry._tools.pop(tool_name, None)
+        if tool_name in ToolRegistry._plugin_tool_names:
+            ToolRegistry._plugin_tool_names.remove(tool_name)
+
+        response = await client.post(
+            "/api/tools/drafts/confirm",
+            json={
+                "draft": {
+                    "provider": {
+                        "id": original_provider_id,
+                        "name": "Original Provider",
+                        "description": "Original provider",
+                        "defaults": {"base_url": "https://api.example.com"},
+                    },
+                    "tools": [
+                        {
+                            "name": tool_name,
+                            "description": "Original description",
+                            "inputSchema": {"type": "object", "properties": {}},
+                            "handler": {"type": "http", "method": "GET", "url": "{base_url}/original"},
+                        }
+                    ],
+                }
+            },
+        )
+        assert response.status_code == 201, response.text
+
+        response = await client.post(
+            "/api/tools/drafts/confirm",
+            json={
+                "mode": "upsert",
+                "draft": {
+                    "provider": {
+                        "id": other_provider_id,
+                        "name": "Other Provider",
+                        "description": "Other provider",
+                        "defaults": {"base_url": "https://api.other.example.com"},
+                    },
+                    "tools": [
+                        {
+                            "name": tool_name,
+                            "description": "Should not overwrite",
+                            "inputSchema": {"type": "object", "properties": {}},
+                            "handler": {"type": "http", "method": "GET", "url": "{base_url}/other"},
+                        }
+                    ],
+                },
+            },
+        )
+
+        assert response.status_code == 409, response.text
+        assert "outside provider" in response.json()["message"]
+        assert not (
+            project_dir / ".flocks" / "plugins" / "tools" / "api" / other_provider_id / "_provider.yaml"
+        ).exists()
+
+        ToolRegistry._tools.pop(tool_name, None)
+        if tool_name in ToolRegistry._plugin_tool_names:
+            ToolRegistry._plugin_tool_names.remove(tool_name)
+
+    @pytest.mark.asyncio
+    async def test_confirm_upsert_delete_missing_tools(
+        self,
+        client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ):
+        from flocks.project.instance import Instance
+
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+        monkeypatch.setattr(Instance, "get_directory", classmethod(lambda cls: str(project_dir)))
+
+        provider_id = "draft_confirm_delete_missing_provider"
+        kept_tool_name = "draft_confirm_kept_tool"
+        removed_tool_name = "draft_confirm_removed_tool"
+        for tool_name in (kept_tool_name, removed_tool_name):
+            ToolRegistry._tools.pop(tool_name, None)
+            if tool_name in ToolRegistry._plugin_tool_names:
+                ToolRegistry._plugin_tool_names.remove(tool_name)
+
+        response = await client.post(
+            "/api/tools/drafts/confirm",
+            json={
+                "draft": {
+                    "provider": {
+                        "id": provider_id,
+                        "name": "Delete Missing Provider",
+                        "description": "Provider",
+                        "defaults": {"base_url": "https://api.example.com"},
+                    },
+                    "tools": [
+                        {
+                            "name": kept_tool_name,
+                            "description": "Kept tool",
+                            "inputSchema": {"type": "object", "properties": {}},
+                            "handler": {"type": "http", "method": "GET", "url": "{base_url}/kept"},
+                        },
+                        {
+                            "name": removed_tool_name,
+                            "description": "Removed tool",
+                            "inputSchema": {"type": "object", "properties": {}},
+                            "handler": {"type": "http", "method": "GET", "url": "{base_url}/removed"},
+                        },
+                    ],
+                }
+            },
+        )
+        assert response.status_code == 201, response.text
+
+        response = await client.post(
+            "/api/tools/drafts/confirm",
+            json={
+                "mode": "upsert",
+                "draft": {
+                    "provider": {
+                        "id": provider_id,
+                        "name": "Delete Missing Provider",
+                        "description": "Provider",
+                        "defaults": {"base_url": "https://api.example.com"},
+                    },
+                    "tools": [
+                        {
+                            "name": kept_tool_name,
+                            "description": "Kept tool updated",
+                            "inputSchema": {"type": "object", "properties": {}},
+                            "handler": {"type": "http", "method": "GET", "url": "{base_url}/kept-updated"},
+                        }
+                    ],
+                },
+            },
+        )
+        assert response.status_code == 201, response.text
+
+        provider_dir = project_dir / ".flocks" / "plugins" / "tools" / "api" / provider_id
+        assert (provider_dir / f"{kept_tool_name}.yaml").exists()
+        assert not (provider_dir / f"{removed_tool_name}.yaml").exists()
+        assert ToolRegistry.get(removed_tool_name) is None
+
+        for tool_name in (kept_tool_name, removed_tool_name):
+            ToolRegistry._tools.pop(tool_name, None)
+            if tool_name in ToolRegistry._plugin_tool_names:
+                ToolRegistry._plugin_tool_names.remove(tool_name)
+
+    @pytest.mark.asyncio
+    async def test_delete_draft_provider_removes_directory_and_config_keeps_secret_by_default(
+        self,
+        client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ):
+        from flocks.config.config import Config
+        from flocks.config.config_writer import ConfigWriter
+        from flocks.project.instance import Instance
+        from flocks.security import get_secret_manager
+        from flocks.security import secrets as secrets_module
+
+        project_dir = tmp_path / "project"
+        config_dir = tmp_path / "config"
+        project_dir.mkdir()
+        config_dir.mkdir()
+        monkeypatch.setattr(Instance, "get_directory", classmethod(lambda cls: str(project_dir)))
+        monkeypatch.setenv("FLOCKS_CONFIG_DIR", str(config_dir))
+        Config._global_config = None
+        Config._cached_config = None
+        secrets_module._secret_manager = None
+
+        provider_id = "draft_delete_provider"
+        tool_name = "draft_delete_provider_tool"
+        secret_id = "draft_delete_provider_secret"
+        ToolRegistry._tools.pop(tool_name, None)
+        if tool_name in ToolRegistry._plugin_tool_names:
+            ToolRegistry._plugin_tool_names.remove(tool_name)
+
+        response = await client.post(
+            "/api/tools/drafts/confirm",
+            json={
+                "draft": {
+                    "provider": {
+                        "id": provider_id,
+                        "name": "Delete Provider",
+                        "description": "Provider",
+                        "defaults": {"base_url": "https://api.example.com"},
+                        "credential_fields": [
+                            {
+                                "key": "api_key",
+                                "label": "API Key",
+                                "storage": "secret",
+                                "secret_id": secret_id,
+                                "config_key": "apiKey",
+                            }
+                        ],
+                    },
+                    "tools": [
+                        {
+                            "name": tool_name,
+                            "description": "Tool",
+                            "inputSchema": {"type": "object", "properties": {}},
+                            "handler": {"type": "http", "method": "GET", "url": "{base_url}/tool"},
+                        }
+                    ],
+                }
+            },
+        )
+        assert response.status_code == 201, response.text
+
+        ConfigWriter.set_api_service(provider_id, {"apiKey": f"{{secret:{secret_id}}}"})
+        get_secret_manager().set(secret_id, "secret-value")
+
+        response = await client.delete(f"/api/tools/drafts/{provider_id}")
+
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["removed_provider"] is True
+        assert payload["removed_config_keys"] == [provider_id]
+        assert payload["deleted_secrets"] == []
+        assert tool_name in payload["removed_tools"]
+        assert not (project_dir / ".flocks" / "plugins" / "tools" / "api" / provider_id).exists()
+        assert ConfigWriter.get_api_service_raw(provider_id) is None
+        assert get_secret_manager().get(secret_id) == "secret-value"
+        assert ToolRegistry.get(tool_name) is None
+
+        secrets_module._secret_manager = None
+        ToolRegistry._tools.pop(tool_name, None)
+        if tool_name in ToolRegistry._plugin_tool_names:
+            ToolRegistry._plugin_tool_names.remove(tool_name)
+
+    @pytest.mark.asyncio
+    async def test_delete_draft_provider_accepts_service_id_and_deletes_secret_when_requested(
+        self,
+        client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ):
+        import yaml
+        from flocks.config.config import Config
+        from flocks.config.config_writer import ConfigWriter
+        from flocks.project.instance import Instance
+        from flocks.security import get_secret_manager
+        from flocks.security import secrets as secrets_module
+
+        project_dir = tmp_path / "project"
+        config_dir = tmp_path / "config"
+        project_dir.mkdir()
+        config_dir.mkdir()
+        monkeypatch.setattr(Instance, "get_directory", classmethod(lambda cls: str(project_dir)))
+        monkeypatch.setenv("FLOCKS_CONFIG_DIR", str(config_dir))
+        Config._global_config = None
+        Config._cached_config = None
+        secrets_module._secret_manager = None
+
+        provider_id = "draft_delete_service_provider"
+        service_id = "draft_delete_service_id"
+        tool_name = "draft_delete_service_tool"
+        secret_id = "draft_delete_service_secret"
+        ToolRegistry._tools.pop(tool_name, None)
+        if tool_name in ToolRegistry._plugin_tool_names:
+            ToolRegistry._plugin_tool_names.remove(tool_name)
+
+        response = await client.post(
+            "/api/tools/drafts/confirm",
+            json={
+                "draft": {
+                    "provider": {
+                        "id": provider_id,
+                        "name": "Delete Service Provider",
+                        "description": "Provider",
+                        "defaults": {"base_url": "https://api.example.com"},
+                        "credential_fields": [
+                            {
+                                "key": "api_key",
+                                "label": "API Key",
+                                "storage": "secret",
+                                "secret_id": secret_id,
+                                "config_key": "apiKey",
+                            }
+                        ],
+                    },
+                    "tools": [
+                        {
+                            "name": tool_name,
+                            "description": "Tool",
+                            "inputSchema": {"type": "object", "properties": {}},
+                            "handler": {"type": "http", "method": "GET", "url": "{base_url}/tool"},
+                        }
+                    ],
+                }
+            },
+        )
+        assert response.status_code == 201, response.text
+
+        provider_path = project_dir / ".flocks" / "plugins" / "tools" / "api" / provider_id / "_provider.yaml"
+        provider_yaml = yaml.safe_load(provider_path.read_text(encoding="utf-8"))
+        provider_yaml["service_id"] = service_id
+        provider_path.write_text(yaml.dump(provider_yaml, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        ConfigWriter.set_api_service(service_id, {"apiKey": f"{{secret:{secret_id}}}"})
+        get_secret_manager().set(secret_id, "secret-value")
+
+        response = await client.delete(f"/api/tools/drafts/{service_id}?delete_secrets=true")
+
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["removed_provider"] is True
+        assert set(payload["removed_config_keys"]) == {provider_id, service_id}
+        assert payload["deleted_secrets"] == [secret_id]
+        assert not (project_dir / ".flocks" / "plugins" / "tools" / "api" / provider_id).exists()
+        assert ConfigWriter.get_api_service_raw(provider_id) is None
+        assert ConfigWriter.get_api_service_raw(service_id) is None
+        assert get_secret_manager().get(secret_id) is None
+        assert ToolRegistry.get(tool_name) is None
+
+        secrets_module._secret_manager = None
         ToolRegistry._tools.pop(tool_name, None)
         if tool_name in ToolRegistry._plugin_tool_names:
             ToolRegistry._plugin_tool_names.remove(tool_name)

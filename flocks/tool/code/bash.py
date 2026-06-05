@@ -559,6 +559,101 @@ def _is_user_flocks_plugin_write_path(path: str) -> bool:
         return False
 #------------------------------end--------------------------------
 
+
+def _path_is_within(path: str | Path, root: str | Path) -> bool:
+    try:
+        Path(path).expanduser().resolve().relative_to(Path(root).expanduser().resolve())
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _sandbox_project_plugins_host_root(sandbox: "BashSandboxConfig") -> Optional[Path]:
+    if sandbox.project_plugins_dir:
+        return Path(sandbox.project_plugins_dir).expanduser()
+    if sandbox.agent_workspace_dir:
+        return Path(sandbox.agent_workspace_dir).expanduser() / ".flocks" / "plugins"
+    return None
+
+
+def _sandbox_project_plugins_container_root(sandbox: "BashSandboxConfig") -> str:
+    container_root = sandbox.container_workdir.replace("\\", "/").rstrip("/") or "/workspace"
+    return f"{container_root}/.flocks/plugins"
+
+
+def _host_path_variants(path: Path) -> list[str]:
+    raw = str(path)
+    variants = [raw, raw.replace("\\", "/"), path.as_posix()]
+    result: list[str] = []
+    seen: set[str] = set()
+    for variant in variants:
+        if variant and variant not in seen:
+            seen.add(variant)
+            result.append(variant)
+    return result
+
+
+def _normalize_container_plugin_paths(command: str, container_root: str) -> str:
+    pattern = re.compile(
+        re.escape(container_root.rstrip("/")) + r"(?P<suffix>(?:[\\/][^\s'\";|&<>]+)*)"
+    )
+
+    def repl(match: re.Match[str]) -> str:
+        return container_root.rstrip("/") + match.group("suffix").replace("\\", "/")
+
+    return pattern.sub(repl, command)
+
+
+def _rewrite_project_plugin_host_paths_for_sandbox(
+    command: str,
+    sandbox: "BashSandboxConfig",
+) -> str:
+    """Map host project-plugin paths in shell commands to container paths."""
+
+    host_root = _sandbox_project_plugins_host_root(sandbox)
+    if host_root is None:
+        return command
+
+    container_root = _sandbox_project_plugins_container_root(sandbox)
+    rewritten = command
+    for variant in sorted(_host_path_variants(host_root), key=len, reverse=True):
+        rewritten = rewritten.replace(variant, container_root)
+    return _normalize_container_plugin_paths(rewritten, container_root)
+
+
+def _map_project_plugin_workdir(
+    workdir: str,
+    sandbox: "BashSandboxConfig",
+) -> Optional[tuple[str, str]]:
+    host_root = _sandbox_project_plugins_host_root(sandbox)
+    if host_root is None:
+        return None
+
+    container_root = _sandbox_project_plugins_container_root(sandbox)
+    raw = str(workdir).replace("\\", "/")
+    if raw.startswith("file://"):
+        raw = raw[7:]
+
+    if raw == container_root or raw.startswith(container_root.rstrip("/") + "/"):
+        rel = raw[len(container_root.rstrip("/")) :].lstrip("/")
+        host_workdir = host_root.joinpath(*[part for part in rel.split("/") if part])
+        if os.path.isdir(host_workdir):
+            return str(host_workdir), f"{container_root}/{rel}" if rel else container_root
+        return None
+
+    candidate = Path(workdir[7:] if str(workdir).startswith("file://") else workdir).expanduser()
+    if not candidate.is_absolute():
+        return None
+    if not _path_is_within(candidate, host_root) or not os.path.isdir(candidate):
+        return None
+    try:
+        rel_path = candidate.resolve().relative_to(host_root.resolve()).as_posix()
+    except (OSError, ValueError):
+        return None
+    container_workdir = f"{container_root}/{rel_path}" if rel_path else container_root
+    return str(candidate), container_workdir
+
+
 async def _resolve_sandbox_workdir(
     workdir: str,
     sandbox: "BashSandboxConfig",
@@ -574,6 +669,10 @@ async def _resolve_sandbox_workdir(
     from flocks.sandbox.paths import assert_sandbox_path
 
     fallback = sandbox.workspace_dir
+    plugin_workdir = _map_project_plugin_workdir(workdir, sandbox)
+    if plugin_workdir is not None:
+        return plugin_workdir
+
     try:
         result = await assert_sandbox_path(
             file_path=workdir,
@@ -885,6 +984,8 @@ async def _execute_sandboxed(
     - 构建隔离环境变量
     """
     from flocks.sandbox.docker import build_docker_exec_args, build_sandbox_env
+
+    command = _rewrite_project_plugin_host_paths_for_sandbox(command, sandbox)
 
     log.info(
         "bash.execute.sandbox",

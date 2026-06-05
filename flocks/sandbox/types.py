@@ -212,6 +212,10 @@ class SandboxContext(BaseModel):
     session_key: str = Field(description="会话标识")
     workspace_dir: str = Field(description="实际工作目录 (宿主机路径)")
     agent_workspace_dir: str = Field(description="Agent 工作目录 (宿主机路径)")
+    project_plugins_dir: Optional[str] = Field(
+        default=None,
+        description="Project-level Flocks plugins directory on the host",
+    )
     workspace_access: WorkspaceAccess = Field(description="工作区访问模式")
     container_name: str = Field(description="Docker 容器名称")
     container_workdir: str = Field(description="容器内工作目录")
@@ -234,5 +238,7 @@ class BashSandboxConfig(BaseModel):
     container_name: str
     workspace_dir: str
     container_workdir: str
+    agent_workspace_dir: Optional[str] = None
+    project_plugins_dir: Optional[str] = None
     env: Optional[Dict[str, str]] = None
     upload_mounts: List[Dict[str, Any]] = Field(default_factory=list)

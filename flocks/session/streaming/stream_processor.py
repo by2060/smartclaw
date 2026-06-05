@@ -1095,6 +1095,7 @@ class StreamProcessor:
                     **sandbox.model_dump(exclude_none=True),
                     "workspace_access": sandbox_ctx.workspace_access,
                     "agent_workspace_dir": sandbox_ctx.agent_workspace_dir,
+                    "project_plugins_dir": sandbox_ctx.project_plugins_dir,
                     "upload_mounts": sandbox_ctx.upload_mounts,
                 }
             }

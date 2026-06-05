@@ -3,9 +3,10 @@ Tool routes - API endpoints for tool management and execution
 """
 
 import asyncio
+import re
 import time
-from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import List, Optional, Dict, Any, Literal, Union
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from flocks.server.auth import require_admin
@@ -16,6 +17,7 @@ from flocks.permission.next import DeniedError, PermissionNext
 from flocks.tool.api_tool_draft import (
     APIToolDraft,
     DraftValidationIssue,
+    NonAPIToolDraftResult,
     compile_provider_yaml,
     compile_tool_yaml,
     has_validation_errors,
@@ -35,6 +37,7 @@ from flocks.tool.registry import (
 
 router = APIRouter()
 log = Log.create(service="tool-routes")
+_SECRET_REF_PATTERN = re.compile(r"\{secret:([^}]+)\}")
 
 
 # Request/Response Models
@@ -263,7 +266,7 @@ async def _validate_session_message_context(
     )
 
 
-def _build_http_tool_context(
+async def _build_http_tool_context(
     *,
     tool_name: str,
     tool_info: ToolInfo,
@@ -276,6 +279,10 @@ def _build_http_tool_context(
     effective_message_id = message_id or f"http-tool:{tool_name}"
 
     if session_id:
+        from flocks.session.session import Session
+
+        output_session_id = await Session.resolve_root_session_id(session_id)
+
         async def permission_callback(request) -> None:
             metadata = dict(request.metadata or {})
             metadata.setdefault("messageID", effective_message_id)
@@ -295,6 +302,10 @@ def _build_http_tool_context(
             message_id=effective_message_id,
             agent=agent_name,
             permission_callback=permission_callback,
+            extra={
+                "main_session_key": output_session_id,
+                "output_session_id": output_session_id,
+            },
         )
 
     if _requires_session_backed_context(tool_info):
@@ -337,7 +348,7 @@ async def _execute_with_http_context(
         session_id=session_id,
         message_id=message_id,
     )
-    ctx = _build_http_tool_context(
+    ctx = await _build_http_tool_context(
         tool_name=tool_name,
         tool_info=tool_info,
         session_id=validated_session_id,
@@ -979,7 +990,7 @@ class GenerateAPIToolDraftRequest(BaseModel):
 
 
 class GenerateAPIToolDraftResponse(BaseModel):
-    draft: APIToolDraft
+    draft: Union[APIToolDraft, NonAPIToolDraftResult]
     issues: List[DraftValidationIssue] = Field(default_factory=list)
 
 
@@ -996,7 +1007,8 @@ class ValidateAPIToolDraftResponse(BaseModel):
 
 class ConfirmAPIToolDraftRequest(BaseModel):
     draft: APIToolDraft
-    overwrite_provider: bool = False
+    mode: Literal["create", "upsert"] = "create"
+    delete_missing_tools: bool = True
 
 
 class ConfirmAPIToolDraftResponse(BaseModel):
@@ -1006,9 +1018,46 @@ class ConfirmAPIToolDraftResponse(BaseModel):
     issues: List[DraftValidationIssue] = Field(default_factory=list)
 
 
+class DeleteAPIToolProviderResponse(BaseModel):
+    success: bool = True
+    provider_id: str
+    provider_path: Optional[str] = None
+    removed_provider: bool = False
+    removed_tools: List[str] = Field(default_factory=list)
+    removed_config_keys: List[str] = Field(default_factory=list)
+    deleted_secrets: List[str] = Field(default_factory=list)
+
+
 class PluginToolListResponse(BaseModel):
     """Response listing YAML plugin tools"""
     tools: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+def _collect_secret_ids_from_value(value: Any, secret_ids: set[str]) -> None:
+    if isinstance(value, str):
+        secret_ids.update(item.strip() for item in _SECRET_REF_PATTERN.findall(value) if item.strip())
+    elif isinstance(value, dict):
+        for item in value.values():
+            _collect_secret_ids_from_value(item, secret_ids)
+    elif isinstance(value, list):
+        for item in value:
+            _collect_secret_ids_from_value(item, secret_ids)
+
+
+def _collect_api_provider_secret_ids(provider_yaml: Dict[str, Any], config_values: List[Dict[str, Any]]) -> List[str]:
+    secret_ids: set[str] = set()
+    credential_fields = provider_yaml.get("credential_fields")
+    if isinstance(credential_fields, list):
+        for field in credential_fields:
+            if not isinstance(field, dict):
+                continue
+            secret_id = field.get("secret_id")
+            if field.get("storage") == "secret" and isinstance(secret_id, str) and secret_id.strip():
+                secret_ids.add(secret_id.strip())
+    _collect_secret_ids_from_value(provider_yaml, secret_ids)
+    for config_value in config_values:
+        _collect_secret_ids_from_value(config_value, secret_ids)
+    return sorted(secret_ids)
 
 
 async def _create_and_register_yaml_tool(
@@ -1016,17 +1065,18 @@ async def _create_and_register_yaml_tool(
     *,
     provider: Optional[str],
     enabled: bool,
+    overwrite: bool = False,
 ):
     from flocks.tool.tool_loader import (
         TOOL_TYPE_API,
-        create_yaml_tool,
+        upsert_yaml_tool,
         yaml_to_tool,
     )
 
     ToolRegistry.init()
 
     try:
-        yaml_path = create_yaml_tool(data, provider=provider, tool_type=TOOL_TYPE_API)
+        yaml_path = upsert_yaml_tool(data, provider=provider, tool_type=TOOL_TYPE_API, overwrite=overwrite)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except Exception as e:
@@ -1083,7 +1133,7 @@ async def generate_api_tool_draft_route(
     try:
         from flocks.tool.api_tool_draft_llm import generate_api_tool_draft
 
-        draft = await generate_api_tool_draft(
+        result = await generate_api_tool_draft(
             source_context=source_context,
             auth_hint=request.auth_hint,
             tool_name_prefix=request.tool_name_prefix,
@@ -1097,9 +1147,17 @@ async def generate_api_tool_draft_route(
         log.error("tool.draft.generate_error", {"error": str(e)})
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"LLM draft generation failed: {e}")
 
+    if not result.is_api_related:
+        return GenerateAPIToolDraftResponse(
+            draft=result,
+            issues=[],
+        )
+
+    if not isinstance(result, APIToolDraft):
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="LLM draft generation did not return a draft")
     if request.provider_id:
-        draft.provider.id = request.provider_id
-    draft = normalize_api_tool_draft(draft)
+        result.provider.id = request.provider_id
+    draft = normalize_api_tool_draft(result)
     issues = validate_api_tool_draft(draft)
     return GenerateAPIToolDraftResponse(
         draft=draft,
@@ -1135,22 +1193,43 @@ async def confirm_api_tool_draft_route(
     request: ConfirmAPIToolDraftRequest,
     _admin: object = Depends(require_admin),
 ):
-    from flocks.tool.tool_loader import create_api_provider_yaml
+    from flocks.tool.tool_loader import (
+        create_api_provider_yaml,
+        delete_api_provider_tool,
+        find_api_provider_tool,
+        find_yaml_tool,
+        list_api_provider_tools,
+    )
 
     draft = normalize_api_tool_draft(request.draft)
-    issues = validate_api_tool_draft(draft)
+    upsert = request.mode == "upsert"
+    delete_missing_tools = request.delete_missing_tools if upsert else False
+    issues = validate_api_tool_draft(draft, check_collisions=not upsert)
     if has_validation_errors(issues):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=[issue.model_dump() for issue in issues],
         )
 
+    if upsert:
+        for tool_draft in draft.tools:
+            existing_path = find_yaml_tool(tool_draft.name)
+            if existing_path is None:
+                continue
+            provider_path = find_api_provider_tool(draft.provider.id, tool_draft.name)
+            same_provider_tool = provider_path is not None and existing_path.resolve() == provider_path.resolve()
+            if not same_provider_tool:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Tool '{tool_draft.name}' already exists outside provider '{draft.provider.id}'",
+                )
+
     provider_yaml = compile_provider_yaml(draft.provider)
     try:
         provider_path = create_api_provider_yaml(
             draft.provider.id,
             provider_yaml,
-            overwrite=request.overwrite_provider,
+            overwrite=upsert,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
@@ -1160,21 +1239,115 @@ async def confirm_api_tool_draft_route(
 
     tool_paths: List[str] = []
     responses: List[ToolInfoResponse] = []
+    draft_tool_names = {tool.name for tool in draft.tools}
     for tool_draft in draft.tools:
         tool_data = compile_tool_yaml(tool_draft)
         tool, yaml_path = await _create_and_register_yaml_tool(
             tool_data,
             provider=draft.provider.id,
             enabled=tool_draft.enabled,
+            overwrite=upsert,
         )
         tool_paths.append(str(yaml_path))
         responses.append(_build_tool_response(tool.info))
+
+    deleted_missing = False
+    if delete_missing_tools:
+        for existing_tool_path in list_api_provider_tools(draft.provider.id):
+            tool_name = existing_tool_path.stem
+            if tool_name not in draft_tool_names:
+                deleted_missing = delete_api_provider_tool(draft.provider.id, tool_name) or deleted_missing
+        if deleted_missing:
+            ToolRegistry.refresh_plugin_tools()
 
     return ConfirmAPIToolDraftResponse(
         provider_path=str(provider_path),
         tool_paths=tool_paths,
         tools=responses,
         issues=issues,
+    )
+
+
+@router.delete(
+    "/drafts/{provider_id}",
+    response_model=DeleteAPIToolProviderResponse,
+    summary="Delete an API tool provider draft service",
+)
+async def delete_api_tool_provider_route(
+    provider_id: str,
+    delete_secrets: bool = Query(False, description="Delete secrets referenced by provider credential_fields/config"),
+    _admin: object = Depends(require_admin),
+):
+    from flocks.security import get_secret_manager
+    from flocks.tool.tool_loader import (
+        delete_api_provider,
+        find_api_provider_dir,
+        _read_yaml_raw,
+    )
+
+    provider_dir = find_api_provider_dir(provider_id)
+    provider_yaml: Dict[str, Any] = {}
+    provider_path: Optional[str] = None
+    config_keys = {provider_id}
+
+    if provider_dir is not None:
+        provider_path = str(provider_dir)
+        config_keys.add(provider_dir.name)
+        provider_file = provider_dir / "_provider.yaml"
+        if provider_file.is_file():
+            try:
+                provider_yaml = _read_yaml_raw(provider_file)
+            except Exception as e:
+                log.warning("tool.draft_provider_delete.provider_read_failed", {
+                    "provider_id": provider_id,
+                    "error": str(e),
+                })
+        service_id = provider_yaml.get("service_id")
+        if isinstance(service_id, str) and service_id.strip():
+            config_keys.add(service_id.strip())
+
+    raw_services = ConfigWriter.list_api_services_raw()
+    config_values: List[Dict[str, Any]] = []
+    for config_key in sorted(config_keys):
+        raw_service = raw_services.get(config_key)
+        if isinstance(raw_service, dict):
+            config_values.append(raw_service)
+
+    secret_ids = _collect_api_provider_secret_ids(provider_yaml, config_values)
+
+    try:
+        deleted_provider_path, removed_tools = delete_api_provider(provider_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        log.error("tool.draft_provider_delete.provider_delete_error", {
+            "provider_id": provider_id,
+            "error": str(e),
+        })
+        raise HTTPException(status_code=500, detail=str(e))
+
+    removed_config_keys = [config_key for config_key in sorted(config_keys) if ConfigWriter.remove_api_service(config_key)]
+
+    deleted_secret_ids: List[str] = []
+    if delete_secrets:
+        secrets = get_secret_manager()
+        for secret_id in secret_ids:
+            if secrets.delete(secret_id):
+                deleted_secret_ids.append(secret_id)
+
+    if deleted_provider_path is not None or removed_config_keys:
+        ToolRegistry.refresh_plugin_tools()
+
+    if deleted_provider_path is None and not removed_config_keys and not deleted_secret_ids:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"API tool provider not found: {provider_id}")
+
+    return DeleteAPIToolProviderResponse(
+        provider_id=provider_id,
+        provider_path=provider_path or (str(deleted_provider_path) if deleted_provider_path else None),
+        removed_provider=deleted_provider_path is not None,
+        removed_tools=removed_tools,
+        removed_config_keys=removed_config_keys,
+        deleted_secrets=deleted_secret_ids,
     )
 
 

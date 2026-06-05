@@ -126,6 +126,36 @@ async def test_write_tool_allows_session_outputs_in_ro_sandbox(monkeypatch, tmp_
 
 
 @pytest.mark.asyncio
+async def test_write_tool_maps_scoped_container_output_path(monkeypatch, tmp_path) -> None:
+    from flocks.workspace.manager import WorkspaceManager
+
+    previous_instance = WorkspaceManager._instance
+    WorkspaceManager._instance = None
+    home_dir = tmp_path / "home"
+    sandbox_dir = tmp_path / "sandbox"
+    home_dir.mkdir()
+    sandbox_dir.mkdir()
+    monkeypatch.setattr("flocks.workspace.manager._user_home_dir", lambda: home_dir)
+    try:
+        output_dir = WorkspaceManager.get_instance().get_outputs_dir("sandbox-file-tools")
+        scoped_path = f"/workspace/outputs/{output_dir.parent.name}/{output_dir.name}/report.md"
+        result = await ToolRegistry.execute(
+            "write",
+            ctx=_sandbox_ctx(str(sandbox_dir), workspace_access="ro"),
+            filePath=scoped_path,
+            content="ok",
+        )
+
+        expected = output_dir / "report.md"
+        nested = output_dir / output_dir.parent.name / output_dir.name / "report.md"
+        assert result.success, result.error
+        assert expected.read_text(encoding="utf-8") == "ok"
+        assert not nested.exists()
+    finally:
+        WorkspaceManager._instance = previous_instance
+
+
+@pytest.mark.asyncio
 async def test_write_tool_allows_session_artifacts_in_ro_sandbox(monkeypatch, tmp_path) -> None:
     from flocks.workspace.manager import WorkspaceManager
 
@@ -591,7 +621,11 @@ async def test_sandbox_context_mounts_main_session_uploads(monkeypatch, tmp_path
         assert "/workspace/uploads/chat/ses_main_uploads" in mounted_dirs
         binds = set(captured_container_kwargs["cfg"].docker.binds or [])
         output_dir = WorkspaceManager.get_instance().get_outputs_dir("ses_main_uploads")
-        assert f"{output_dir.resolve()}:/workspace/outputs:rw" in binds
-        assert f"{(output_dir / 'artifacts').resolve()}:/workspace/artifacts:rw" in binds
+        container_output_dir = f"/workspace/outputs/{output_dir.parent.name}/{output_dir.name}"
+        assert f"{output_dir.resolve()}:{container_output_dir}:rw" in binds
+        assert f"{(output_dir / 'artifacts').resolve()}:/workspace/artifacts" not in binds
+        env = captured_container_kwargs["cfg"].docker.env or {}
+        assert env["FLOCKS_OUTPUTS_DIR"] == container_output_dir
+        assert env["FLOCKS_ARTIFACTS_DIR"] == f"{container_output_dir}/artifacts"
     finally:
         WorkspaceManager._instance = previous_instance

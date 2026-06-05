@@ -67,11 +67,11 @@
   },
   "sandbox": {
     "mode": "on",
-    "scope": "agent",
+    "scope": "session",
     "workspace_access": "ro",
     "docker": {
       "image": "python:slim",
-      "network": "bridge",
+      "network": "none",
       "memory": "1g",
       "cpus": 1,
       "binds": [
@@ -83,7 +83,7 @@
       }
     },
     "prune": {
-      "idle_hours": 12,
+      "idle_hours": 3,
       "max_age_days": 3
     }
   },

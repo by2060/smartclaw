@@ -16,7 +16,7 @@ import re
 import sys
 import time
 from datetime import datetime
-from typing import Optional, Dict, Any, List, Callable, Awaitable, Set, Tuple
+from typing import Optional, Dict, Any, List, Callable, Awaitable, Tuple
 from dataclasses import dataclass, field
 
 from flocks.utils.log import Log
@@ -1462,30 +1462,19 @@ class SessionRunner:
     # 输出按会话隔离新增
     async def _resolve_output_session_id(self) -> str:
         """Use the root parent session for user-facing output directories."""
-        session_id = self.session.id
-        parent_id = getattr(self.session, "parent_id", None)
-        seen: Set[str] = set()
-        while parent_id and parent_id not in seen:
-            seen.add(parent_id)
-            parent = await Session.get_by_id(parent_id)
-            if parent is None:
-                break
-            session_id = parent.id
-            parent_id = getattr(parent, "parent_id", None)
-        return session_id
+        return await Session.resolve_root_session_id(self.session.id)
     # ----------------------end-----------------------------------
 
     async def _build_sandbox_prompt(self, agent: AgentInfo) -> Optional[str]:
         """Build sandbox context prompt when sandboxing is active."""
         try:
             from flocks.config import Config
-            from flocks.session.core.session_state import get_main_session_id
             from flocks.sandbox.system_prompt import build_sandbox_system_prompt
 
             cfg = await Config.get()
             config_data = cfg.model_dump(by_alias=True, exclude_none=True)
             session_key = self.session.id
-            main_session_key = get_main_session_id() or self.session.id
+            main_session_key = await self._resolve_output_session_id()
             return await build_sandbox_system_prompt(
                 config_data=config_data,
                 session_key=session_key,

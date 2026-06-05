@@ -461,6 +461,10 @@ def _map_sandbox_container_path_to_host(
     workspace_root = sandbox.get("workspace_dir")
     parts = rel.split("/") if rel else []
     if len(parts) >= 2 and parts[0] == ".flocks" and parts[1] == "plugins":
+        project_plugins_dir = sandbox.get("project_plugins_dir")
+        if project_plugins_dir:
+            mapped = os.path.normpath(os.path.join(str(project_plugins_dir), *parts[2:]))
+            return mapped, filepath
         workspace_root = sandbox.get("agent_workspace_dir") or workspace_root
     if not workspace_root:
         return filepath, None

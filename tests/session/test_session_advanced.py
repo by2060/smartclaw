@@ -105,6 +105,26 @@ class TestForkChildren:
         children = await Session.children("proj_fork_4", session.id)
         assert children == []
 
+    @pytest.mark.asyncio
+    async def test_resolve_root_session_id_walks_parent_chain(self):
+        root = await _create(project_id="proj_root_1", title="Root")
+        child = await Session.create(
+            project_id="proj_root_1",
+            directory="/tmp",
+            title="Child",
+            parent_id=root.id,
+        )
+        grandchild = await Session.create(
+            project_id="proj_root_1",
+            directory="/tmp",
+            title="Grandchild",
+            parent_id=child.id,
+        )
+
+        assert await Session.resolve_root_session_id(root.id) == root.id
+        assert await Session.resolve_root_session_id(child.id) == root.id
+        assert await Session.resolve_root_session_id(grandchild.id) == root.id
+
 
 # ---------------------------------------------------------------------------
 # Revert

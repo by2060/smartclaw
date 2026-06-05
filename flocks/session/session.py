@@ -754,6 +754,24 @@ class Session:
         """
         all_sessions = await cls.list(project_id)
         return [s for s in all_sessions if s.parent_id == parent_id]
+
+    @classmethod
+    async def resolve_root_session_id(cls, session_id: str) -> str:
+        """Return the top-level parent session id for a session tree."""
+        root_id = session_id
+        session = await cls.get_by_id(session_id)
+        parent_id = getattr(session, "parent_id", None) if session else None
+        seen = {session_id}
+
+        while parent_id and parent_id not in seen:
+            seen.add(parent_id)
+            parent = await cls.get_by_id(parent_id)
+            if parent is None:
+                break
+            root_id = parent.id
+            parent_id = getattr(parent, "parent_id", None)
+
+        return root_id
     
     @classmethod
     async def fork(

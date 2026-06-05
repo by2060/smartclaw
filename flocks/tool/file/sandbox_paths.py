@@ -227,7 +227,15 @@ def _map_workspace_output_container_path(
         session_ids = _effective_output_session_ids(ctx)
         output_root = manager.get_outputs_dir(session_ids[0] if session_ids else None)
         output_root.mkdir(parents=True, exist_ok=True)
-        mapped = (output_root / Path(*parts[1:])).resolve() if len(parts) > 1 else output_root.resolve()
+        output_parts = parts[1:]
+        if (
+            len(output_parts) >= 2
+            and re.fullmatch(r"\d{4}-\d{2}-\d{2}", output_parts[0])
+            and output_parts[0] == output_root.parent.name
+            and output_parts[1] == output_root.name
+        ):
+            output_parts = output_parts[2:]
+        mapped = (output_root / Path(*output_parts)).resolve() if output_parts else output_root.resolve()
     except Exception:
         return None
 
@@ -275,18 +283,53 @@ def _map_workspace_plugin_container_path(
     if any(part in (".", "..") for part in parts):
         return None
 
-    agent_workspace_dir = sandbox.get("agent_workspace_dir")
-    if not agent_workspace_dir:
-        return None
-    project_root = Path(str(agent_workspace_dir)).expanduser()
-    project_plugins_root = project_root / ".flocks" / "plugins"
-    mapped = project_root.joinpath(*parts)
+    project_plugins_dir = sandbox.get("project_plugins_dir")
+    if project_plugins_dir:
+        project_plugins_root = Path(str(project_plugins_dir)).expanduser()
+        suffix = parts[2:] if len(parts) >= 2 and parts[:2] == [".flocks", "plugins"] else parts
+        mapped = project_plugins_root.joinpath(*suffix)
+    else:
+        agent_workspace_dir = sandbox.get("agent_workspace_dir")
+        if not agent_workspace_dir:
+            return None
+        project_root = Path(str(agent_workspace_dir)).expanduser()
+        project_plugins_root = project_root / ".flocks" / "plugins"
+        mapped = project_root.joinpath(*parts)
     if not _path_within(mapped, project_plugins_root):
         return None
     return ResolvedToolPath(
         path=str(mapped),
         sandbox=sandbox,
         mapped_from=filepath,
+        read_only=False,
+    )
+
+
+def _map_host_project_plugin_path(
+    filepath: str,
+    sandbox: Optional[dict[str, Any]],
+) -> Optional[ResolvedToolPath]:
+    """Allow host paths that are already inside the project plugin directory."""
+
+    if not isinstance(sandbox, dict):
+        return None
+
+    project_plugins_dir = sandbox.get("project_plugins_dir")
+    if not project_plugins_dir:
+        return None
+
+    candidate = filepath[7:] if str(filepath).startswith("file://") else filepath
+    if not os.path.isabs(candidate):
+        return None
+
+    project_plugins_root = Path(str(project_plugins_dir)).expanduser()
+    if not _path_within(candidate, project_plugins_root):
+        return None
+
+    return ResolvedToolPath(
+        path=candidate,
+        sandbox=sandbox,
+        mapped_from=None,
         read_only=False,
     )
 
@@ -376,6 +419,8 @@ def is_project_plugin_path(ctx: ToolContext, filepath: str) -> bool:
     candidate = candidate[7:] if str(candidate).startswith("file://") else candidate
 
     roots: list[Path] = []
+    if isinstance(sandbox, dict) and sandbox.get("project_plugins_dir"):
+        roots.append(Path(str(sandbox["project_plugins_dir"])))
     if isinstance(sandbox, dict) and sandbox.get("agent_workspace_dir"):
         roots.append(Path(str(sandbox["agent_workspace_dir"])) / ".flocks" / "plugins")
     try:
@@ -496,10 +541,14 @@ async def resolve_sandbox_path(
     workspace_plugin = _map_workspace_plugin_container_path(filepath, sandbox)
     if workspace_plugin is not None:
         try:
-            agent_workspace_dir = sandbox.get("agent_workspace_dir")
-            if not agent_workspace_dir:
-                raise ValueError("missing agent workspace")
-            plugins_root = Path(str(agent_workspace_dir)).expanduser() / ".flocks" / "plugins"
+            project_plugins_dir = sandbox.get("project_plugins_dir")
+            if project_plugins_dir:
+                plugins_root = Path(str(project_plugins_dir)).expanduser()
+            else:
+                agent_workspace_dir = sandbox.get("agent_workspace_dir")
+                if not agent_workspace_dir:
+                    raise ValueError("missing agent workspace")
+                plugins_root = Path(str(agent_workspace_dir)).expanduser() / ".flocks" / "plugins"
             resolved = await _assert_under_root(workspace_plugin.path, str(plugins_root))
         except Exception:
             return None, (
@@ -511,6 +560,23 @@ async def resolve_sandbox_path(
             sandbox=sandbox,
             mapped_from=workspace_plugin.mapped_from,
             read_only=False,
+        ), None
+
+    host_project_plugin = _map_host_project_plugin_path(filepath, sandbox)
+    if host_project_plugin is not None:
+        try:
+            plugins_root = Path(str(sandbox["project_plugins_dir"])).expanduser()
+            resolved = await _assert_under_root(host_project_plugin.path, str(plugins_root))
+        except Exception:
+            return None, (
+                f"Path escapes project plugin directory: {filepath}. "
+                "Use paths inside /workspace/.flocks/plugins only."
+            )
+        return ResolvedToolPath(
+            path=resolved,
+            sandbox=sandbox,
+            mapped_from=host_project_plugin.mapped_from,
+            read_only=host_project_plugin.read_only,
         ), None
 
     output_mapped = _map_session_output_path(ctx, filepath, sandbox)

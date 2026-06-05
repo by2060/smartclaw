@@ -51,8 +51,8 @@ async def build_sandbox_system_prompt(
         f"- container_workdir: {sandbox_ctx.container_workdir}",
         "- read/write/edit paths are constrained to sandbox workspace and session outputs.",
         "- uploaded chat files are available read-only under /workspace/uploads/chat/<session_id>/.",
-        "- generated reports and final outputs should be written under /workspace/outputs/.",
-        "- workflow intermediate artifacts should be written under /workspace/outputs/artifacts/ or /workspace/artifacts/.",
+        "- generated reports and final outputs should be written under $FLOCKS_OUTPUTS_DIR.",
+        "- workflow intermediate artifacts should be written under $FLOCKS_ARTIFACTS_DIR.",
         "- generated Flocks plugins must be written under /workspace/.flocks/plugins/.",
         "- bash runs in sandbox container by default.",
     ]

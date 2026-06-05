@@ -312,6 +312,95 @@ class TestMergeProviderDefaults:
         result = _merge_provider_defaults(raw, provider)
         assert result["handler"]["query_params"]["apikey"] == "{secret:key123}"
 
+    def test_bearer_token_auth_type_uses_existing_auth(self):
+        raw = {"handler": {"type": "http", "url": "https://example.com"}}
+        provider = {
+            "defaults": {},
+            "authType": "bearerToken",
+            "auth": {
+                "secret": "my_api_key",
+                "inject_as": "header",
+                "header_name": "Authorization",
+                "header_prefix": "Bearer ",
+            },
+        }
+        result = _merge_provider_defaults(raw, provider)
+        assert result["handler"]["headers"]["Authorization"] == "Bearer {secret:my_api_key}"
+
+    def test_basic_auth_type_injects_sm4_credentials(self):
+        raw = {"handler": {"type": "http", "url": "https://example.com"}}
+        provider = {
+            "defaults": {},
+            "authType": "basicAuth",
+            "credential_fields": [
+                {
+                    "key": "username",
+                    "config_key": "username",
+                    "storage": "config",
+                    "config_value": "bf24b96f0c10fdbc75b0faf7a9b42651",
+                },
+                {
+                    "key": "password",
+                    "config_key": "password",
+                    "storage": "config",
+                    "config_value": "e55471d3205415fa9ff0fea3dc22bc6c",
+                },
+            ],
+        }
+        result = _merge_provider_defaults(raw, provider)
+        assert result["handler"]["basic_auth"] == {
+            "username": "{sm4:bf24b96f0c10fdbc75b0faf7a9b42651}",
+            "password": "{sm4:e55471d3205415fa9ff0fea3dc22bc6c}",
+        }
+
+    def test_smart_auth_type_injects_sm4_auth_ext_header(self):
+        raw = {"handler": {"type": "http", "url": "https://example.com"}}
+        provider = {
+            "defaults": {},
+            "authType": "smart",
+            "authExt": [
+                {
+                    "inject_as": "header",
+                    "key": "Authorization",
+                    "value": "cipherhex",
+                }
+            ],
+        }
+        result = _merge_provider_defaults(raw, provider)
+        assert result["handler"]["headers"]["Authorization"] == "{sm4:cipherhex}"
+
+    def test_smart_auth_type_injects_multiple_key_value_auth_ext_headers(self):
+        raw = {"handler": {"type": "http", "url": "https://example.com"}}
+        provider = {
+            "defaults": {},
+            "authType": "smart",
+            "authExt": [
+                {"inject_as": "header", "key": "Tenant", "value": "tenant_cipher"},
+                {"inject_as": "header", "key": "Authorization", "value": "token_cipher"},
+            ],
+        }
+        result = _merge_provider_defaults(raw, provider)
+        assert result["handler"]["headers"] == {
+            "Tenant": "{sm4:tenant_cipher}",
+            "Authorization": "{sm4:token_cipher}",
+        }
+
+    def test_auth_header_value_takes_precedence_over_secret(self):
+        raw = {"handler": {"type": "http", "url": "https://example.com"}}
+        provider = {
+            "defaults": {},
+            "authType": "bearerToken",
+            "auth": {
+                "secret": "my_api_key",
+                "inject_as": "header",
+                "header_name": "Authorization",
+                "header_prefix": "Bearer ",
+                "header_value": "cipherhex",
+            },
+        }
+        result = _merge_provider_defaults(raw, provider)
+        assert result["handler"]["headers"]["Authorization"] == "Bearer {sm4:cipherhex}"
+
     def test_no_provider_passthrough(self):
         raw = {"handler": {"type": "http", "url": "https://example.com"}}
         assert _merge_provider_defaults(raw, None) is raw
@@ -347,6 +436,17 @@ class TestSubstituteParams:
             {"a": "x", "b": "y", "c": "z"},
         )
         assert result == "x/y?c=z"
+
+    def test_sm4_value_is_decrypted_before_user_context(self, monkeypatch):
+        monkeypatch.setattr("flocks.tool.tool_loader._decrypt_sm4_value", lambda value: "Bearer {user:currentToken}")
+
+        result = _substitute_params(
+            "{sm4:cipherhex}",
+            {},
+            user_context={"currentToken": "token123"},
+        )
+
+        assert result == "Bearer token123"
 
 
 # ---------------------------------------------------------------------------
@@ -893,6 +993,134 @@ class TestHttpHandler:
 
         assert result.success is True
         assert result.output == {"data": [1, 2, 3]}
+
+    @pytest.mark.asyncio
+    async def test_sm4_header_uses_user_context(self, monkeypatch):
+        cfg = {
+            "type": "http",
+            "method": "GET",
+            "url": "https://api.example.com/search",
+            "headers": {"Authorization": "{sm4:cipherhex}"},
+            "timeout": 10,
+        }
+        handler = _build_http_handler(cfg)
+        monkeypatch.setattr("flocks.tool.tool_loader._decrypt_sm4_value", lambda value: "Bearer {user:currentToken}")
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={"ok": True})
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = AsyncMock()
+        mock_session.request = MagicMock(return_value=mock_resp)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        ctx = ToolContext(
+            session_id="test",
+            message_id="test",
+            extra={"user_context": {"currentToken": "token123"}},
+        )
+
+        with patch("aiohttp.ClientSession", return_value=mock_session):
+            result = await handler(ctx)
+
+        assert result.success is True
+        assert mock_session.request.call_args.kwargs["headers"]["Authorization"] == "Bearer token123"
+
+    @pytest.mark.asyncio
+    async def test_sm4_header_reports_missing_user_context(self, monkeypatch):
+        cfg = {
+            "type": "http",
+            "method": "GET",
+            "url": "https://api.example.com/search",
+            "headers": {"Authorization": "{sm4:cipherhex}"},
+            "timeout": 10,
+        }
+        handler = _build_http_handler(cfg)
+        monkeypatch.setattr("flocks.tool.tool_loader._decrypt_sm4_value", lambda value: "Bearer {user:currentToken}")
+
+        ctx = ToolContext(session_id="test", message_id="test")
+
+        with patch("aiohttp.ClientSession") as mock_client_session:
+            result = await handler(ctx)
+
+        assert result.success is False
+        assert result.error == "Missing user_context values: currentToken"
+        mock_client_session.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_basic_auth_uses_aiohttp_basic_auth(self):
+        cfg = {
+            "type": "http",
+            "method": "GET",
+            "url": "https://api.example.com/basic",
+            "basic_auth": {
+                "username": "demo-user",
+                "password": "demo-password",
+            },
+            "timeout": 10,
+        }
+        handler = _build_http_handler(cfg)
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={"ok": True})
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = AsyncMock()
+        mock_session.request = MagicMock(return_value=mock_resp)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        ctx = ToolContext(session_id="test", message_id="test")
+
+        with patch("aiohttp.ClientSession", return_value=mock_session):
+            result = await handler(ctx)
+
+        assert result.success is True
+        auth = mock_session.request.call_args.kwargs["auth"]
+        assert auth.login == "demo-user"
+        assert auth.password == "demo-password"
+
+    @pytest.mark.asyncio
+    async def test_basic_auth_templates_are_resolved(self, monkeypatch):
+        cfg = {
+            "type": "http",
+            "method": "GET",
+            "url": "https://api.example.com/basic",
+            "basic_auth": {
+                "username": "{secret:basic_user}",
+                "password": "{sm4:cipherhex}",
+            },
+            "timeout": 10,
+        }
+        handler = _build_http_handler(cfg)
+        monkeypatch.setattr("flocks.tool.tool_loader._decrypt_sm4_value", lambda value: "demo-password")
+        monkeypatch.setattr("flocks.tool.tool_loader._resolve_secrets", lambda value: value.replace("{secret:basic_user}", "demo-user"))
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={"ok": True})
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = AsyncMock()
+        mock_session.request = MagicMock(return_value=mock_resp)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        ctx = ToolContext(session_id="test", message_id="test")
+
+        with patch("aiohttp.ClientSession", return_value=mock_session):
+            result = await handler(ctx)
+
+        assert result.success is True
+        auth = mock_session.request.call_args.kwargs["auth"]
+        assert auth.login == "demo-user"
+        assert auth.password == "demo-password"
 
     @pytest.mark.asyncio
     async def test_error_mapping(self):

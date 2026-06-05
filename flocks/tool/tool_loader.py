@@ -18,6 +18,7 @@ import importlib.util
 import inspect
 import os
 import re
+import shutil
 import urllib.parse
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -44,6 +45,7 @@ _TOOLS_SUBDIR = _DEFAULT_TOOLS_SUBDIR
 _PROVIDER_FILENAME = "_provider.yaml"
 _SECRET_PATTERN = re.compile(r"\{secret:([^}]+)\}")
 _USER_PATTERN = re.compile(r"\{user:([^}]+)\}")
+_SM4_PATTERN = re.compile(r"\{sm4:([^}]+)\}")
 _PARAM_PATTERN = re.compile(r"\{([^}]+)\}")
 
 # ---------------------------------------------------------------------------
@@ -143,24 +145,41 @@ def _merge_provider_defaults(raw: dict, provider: Optional[Dict[str, Any]]) -> d
         if base_url and "{base_url}" in url:
             handler["url"] = url.replace("{base_url}", base_url.rstrip("/"))
 
+        auth_type = provider.get("authType")
         auth = provider.get("auth")
-        if auth:
+        if auth_type in {"smart", "iam6"}:
+            _inject_provider_auth_ext(handler, provider.get("authExt"))
+        elif auth_type == "bearerToken":
+            if auth:
+                _inject_provider_auth(handler, auth)
+        elif auth_type == "basicAuth":
+            _inject_provider_basic_auth(handler, provider.get("credential_fields"))
+        elif not auth_type and auth:
             _inject_provider_auth(handler, auth)
 
     raw["handler"] = handler
     return raw
 
 
+def _sm4_template(value: Any) -> Optional[str]:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return f"{{sm4:{value.strip()}}}"
+
+
 def _inject_provider_auth(handler: dict, auth: Dict[str, Any]) -> None:
     """Inject provider-level auth into handler headers or query params."""
     secret_ref = auth.get("secret")
     user_ref = auth.get("user")
-    if user_ref:
-        secret_placeholder = f"{{user:{user_ref}}}"
-    elif secret_ref:
-        secret_placeholder = f"{{secret:{secret_ref}}}"
-    else:
-        return
+    encrypted_value = auth.get("header_value") or auth.get("value") or auth.get("config_value")
+    auth_value = _sm4_template(encrypted_value)
+    if not auth_value:
+        if user_ref:
+            auth_value = f"{{user:{user_ref}}}"
+        elif secret_ref:
+            auth_value = f"{{secret:{secret_ref}}}"
+        else:
+            return
 
     inject_as = auth.get("inject_as", "header")
 
@@ -169,12 +188,73 @@ def _inject_provider_auth(handler: dict, auth: Dict[str, Any]) -> None:
         prefix = auth.get("header_prefix", "Bearer ")
         headers = handler.setdefault("headers", {})
         if header_name not in headers:
-            headers[header_name] = f"{prefix}{secret_placeholder}"
+            headers[header_name] = f"{prefix}{auth_value}"
     elif inject_as == "query_param":
         param_name = auth.get("param_name", "api_key")
         query_params = handler.setdefault("query_params", {})
         if param_name not in query_params:
-            query_params[param_name] = secret_placeholder
+            query_params[param_name] = auth_value
+
+
+def _inject_provider_auth_ext(handler: dict, auth_ext: Any) -> None:
+    if not isinstance(auth_ext, list):
+        return
+    for item in auth_ext:
+        if not isinstance(item, dict):
+            continue
+        inject_as = item.get("inject_as", "header")
+        encrypted_value = item.get("value")
+        auth_value = _sm4_template(encrypted_value)
+        if not auth_value:
+            continue
+        if inject_as == "header":
+            header_name = item.get("key")
+            if not isinstance(header_name, str) or not header_name.strip():
+                continue
+            headers = handler.setdefault("headers", {})
+            headers.setdefault(header_name.strip(), auth_value)
+        elif inject_as == "query_param":
+            param_name = item.get("key")
+            if not isinstance(param_name, str) or not param_name.strip():
+                continue
+            query_params = handler.setdefault("query_params", {})
+            query_params.setdefault(param_name.strip(), auth_value)
+        elif inject_as == "body":
+            param_name = item.get("key")
+            if not isinstance(param_name, str) or not param_name.strip():
+                continue
+            body = handler.setdefault("body", {})
+            if isinstance(body, dict):
+                body.setdefault(param_name.strip(), auth_value)
+
+
+def _basic_auth_field_value(field: dict[str, Any]) -> Optional[str]:
+    secret_ref = field.get("secret_id") or field.get("secret")
+    encrypted_value = field.get("config_value") or field.get("value")
+    if encrypted_value:
+        return _sm4_template(encrypted_value)
+    if secret_ref:
+        return f"{{secret:{secret_ref}}}"
+    return None
+
+
+def _inject_provider_basic_auth(handler: dict, credential_fields: Any) -> None:
+    if not isinstance(credential_fields, list) or "basic_auth" in handler:
+        return
+
+    values: dict[str, str] = {}
+    for field in credential_fields:
+        if not isinstance(field, dict):
+            continue
+        key = field.get("config_key") or field.get("key")
+        value = _basic_auth_field_value(field)
+        if isinstance(key, str) and key.strip() and value:
+            values[key.strip()] = value
+
+    username = values.get("username") or values.get("user")
+    password = values.get("password") or values.get("pass")
+    if username and password:
+        handler["basic_auth"] = {"username": username, "password": password}
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +278,49 @@ def _resolve_secrets(value: str) -> str:
     return _SECRET_PATTERN.sub(_replacer, value)
 
 
+def _get_api_tool_sm4_key_hex() -> Optional[str]:
+    key_hex = os.environ.get("FLOCKS_API_TOOL_SM4_KEY_HEX")
+    if isinstance(key_hex, str) and key_hex.strip():
+        return key_hex.strip()
+    try:
+        from flocks.security import get_secret_manager
+        secret_value = get_secret_manager().get("api_tool_sm4_key")
+        if isinstance(secret_value, str) and secret_value.strip():
+            return secret_value.strip()
+    except Exception:
+        pass
+    return None
+
+
+def _decrypt_sm4_value(cipher_hex: str) -> str:
+    key_hex = _get_api_tool_sm4_key_hex()
+    if not key_hex:
+        raise ValueError("API tool SM4 key is not configured")
+    try:
+        from gmssl.sm4 import CryptSM4, SM4_DECRYPT
+    except ImportError as e:
+        raise ValueError("gmssl is required to decrypt API tool SM4 values") from e
+
+    try:
+        sm4 = CryptSM4()
+        sm4.set_key(bytes.fromhex(key_hex), SM4_DECRYPT)
+        plaintext = sm4.crypt_ecb(bytes.fromhex(cipher_hex.strip()))
+        if plaintext:
+            padding = plaintext[-1]
+            if 1 <= padding <= 16 and plaintext.endswith(bytes([padding]) * padding):
+                plaintext = plaintext[:-padding]
+        return plaintext.decode("utf-8")
+    except Exception as e:
+        raise ValueError("Failed to decrypt API tool SM4 value") from e
+
+
+def _resolve_sm4_values(value: str) -> str:
+    def _replacer(match: re.Match) -> str:
+        return _decrypt_sm4_value(match.group(1))
+
+    return _SM4_PATTERN.sub(_replacer, value)
+
+
 def _as_bool(value: Any, default: bool = True) -> bool:
     if isinstance(value, bool):
         return value
@@ -219,9 +342,9 @@ def _substitute_params(
 ) -> str:
     """Replace ``{param_name}`` placeholders with actual parameter values.
 
-    Secrets are resolved first, then user context, then parameter placeholders.
+    SM4 values are decrypted first, then secrets, user context, and parameter placeholders.
     """
-    result = _resolve_secrets(template)
+    result = _resolve_secrets(_resolve_sm4_values(template))
 
     def _user_replacer(match: re.Match) -> str:
         key = match.group(1)
@@ -355,8 +478,9 @@ def _build_http_handler(cfg: dict) -> ToolHandler:
     headers_template = cfg.get("headers", {})
     query_params_template = cfg.get("query_params", {})
     body_template = cfg.get("body")
+    basic_auth_template = cfg.get("basic_auth")
     timeout = cfg.get("timeout", 30)
-    verify_ssl = _as_bool(cfg.get("verify_ssl", True), default=True)
+    verify_ssl = _as_bool(cfg.get("verify_ssl", False), default=False)
     response_cfg = cfg.get("response", {})
     if not response_cfg:
         extract_path = cfg.get("response_path")
@@ -373,46 +497,49 @@ def _build_http_handler(cfg: dict) -> ToolHandler:
             user_context = {}
         missing_user_keys: List[str] = []
 
-        url = _substitute_params(
-            url_template,
-            kwargs,
-            url_encode=False,
-            user_context=user_context,
-            missing_user_keys=missing_user_keys,
-        )
-        headers = {
-            k: _substitute_params(
-                v,
+        try:
+            url = _substitute_params(
+                url_template,
                 kwargs,
+                url_encode=False,
                 user_context=user_context,
                 missing_user_keys=missing_user_keys,
             )
-            for k, v in headers_template.items()
-        }
-        query_params = {
-            k: _substitute_params(
-                v,
-                kwargs,
-                user_context=user_context,
-                missing_user_keys=missing_user_keys,
-            )
-            for k, v in query_params_template.items()
-        }
-        query_params = {k: v for k, v in query_params.items() if v}
-
-        body = None
-        if body_template is not None and isinstance(body_template, dict):
-            import json as _json
-            body = _json.dumps({
+            headers = {
                 k: _substitute_params(
                     v,
                     kwargs,
                     user_context=user_context,
                     missing_user_keys=missing_user_keys,
-                ) if isinstance(v, str) else v
-                for k, v in body_template.items()
-            })
-            headers.setdefault("Content-Type", "application/json")
+                )
+                for k, v in headers_template.items()
+            }
+            query_params = {
+                k: _substitute_params(
+                    v,
+                    kwargs,
+                    user_context=user_context,
+                    missing_user_keys=missing_user_keys,
+                )
+                for k, v in query_params_template.items()
+            }
+            query_params = {k: v for k, v in query_params.items() if v}
+
+            body = None
+            if body_template is not None and isinstance(body_template, dict):
+                import json as _json
+                body = _json.dumps({
+                    k: _substitute_params(
+                        v,
+                        kwargs,
+                        user_context=user_context,
+                        missing_user_keys=missing_user_keys,
+                    ) if isinstance(v, str) else v
+                    for k, v in body_template.items()
+                })
+                headers.setdefault("Content-Type", "application/json")
+        except ValueError as e:
+            return ToolResult(success=False, error=str(e))
 
         if missing_user_keys:
             keys = ", ".join(sorted(set(missing_user_keys)))
@@ -420,12 +547,34 @@ def _build_http_handler(cfg: dict) -> ToolHandler:
 
         try:
             client_timeout = aiohttp.ClientTimeout(total=timeout)
-            async with aiohttp.ClientSession(timeout=client_timeout) as session:
+            session_kwargs: Dict[str, Any] = {"timeout": client_timeout}
+            basic_auth = None
+            if isinstance(basic_auth_template, dict):
+                username_template = basic_auth_template.get("username")
+                password_template = basic_auth_template.get("password")
+                if isinstance(username_template, str) and isinstance(password_template, str):
+                    username = _substitute_params(
+                        username_template,
+                        {},
+                        user_context=user_context,
+                        missing_user_keys=missing_user_keys,
+                    )
+                    password = _substitute_params(
+                        password_template,
+                        {},
+                        user_context=user_context,
+                        missing_user_keys=missing_user_keys,
+                    )
+                    if username and password:
+                        basic_auth = aiohttp.BasicAuth(username, password)
+            async with aiohttp.ClientSession(**session_kwargs) as session:
                 req_kwargs: Dict[str, Any] = {"headers": headers}
                 if query_params:
                     req_kwargs["params"] = query_params
                 if body and method in ("POST", "PUT", "PATCH"):
                     req_kwargs["data"] = body
+                if basic_auth is not None:
+                    req_kwargs["auth"] = basic_auth
                 if not verify_ssl:
                     req_kwargs["ssl"] = False
 
@@ -730,7 +879,7 @@ def _yaml_tool_search_roots() -> List[Path]:
         Path.cwd() / ".flocks" / "plugins" / "tools",
     ]'''
     # 新增
-    roots = [_project_tools_root(), _TOOLS_SUBDIR]
+    roots = [_project_tools_root(), _TOOLS_SUBDIR, Path.cwd() / ".flocks" / "plugins" / "tools"]
     result: List[Path] = []
     seen: set[str] = set()
     for root in roots:
@@ -812,6 +961,12 @@ def _write_yaml(yaml_path: Path, data: Dict[str, Any]) -> None:
     yaml_path.write_text(content, encoding="utf-8")
 
 
+def _ensure_safe_path_component(value: str, label: str) -> str:
+    if not value or any(part in value for part in ("..", "/", "\\")):
+        raise ValueError(f"{label} must be a safe path component")
+    return value
+
+
 def create_api_provider_yaml(
     provider_id: str,
     data: Dict[str, Any],
@@ -819,8 +974,7 @@ def create_api_provider_yaml(
     overwrite: bool = False,
 ) -> Path:
     """Create or update an API provider ``_provider.yaml`` file."""
-    if not provider_id or any(part in provider_id for part in ("..", "/", "\\")):
-        raise ValueError("Provider id must be a safe path component")
+    _ensure_safe_path_component(provider_id, "Provider id")
 
     target_path = _project_tools_root() / TOOL_TYPE_API / provider_id / _PROVIDER_FILENAME
     if target_path.exists() and not overwrite:
@@ -829,6 +983,53 @@ def create_api_provider_yaml(
     _write_yaml(target_path, data)
     log.info("tool.provider_yaml.created", {"provider": provider_id, "path": str(target_path)})
     return target_path
+
+
+def find_api_provider_dir(provider_id_or_service_id: str) -> Optional[Path]:
+    identifier = _ensure_safe_path_component(provider_id_or_service_id, "Provider id")
+    api_root = _project_tools_root() / TOOL_TYPE_API
+    direct_dir = api_root / identifier
+    if direct_dir.is_dir():
+        return direct_dir
+    if not api_root.is_dir():
+        return None
+    for provider_dir in api_root.iterdir():
+        if not provider_dir.is_dir() or provider_dir.name.startswith("_"):
+            continue
+        provider_file = provider_dir / _PROVIDER_FILENAME
+        if not provider_file.is_file():
+            continue
+        try:
+            provider_data = _read_yaml_raw(provider_file)
+        except Exception:
+            continue
+        service_id = provider_data.get("service_id")
+        if isinstance(service_id, str) and service_id == identifier:
+            return provider_dir
+    return None
+
+
+def find_api_provider_tool(provider_id: str, name: str) -> Optional[Path]:
+    provider_dir = find_api_provider_dir(provider_id)
+    _ensure_safe_path_component(name, "Tool name")
+    if provider_dir is None:
+        return None
+    for suffix in (".yaml", ".yml"):
+        candidate = provider_dir / f"{name}{suffix}"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def list_api_provider_tools(provider_id: str) -> List[Path]:
+    provider_dir = find_api_provider_dir(provider_id)
+    if provider_dir is None:
+        return []
+    return sorted(
+        path
+        for path in provider_dir.iterdir()
+        if path.is_file() and path.suffix in {".yaml", ".yml"} and path.name != _PROVIDER_FILENAME
+    )
 
 
 def find_yaml_tool(name: str) -> Optional[Path]:
@@ -846,6 +1047,48 @@ def read_yaml_tool(name: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         log.error("tool.yaml.read_failed", {"name": name, "error": str(e)})
         return None
+
+
+def upsert_yaml_tool(
+    data: Dict[str, Any],
+    provider: Optional[str] = None,
+    tool_type: str = TOOL_TYPE_API,
+    *,
+    overwrite: bool = False,
+) -> Path:
+    name = data.get("name")
+    if not name:
+        raise ValueError("Tool data missing required 'name' field")
+    _ensure_safe_path_component(str(name), "Tool name")
+    if provider:
+        _ensure_safe_path_component(provider, "Provider id")
+
+    base_dir = _project_tools_root() / tool_type
+    target_dir = base_dir / provider if provider else base_dir
+    provider_path = find_api_provider_tool(provider, str(name)) if provider and tool_type == TOOL_TYPE_API else None
+    target_path = provider_path or target_dir / f"{name}.yaml"
+    existing_path = _find_yaml_file(str(name))
+
+    if existing_path is not None:
+        try:
+            same_target = existing_path.resolve() == target_path.resolve()
+        except OSError:
+            same_target = str(existing_path) == str(target_path)
+        if not same_target:
+            raise ValueError(f"Tool '{name}' already exists outside provider '{provider or ''}'")
+        if not overwrite:
+            raise ValueError(f"Tool '{name}' already exists")
+
+    if target_path.exists() and not overwrite:
+        raise ValueError(f"Tool '{name}' already exists")
+
+    existed = target_path.exists()
+    _write_yaml(target_path, data)
+    log.info(
+        "tool.yaml.updated" if existed else "tool.yaml.created",
+        {"name": name, "tool_type": tool_type, "path": str(target_path)},
+    )
+    return target_path
 
 
 def create_yaml_tool(
@@ -879,24 +1122,7 @@ def create_yaml_tool(
     ValueError
         If ``name`` is missing or the tool already exists.
     """
-    name = data.get("name")
-    if not name:
-        raise ValueError("Tool data missing required 'name' field")
-
-    if _find_yaml_file(name):
-        raise ValueError(f"Tool '{name}' already exists")
-
-    # 插件输出和执行结果输出新增
-    base_dir = _project_tools_root() / tool_type
-    if provider:
-        target_dir = base_dir / provider
-    else:
-        target_dir = base_dir
-
-    target_path = target_dir / f"{name}.yaml"
-    _write_yaml(target_path, data)
-    log.info("tool.yaml.created", {"name": name, "tool_type": tool_type, "path": str(target_path)})
-    return target_path
+    return upsert_yaml_tool(data, provider=provider, tool_type=tool_type, overwrite=False)
 
 
 def update_yaml_tool(name: str, updates: Dict[str, Any]) -> bool:
@@ -925,15 +1151,7 @@ def update_yaml_tool(name: str, updates: Dict[str, Any]) -> bool:
         return False
 
 
-def delete_yaml_tool(name: str) -> bool:
-    """Delete a YAML plugin tool file and its handler script (if any).
-
-    Returns True on success, False if the YAML file was not found.
-    """
-    path = _find_yaml_file(name)
-    if path is None:
-        return False
-
+def _delete_yaml_path(path: Path, name: str) -> bool:
     try:
         data = _read_yaml_raw(path)
         handler = data.get("handler", {})
@@ -950,6 +1168,44 @@ def delete_yaml_tool(name: str) -> bool:
     except Exception as e:
         log.error("tool.yaml.delete_failed", {"name": name, "error": str(e)})
         return False
+
+
+def delete_api_provider_tool(provider_id: str, name: str) -> bool:
+    path = find_api_provider_tool(provider_id, name)
+    if path is None:
+        return False
+    return _delete_yaml_path(path, name)
+
+
+def delete_api_provider(provider_id_or_service_id: str) -> tuple[Optional[Path], List[str]]:
+    provider_dir = find_api_provider_dir(provider_id_or_service_id)
+    if provider_dir is None:
+        return None, []
+
+    api_root = (_project_tools_root() / TOOL_TYPE_API).resolve()
+    provider_dir_resolved = provider_dir.resolve()
+    if not provider_dir_resolved.is_relative_to(api_root):
+        raise ValueError("Provider directory is outside API tools root")
+
+    tool_names = [path.stem for path in list_api_provider_tools(provider_dir.name)]
+    shutil.rmtree(provider_dir)
+    log.info("tool.provider_yaml.deleted", {
+        "provider": provider_dir.name,
+        "path": str(provider_dir),
+        "tools": tool_names,
+    })
+    return provider_dir, tool_names
+
+
+def delete_yaml_tool(name: str) -> bool:
+    """Delete a YAML plugin tool file and its handler script (if any).
+
+    Returns True on success, False if the YAML file was not found.
+    """
+    path = _find_yaml_file(name)
+    if path is None:
+        return False
+    return _delete_yaml_path(path, name)
 
 
 def _python_tool_dirs() -> List[Path]:
