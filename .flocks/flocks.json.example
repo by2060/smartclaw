@@ -68,7 +68,7 @@
   "sandbox": {
     "mode": "on",
     "scope": "session",
-    "workspace_access": "ro",
+    "workspace_access": "rw",
     "docker": {
       "image": "python:slim",
       "network": "none",
