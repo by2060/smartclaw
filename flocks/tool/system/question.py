@@ -12,6 +12,7 @@ from typing import List, Dict, Any, Optional, Callable, Awaitable
 from flocks.tool.registry import (
     ToolRegistry, ToolCategory, ToolParameter, ParameterType, ToolResult, ToolContext
 )
+from flocks.session.prompt_locale import is_zh_prompt_locale
 from flocks.utils.log import Log
 
 
@@ -124,14 +125,25 @@ async def default_question_handler(
         List of answers (first option selected for each)
     """
     answers = []
+    default_yes = "是" if is_zh_prompt_locale() else "Yes"
     for q in questions:
         options = q.get("options", [])
         if options:
             # Auto-select first option
-            answers.append([options[0].get("label", "Yes")])
+            answers.append([options[0].get("label", default_yes)])
         else:
-            answers.append(["Yes"])
+            answers.append([default_yes])
     return answers
+
+
+def _tr(en: str, zh: str) -> str:
+    return zh if is_zh_prompt_locale() else en
+
+
+def _question_title(count: int) -> str:
+    if is_zh_prompt_locale():
+        return f"已询问 {count} 个问题"
+    return f"Asked {count} question{'s' if count > 1 else ''}"
 
 
 @ToolRegistry.register_function(
@@ -242,7 +254,7 @@ async def question_tool(
     if not questions:
         return ToolResult(
             success=False,
-            error="At least one question is required"
+            error=_tr("At least one question is required", "至少需要提供一个问题")
         )
     
     # Normalize questions
@@ -288,7 +300,7 @@ async def question_tool(
     if not normalized_questions:
         return ToolResult(
             success=False,
-            error="No valid questions provided"
+            error=_tr("No valid questions provided", "未提供有效问题")
         )
     
     # Get handler
@@ -305,7 +317,7 @@ async def question_tool(
         # Format output
         def format_answer(answer: Optional[List[str]]) -> str:
             if not answer:
-                return "Unanswered"
+                return _tr("Unanswered", "未回答")
             return ", ".join(answer)
         
         formatted = ", ".join([
@@ -313,12 +325,15 @@ async def question_tool(
             for i, q in enumerate(normalized_questions)
         ])
         
-        output = f"User has answered your questions: {formatted}. You can now continue with the user's answers in mind."
+        if is_zh_prompt_locale():
+            output = f"用户已回答你的问题：{formatted}。你现在可以根据用户的回答继续。"
+        else:
+            output = f"User has answered your questions: {formatted}. You can now continue with the user's answers in mind."
         
         return ToolResult(
             success=True,
             output=output,
-            title=f"Asked {len(normalized_questions)} question{'s' if len(normalized_questions) > 1 else ''}",
+            title=_question_title(len(normalized_questions)),
             metadata={
                 "answers": answers
             }
@@ -327,10 +342,10 @@ async def question_tool(
     except QuestionRejectedError:
         return ToolResult(
             success=False,
-            error="User rejected the question"
+            error=_tr("User rejected the question", "用户拒绝回答问题")
         )
     except Exception as e:
         return ToolResult(
             success=False,
-            error=f"Failed to get answers: {str(e)}"
+            error=_tr(f"Failed to get answers: {str(e)}", f"获取答案失败：{str(e)}")
         )

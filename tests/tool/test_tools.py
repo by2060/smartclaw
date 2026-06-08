@@ -605,6 +605,52 @@ class TestQuestionTool:
         assert tool is not None
         assert tool.info.name == "question"
 
+    @pytest.mark.asyncio
+    async def test_question_tool_output_defaults_to_english(self, tool_context, monkeypatch):
+        """Question result text remains English by default."""
+        from flocks.tool.system import question as question_module
+
+        async def handler(_session_id, _questions):
+            return [["yes"]]
+
+        monkeypatch.delenv("FLOCKS_SESSION_PROMPT_LOCALE", raising=False)
+        monkeypatch.delenv("FLOCKS_PROMPT_LOCALE", raising=False)
+        monkeypatch.setattr(question_module, "_question_handler", handler)
+
+        result = await question_module.question_tool(
+            tool_context,
+            questions=[{"question": "continue?", "type": "text"}],
+        )
+
+        assert result.success
+        assert result.title == "Asked 1 question"
+        assert result.output.startswith("User has answered your questions")
+
+    @pytest.mark.asyncio
+    async def test_question_tool_output_uses_chinese_locale(self, tool_context, monkeypatch):
+        """Question result text follows the Chinese session prompt locale."""
+        from flocks.tool.system import question as question_module
+
+        async def handler(_session_id, _questions):
+            return [["192.168.10.70"], ["不确定"]]
+
+        monkeypatch.setenv("FLOCKS_SESSION_PROMPT_LOCALE", "zh-CN")
+        monkeypatch.setattr(question_module, "_question_handler", handler)
+
+        result = await question_module.question_tool(
+            tool_context,
+            questions=[
+                {"question": "受感染主机是什么？", "type": "text"},
+                {"question": "操作系统是什么？", "type": "text"},
+            ],
+        )
+
+        assert result.success
+        assert result.title == "已询问 2 个问题"
+        assert result.output.startswith("用户已回答你的问题")
+        assert "User has answered" not in result.output
+        assert "Asked 2 questions" not in result.title
+
 
 class TestPlanTools:
     """Test the plan tools"""

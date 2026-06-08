@@ -199,18 +199,24 @@ class TestSystemPromptEnvironment:
         assert "/my/work/dir" in combined
 
     @pytest.mark.asyncio
-    async def test_outputs_directory_includes_session_id(self):
+    async def test_outputs_directory_includes_session_id(self, tmp_path, monkeypatch):
+        from flocks.config.config import Config
         from flocks.workspace.manager import WorkspaceManager
 
+        monkeypatch.delenv("FLOCKS_OUTPUTS_DIR", raising=False)
+        monkeypatch.setenv("FLOCKS_WORKSPACE_DIR", str(tmp_path / "workspace"))
         WorkspaceManager._instance = None
+        Config._global_config = None
         try:
             result = await SystemPrompt.environment("/tmp", session_id="ses_prompt")
         finally:
             WorkspaceManager._instance = None
+            Config._global_config = None
 
         combined = "\n".join(result)
         from datetime import date
-        assert f"outputs/{date.today().isoformat()}/ses_prompt" in combined
+        expected = tmp_path / "workspace" / "outputs" / date.today().isoformat() / "ses_prompt"
+        assert str(expected) in combined
         assert "ses_prompt" in combined
 
     @pytest.mark.asyncio

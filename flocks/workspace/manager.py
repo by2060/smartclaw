@@ -170,8 +170,10 @@ class WorkspaceManager:
     # 输出按会话隔离新增
     def get_user_workspace_dir(self) -> Path:
         runtime_workspace = os.getenv("FLOCKS_WORKSPACE_DIR")
-        if runtime_workspace and os.getenv("FLOCKS_OUTPUTS_DIR"):
-            return Path(runtime_workspace).expanduser()
+        if runtime_workspace:
+            candidate = Path(runtime_workspace).expanduser()
+            if not _looks_like_source_dir(candidate):
+                return candidate
         return _user_workspace_dir()
 
     def get_memory_dir(self) -> Path:
@@ -376,10 +378,8 @@ class WorkspaceManager:
         """
         Resolve a relative path inside the canonical user workspace root.
 
-        This normally ignores FLOCKS_WORKSPACE_DIR so chat uploads and generated
-        artifacts cannot be redirected into the project checkout. Sandbox and
-        tool subprocesses may set both FLOCKS_WORKSPACE_DIR and FLOCKS_OUTPUTS_DIR
-        to expose the canonical workspace through container-visible mounts.
+        Honors FLOCKS_WORKSPACE_DIR only when it does not point at a source
+        checkout; unsafe overrides fall back to the canonical user workspace.
         """
         workspace = self.get_user_workspace_dir().resolve()
         if Path(rel_path).is_absolute():
