@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import status
@@ -446,6 +447,69 @@ class TestWorkflowRoutes:
         cancel_resp = await client.post(f"/api/workflow/{wf_id}/history/{exec_id}/cancel")
         assert cancel_resp.status_code == status.HTTP_200_OK, cancel_resp.text
         assert cancel_resp.json()["status"] == "ignored"
+
+    @pytest.mark.asyncio
+    async def test_run_node_returns_before_saving_test_results(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """run_single_node should not wait for node test result persistence."""
+        from flocks.server.routes import workflow as workflow_routes
+        import flocks.workflow.engine as workflow_engine_module
+
+        save_started = asyncio.Event()
+        save_released = asyncio.Event()
+        save_finished = asyncio.Event()
+
+        async def fake_save_node_test_result(workflow_id: str, node_id: str, result: dict):
+            save_started.set()
+            await save_released.wait()
+            save_finished.set()
+
+        async def fake_to_thread(func, *args, **kwargs):
+            return SimpleNamespace(
+                node_id="node_1",
+                outputs={"done": True},
+                stdout="tool finished",
+                error=None,
+                traceback=None,
+                duration_ms=12.5,
+            )
+
+        class _FakeEngine:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def run_node(self, node_id: str, node_inputs: dict):
+                raise AssertionError("run_node should be bypassed by fake asyncio.to_thread")
+
+        monkeypatch.setattr(
+            workflow_routes,
+            "_read_workflow_from_fs",
+            lambda workflow_id: {"workflowJson": _WORKFLOW_JSON, "workflowPath": None},
+        )
+        monkeypatch.setattr(workflow_routes, "_build_workflow_tool_context", AsyncMock(return_value=None))
+        monkeypatch.setattr(workflow_routes, "_save_node_test_result", fake_save_node_test_result)
+        monkeypatch.setattr(workflow_routes.asyncio, "to_thread", fake_to_thread)
+        monkeypatch.setattr(workflow_routes, "get_tool_registry", lambda tool_context=None: None)
+        monkeypatch.setattr(workflow_engine_module, "WorkflowEngine", _FakeEngine)
+
+        response = await asyncio.wait_for(
+            workflow_routes.run_single_node(
+                "wf-test",
+                workflow_routes.RunNodeRequest(node_id="node_1", inputs={"topic": "demo"}),
+            ),
+            timeout=1,
+        )
+
+        assert response.success is True
+        assert response.outputs == {"done": True}
+
+        await asyncio.wait_for(save_started.wait(), timeout=1)
+        assert not save_finished.is_set()
+
+        save_released.set()
+        await asyncio.wait_for(save_finished.wait(), timeout=1)
 
 
 # ===========================================================================

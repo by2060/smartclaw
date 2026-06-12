@@ -6,7 +6,6 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, model_validator
 
 
-_SAFE_COMPONENT_PATTERN = re.compile(r"[^A-Za-z0-9_]+")
 _PLACEHOLDER_PATTERN = re.compile(r"\{([^}]+)\}")
 _ALLOWED_AUTH_TYPES = {"smart", "iam6", "bearerToken", "basicAuth", "custom"}
 _ALLOWED_AUTH_EXT_INJECT_AS = {"header", "query_param", "body"}
@@ -67,13 +66,6 @@ class NonAPIToolDraftResult(BaseModel):
 
 
 APIToolDraftGenerationResult = APIToolDraft | NonAPIToolDraftResult
-
-
-def safe_component(value: Any, fallback: str) -> str:
-    text = str(value or "").strip().lower()
-    text = _SAFE_COMPONENT_PATTERN.sub("_", text).strip("_")
-    return text or fallback
-
 
 def _is_non_empty(value: Any) -> bool:
     if value is None:
@@ -138,7 +130,7 @@ def _normalize_required_from_property_flags(schema: dict[str, Any]) -> None:
 
 def normalize_api_tool_draft(draft: APIToolDraft) -> APIToolDraft:
     provider = draft.provider
-    provider_id = safe_component(provider.id or provider.name, "api_service")
+    provider_id = str(provider.id or provider.name or "api_service").strip()
     provider.id = provider_id
     provider.name = provider.name or provider_id
     provider.service_id = provider_id
@@ -150,8 +142,7 @@ def normalize_api_tool_draft(draft: APIToolDraft) -> APIToolDraft:
     if isinstance(base_url, str):
         provider.defaults["base_url"] = base_url.rstrip("/")
 
-    for index, tool in enumerate(draft.tools):
-        tool.name = safe_component(tool.name, f"api_tool_{index + 1}")
+    for tool in draft.tools:
         tool.category = tool.category or "custom"
         tool.provider = provider_id
         tool.handler = dict(tool.handler or {})
@@ -185,8 +176,8 @@ def validate_api_tool_draft(draft: APIToolDraft, *, check_collisions: bool = Tru
     issues: list[DraftValidationIssue] = []
     provider = draft.provider
 
-    if not provider.id or safe_component(provider.id, "") != provider.id:
-        issues.append(DraftValidationIssue(path="provider.id", message="provider.id 必须是安全的路径组件"))
+    if not provider.id:
+        issues.append(DraftValidationIssue(path="provider.id", message="provider.id 不能为空"))
 
     base_url = provider.defaults.get("base_url") if isinstance(provider.defaults, dict) else None
     if not isinstance(base_url, str) or not base_url.strip():
@@ -261,8 +252,8 @@ def validate_api_tool_draft(draft: APIToolDraft, *, check_collisions: bool = Tru
     seen_tool_names: set[str] = set()
     for index, tool in enumerate(draft.tools):
         prefix = f"tools[{index}]"
-        if not tool.name or safe_component(tool.name, "") != tool.name:
-            issues.append(DraftValidationIssue(path=f"{prefix}.name", message="工具名必须是安全的 snake_case 组件"))
+        if not tool.name:
+            issues.append(DraftValidationIssue(path=f"{prefix}.name", message="工具名不能为空"))
         if tool.name in seen_tool_names:
             issues.append(DraftValidationIssue(path=f"{prefix}.name", message=f"工具名重复：{tool.name}"))
         seen_tool_names.add(tool.name)

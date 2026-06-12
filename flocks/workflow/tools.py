@@ -32,7 +32,7 @@ class ToolFacade:
         return self.registry.run(name, **kwargs)
 
     def run_safe(self, name: str, /, **kwargs: Any) -> Dict[str, Any]:
-        """Run tool and return unified envelope: {success, text, obj, error}."""
+        """Run tool and return unified envelope with metadata."""
         return self.registry.run_safe(name, **kwargs)
 
 

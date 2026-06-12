@@ -27,6 +27,12 @@ from flocks.tool.file.sandbox_paths import (
     is_upload_read_only,
     resolve_sandbox_path,
 )
+from flocks.workflow.artifact_service import (
+    WorkflowArtifactError,
+    WorkflowArtifactFiles,
+    write_workflow_artifact,
+)
+from flocks.workflow.skill_guard import is_workflow_artifact_path, require_workflow_builder_for_artifact
 
 
 log = Log.create(service="tool.write")
@@ -370,6 +376,9 @@ def _rewrite_document_output_path(
     """Route generated document-like files to the root session outputs dir."""
     if not _looks_like_document_output(filepath):
         return filepath, None
+    path = Path(filepath).expanduser()
+    if path.is_absolute() and not _path_is_within(path, base_dir):
+        return filepath, None
     if _is_user_workspace_output_path(filepath, session_id):
         return filepath, None
     if _is_flocks_plugin_or_container_path(filepath, base_dir, sandbox):
@@ -377,7 +386,7 @@ def _rewrite_document_output_path(
     if _is_existing_project_file(filepath, base_dir):
         return filepath, None
 
-    filename = Path(filepath).name
+    filename = path.name
     if not filename:
         return filepath, None
     return str(WorkspaceManager.get_instance().get_outputs_dir(session_id) / filename), filepath
@@ -480,6 +489,78 @@ def _map_sandbox_container_path_to_host(
     mapped = os.path.normpath(os.path.join(str(workspace_root), *parts)) if rel else str(workspace_root)
     return mapped, filepath
 # ---------------------end--------------------------------
+
+def _workflow_workspace_from_artifact_path(path: Path) -> Optional[Path]:
+    if (
+        path.parent.parent.name == "workflows"
+        and path.parent.parent.parent.name == "plugins"
+        and path.parent.parent.parent.parent.name == ".flocks"
+    ):
+        return path.parent.parent.parent.parent.parent
+    return None
+
+
+async def _write_workflow_artifact_content(
+    ctx: ToolContext,
+    filepath: str,
+    content: str,
+    *,
+    exists: bool,
+) -> dict:
+    import json as _json
+
+    path = Path(filepath)
+    workflow_id = path.parent.name
+    files = WorkflowArtifactFiles()
+    if path.name == "workflow.json":
+        try:
+            parsed = _json.loads(content)
+        except _json.JSONDecodeError as exc:
+            raise WorkflowArtifactError(
+                f"Invalid workflow JSON: {exc}",
+                issues=[{"kind": "json_invalid", "severity": "error", "message": str(exc)}],
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise WorkflowArtifactError(
+                "Invalid workflow JSON: top-level value must be an object",
+                issues=[{"kind": "json_invalid", "severity": "error", "message": "top-level value must be an object"}],
+            )
+        files.workflow_json = parsed
+    elif path.name == "workflow.md":
+        files.markdown_content = content
+    elif path.name == "sample-inputs.json":
+        try:
+            parsed = _json.loads(content)
+        except _json.JSONDecodeError as exc:
+            raise WorkflowArtifactError(
+                f"Invalid sample-inputs JSON: {exc}",
+                issues=[{"kind": "json_invalid", "severity": "error", "message": str(exc)}],
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise WorkflowArtifactError("sample-inputs.json must contain a JSON object")
+        files.sample_inputs = parsed
+    elif path.name == "node-test-results.json":
+        try:
+            parsed = _json.loads(content)
+        except _json.JSONDecodeError as exc:
+            raise WorkflowArtifactError(
+                f"Invalid node-test-results JSON: {exc}",
+                issues=[{"kind": "json_invalid", "severity": "error", "message": str(exc)}],
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise WorkflowArtifactError("node-test-results.json must contain a JSON object")
+        files.node_test_results = parsed
+
+    return await write_workflow_artifact(
+        workflow_id,
+        files,
+        mode="update" if exists else "create",
+        actor=ctx.agent,
+        event_publisher=ctx.event_publish_callback,
+        workspace=_workflow_workspace_from_artifact_path(path),
+        auto_activate_on_complete=True,
+    )
+
 
 async def _resolve_sandbox_file_path(
     ctx: ToolContext,
@@ -639,6 +720,10 @@ async def write_tool(
         )
         if post_sandbox_rewritten_from is not None:
             rewritten_from = post_sandbox_rewritten_from
+    if _sandbox_container_relative_path(filepath, sandbox) is None:
+        filepath = os.path.normpath(filepath)
+    if rewritten_from is not None and _sandbox_container_relative_path(rewritten_from, sandbox) is None:
+        rewritten_from = os.path.normpath(rewritten_from)
     #------------------------end-----------------------------------
     if (
         isinstance(sandbox, dict)
@@ -655,6 +740,10 @@ async def write_tool(
             ),
             title=filePath,
         )
+    guard_error = await require_workflow_builder_for_artifact(ctx, filepath)
+    if guard_error:
+        return ToolResult(success=False, error=guard_error, title=filePath)
+
     # 输出按会话隔离新增
     deduplicated_from = None
     if _is_user_workspace_output_path(filepath, output_session_id):
@@ -693,31 +782,54 @@ async def write_tool(
         }
     )
     
-    # Create parent directory if needed
-    parent_dir = os.path.dirname(filepath)
-    if parent_dir and not os.path.exists(parent_dir):
+    artifact_record = None
+    if is_workflow_artifact_path(filepath):
         try:
-            os.makedirs(parent_dir, exist_ok=True)
+            artifact_record = await _write_workflow_artifact_content(
+                ctx,
+                filepath,
+                content,
+                exists=exists,
+            )
+        except WorkflowArtifactError as e:
+            return ToolResult(
+                success=False,
+                error=str(e),
+                title=title,
+                metadata={"issues": e.issues},
+            )
         except Exception as e:
             return ToolResult(
                 success=False,
-                error=f"Failed to create directory: {str(e)}",
+                error=f"Failed to write workflow artifact: {str(e)}",
+                title=title,
+            )
+    else:
+        # Create parent directory if needed
+        parent_dir = os.path.dirname(filepath)
+        if parent_dir and not os.path.exists(parent_dir):
+            try:
+                os.makedirs(parent_dir, exist_ok=True)
+            except Exception as e:
+                return ToolResult(
+                    success=False,
+                    error=f"Failed to create directory: {str(e)}",
+                    title=title
+                )
+
+        # Write file
+        try:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(content)
+        except Exception as e:
+            return ToolResult(
+                success=False,
+                error=f"Failed to write file: {str(e)}",
                 title=title
             )
-    
-    # Write file
-    try:
-        with open(filepath, 'w', encoding='utf-8') as f:
-            f.write(content)
-    except Exception as e:
-        return ToolResult(
-            success=False,
-            error=f"Failed to write file: {str(e)}",
-            title=title
-        )
-    
+
     # Build output
-    output = "Wrote file successfully."
+    output = "Wrote workflow artifact successfully." if artifact_record is not None else "Wrote file successfully."
     
     # Note: LSP diagnostics integration would go here
     # For now we just return success
@@ -733,6 +845,7 @@ async def write_tool(
             "deduplicated_from": deduplicated_from,
             #---------------end-----------------------
             "exists": exists,
+            "workflow": artifact_record,
             "diagnostics": {}
         }
     )

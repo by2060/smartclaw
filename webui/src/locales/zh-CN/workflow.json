@@ -13,7 +13,8 @@
   "status": {
     "draft": "草稿",
     "active": "活跃",
-    "archived": "已归档"
+    "archived": "已归档",
+    "invalid": "无效"
   },
   "stats": {
     "calls": "调用次数",

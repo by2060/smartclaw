@@ -9,6 +9,7 @@ import time
 import traceback
 import uuid
 import json
+from pathlib import Path
 from typing import Any, Callable, Deque, Dict, List, NamedTuple, Optional, Set, Tuple, TypeVar
 
 from pydantic import BaseModel, Field
@@ -67,7 +68,15 @@ class ExecutionResult(BaseModel):
 
 
 def _default_workflow_loader(workflow_id: str) -> "Workflow":
-    """Default loader: resolves workflow from Storage by ID (sync wrapper)."""
+    """Default loader: resolves filesystem workflow artifacts before Storage fallback."""
+    try:
+        from flocks.workflow.fs_store import read_workflow_from_fs
+        fs_data = read_workflow_from_fs(workflow_id)
+        if fs_data is not None:
+            return Workflow.from_dict(fs_data["workflowJson"])
+    except Exception as exc:
+        _logger.warning("wf.subworkflow.fs_loader_failed id=%s error=%s", workflow_id, exc)
+
     import asyncio
 
     async def _load():
@@ -700,6 +709,14 @@ class WorkflowEngine:
             )
         assert node.workflow_id, "subworkflow node requires workflow_id"
         assert self.workflow_loader is not None
+        sub_workflow_path: Optional[str] = None
+        try:
+            from flocks.workflow.fs_store import read_workflow_from_fs
+            fs_data = read_workflow_from_fs(node.workflow_id)
+            if fs_data is not None and fs_data.get("workflowPath"):
+                sub_workflow_path = str(fs_data["workflowPath"])
+        except Exception:
+            sub_workflow_path = None
         try:
             sub_wf = self.workflow_loader(node.workflow_id)
         except NodeExecutionError:
@@ -715,6 +732,10 @@ class WorkflowEngine:
             sub_inputs = dict(inputs)
         if node.inputs_const:
             sub_inputs.update(node.inputs_const)
+        if sub_workflow_path:
+            resolved_sub_path = str(Path(sub_workflow_path).expanduser().resolve())
+            sub_inputs.setdefault("_workflow_path", resolved_sub_path)
+            sub_inputs.setdefault("_workflow_dir", str(Path(resolved_sub_path).parent))
         sub_engine = WorkflowEngine(
             workflow=sub_wf,
             runtime=_runtime or self.runtime,
@@ -723,6 +744,7 @@ class WorkflowEngine:
             stop_on_error=self.stop_on_error,
             use_llm=self.use_llm,
             trace=self.trace,
+            workflow_path=sub_workflow_path,
             node_timeout_s=self.node_timeout_s,
             _depth=self._depth + 1,
             workflow_loader=self.workflow_loader,
@@ -751,7 +773,7 @@ class WorkflowEngine:
         matched = [e for e in edges if e.label == selected_label] if selected_label is not None else []
         if matched:
             return matched
-        defaults = [e for e in edges if e.label is None]
+        defaults = [e for e in edges if e.label in (None, "")]
         return defaults[:1] if defaults else []
 
     def _build_downstream_inputs(self, upstream: Dict[str, Any], edge: Edge) -> Dict[str, Any]:

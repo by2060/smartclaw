@@ -297,15 +297,32 @@ async def _build_http_tool_context(
                 tool={"name": tool_name},
             )
 
+        extra: Dict[str, Any] = {}
+        try:
+            from flocks.session.session import Session
+
+            session = await Session.get_by_id(session_id)
+            if session:
+                extra["session_category"] = getattr(session, "category", None)
+                session_metadata = getattr(session, "metadata", None)
+                if isinstance(session_metadata, dict):
+                    extra["session_metadata"] = dict(session_metadata)
+                    loaded_skills = session_metadata.get("loadedSkills")
+                    if isinstance(loaded_skills, list):
+                        extra["loadedSkills"] = list(loaded_skills)
+        except Exception as exc:
+            log.warn("tool.context.session_metadata_failed", {"session_id": session_id, "error": str(exc)})
+
+        # 将第二段代码中需要的新增字段补充进 extra 字典中
+        extra["main_session_key"] = output_session_id
+        extra["output_session_id"] = output_session_id
+
         return ToolContext(
             session_id=session_id,
             message_id=effective_message_id,
             agent=agent_name,
             permission_callback=permission_callback,
-            extra={
-                "main_session_key": output_session_id,
-                "output_session_id": output_session_id,
-            },
+            extra=extra,
         )
 
     if _requires_session_backed_context(tool_info):

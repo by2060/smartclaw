@@ -346,6 +346,50 @@ class TestMcpClientRemoteFallback:
         assert events["call_tool_task"] is events["session_enter_task"]
 
     @pytest.mark.asyncio
+    async def test_call_tool_from_foreign_loop_is_bridged_to_owner_task(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        client = McpClient(
+            name="test-call-cross-loop",
+            server_type="remote",
+            url="https://mcp.example.com/mcp",
+        )
+        events: dict[str, object] = {}
+        monkeypatch.setattr(
+            mcp_client_module,
+            "ClientSession",
+            _make_session_class(events=events),
+        )
+
+        _bind_method(
+            monkeypatch,
+            client,
+            "_create_streamable_http_streams",
+            _make_remote_transport_factory("http"),
+        )
+        _bind_method(
+            monkeypatch,
+            client,
+            "_create_sse_streams",
+            _make_remote_transport_factory("sse"),
+        )
+
+        await client.connect()
+
+        result = await asyncio.wait_for(
+            asyncio.to_thread(
+                lambda: asyncio.run(client.call_tool("demo_tool", {"value": 2}))
+            ),
+            timeout=2,
+        )
+
+        await client.disconnect()
+
+        assert result == {"name": "demo_tool", "arguments": {"value": 2}}
+        assert events["call_tool_task"] is events["session_enter_task"]
+
+    @pytest.mark.asyncio
     async def test_remote_injects_oauth2_client_credentials_header(self):
         """Remote connection should resolve OAuth2 token before connecting."""
         client = McpClient(

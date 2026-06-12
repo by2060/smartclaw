@@ -30,6 +30,12 @@ from flocks.tool.file.sandbox_paths import (
     is_upload_read_only,
     resolve_sandbox_path,
 )
+from flocks.workflow.artifact_service import (
+    WorkflowArtifactError,
+    WorkflowArtifactFiles,
+    write_workflow_artifact,
+)
+from flocks.workflow.skill_guard import is_workflow_artifact_path, require_workflow_builder_for_artifact
 
 
 log = Log.create(service="tool.edit")
@@ -190,6 +196,57 @@ def _safe_relpath(path: str, start: Optional[str]) -> str:
         return os.path.relpath(path, start)
     except ValueError:
         return path
+
+
+async def _write_workflow_artifact_content(
+    ctx: ToolContext,
+    filepath: str,
+    content: str,
+    *,
+    exists: bool,
+) -> dict:
+    import json as _json
+
+    path = Path(filepath)
+    files = WorkflowArtifactFiles()
+    if path.name == "workflow.json":
+        try:
+            parsed = _json.loads(content)
+        except _json.JSONDecodeError as exc:
+            raise WorkflowArtifactError(
+                f"Invalid workflow JSON: {exc}",
+                issues=[{"kind": "json_invalid", "severity": "error", "message": str(exc)}],
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise WorkflowArtifactError("Invalid workflow JSON: top-level value must be an object")
+        files.workflow_json = parsed
+    elif path.name == "workflow.md":
+        files.markdown_content = content
+    elif path.name == "sample-inputs.json":
+        try:
+            parsed = _json.loads(content)
+        except _json.JSONDecodeError as exc:
+            raise WorkflowArtifactError(f"Invalid sample-inputs JSON: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise WorkflowArtifactError("sample-inputs.json must contain a JSON object")
+        files.sample_inputs = parsed
+    elif path.name == "node-test-results.json":
+        try:
+            parsed = _json.loads(content)
+        except _json.JSONDecodeError as exc:
+            raise WorkflowArtifactError(f"Invalid node-test-results JSON: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise WorkflowArtifactError("node-test-results.json must contain a JSON object")
+        files.node_test_results = parsed
+
+    return await write_workflow_artifact(
+        path.parent.name,
+        files,
+        mode="update" if exists else "create",
+        actor=ctx.agent,
+        event_publisher=ctx.event_publish_callback,
+        auto_activate_on_complete=True,
+    )
 
 
 # Replacer type: Generator that yields potential matches
@@ -577,10 +634,14 @@ async def edit_tool(
             title=filePath,
         )
     
+    guard_error = await require_workflow_builder_for_artifact(ctx, filepath)
+    if guard_error:
+        return ToolResult(success=False, error=guard_error, title=filePath)
+
     # Get relative title for display
     worktree = Instance.get_worktree() or os.getcwd()
     title = _safe_relpath(filepath, worktree)
-    
+
     # Handle empty oldString (create new file)
     if oldString == "":
         diff = trim_diff(generate_diff(filepath, "", newString))
@@ -595,27 +656,42 @@ async def edit_tool(
             }
         )
         
-        # Create parent directory if needed
-        parent_dir = os.path.dirname(filepath)
-        if parent_dir and not os.path.exists(parent_dir):
-            os.makedirs(parent_dir, exist_ok=True)
-        
-        try:
-            with open(filepath, 'w', encoding='utf-8') as f:
-                f.write(newString)
-        except Exception as e:
-            return ToolResult(
-                success=False,
-                error=f"Failed to write file: {str(e)}",
-                title=title
-            )
-        
+        artifact_record = None
+        if is_workflow_artifact_path(filepath):
+            try:
+                artifact_record = await _write_workflow_artifact_content(
+                    ctx,
+                    filepath,
+                    newString,
+                    exists=False,
+                )
+            except WorkflowArtifactError as e:
+                return ToolResult(success=False, error=str(e), title=title, metadata={"issues": e.issues})
+            except Exception as e:
+                return ToolResult(success=False, error=f"Failed to write workflow artifact: {str(e)}", title=title)
+        else:
+            # Create parent directory if needed
+            parent_dir = os.path.dirname(filepath)
+            if parent_dir and not os.path.exists(parent_dir):
+                os.makedirs(parent_dir, exist_ok=True)
+
+            try:
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(newString)
+            except Exception as e:
+                return ToolResult(
+                    success=False,
+                    error=f"Failed to write file: {str(e)}",
+                    title=title
+                )
+
         return ToolResult(
             success=True,
             output="Edit applied successfully. If you need to make additional edits to this file, use the Read tool first to get the current file content.",
             title=title,
             metadata={
                 "diff": diff,
+                "workflow": artifact_record,
                 "diagnostics": {}
             }
         )
@@ -673,17 +749,31 @@ async def edit_tool(
         }
     )
     
-    # Write file
-    try:
-        with open(filepath, 'w', encoding='utf-8') as f:
-            f.write(content_new)
-    except Exception as e:
-        return ToolResult(
-            success=False,
-            error=f"Failed to write file: {str(e)}",
-            title=title
-        )
-    
+    artifact_record = None
+    if is_workflow_artifact_path(filepath):
+        try:
+            artifact_record = await _write_workflow_artifact_content(
+                ctx,
+                filepath,
+                content_new,
+                exists=True,
+            )
+        except WorkflowArtifactError as e:
+            return ToolResult(success=False, error=str(e), title=title, metadata={"issues": e.issues})
+        except Exception as e:
+            return ToolResult(success=False, error=f"Failed to write workflow artifact: {str(e)}", title=title)
+    else:
+        # Write file
+        try:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(content_new)
+        except Exception as e:
+            return ToolResult(
+                success=False,
+                error=f"Failed to write file: {str(e)}",
+                title=title
+            )
+
     # Calculate additions and deletions
     old_lines = content_old.split("\n")
     new_lines = content_new.split("\n")
@@ -712,6 +802,7 @@ async def edit_tool(
         metadata={
             "diff": diff,
             "diagnostics": {},
+            "workflow": artifact_record,
             "filediff": {
                 "file": filepath,
                 "additions": additions,

@@ -13,7 +13,8 @@
   "status": {
     "draft": "Draft",
     "active": "Active",
-    "archived": "Archived"
+    "archived": "Archived",
+    "invalid": "Invalid"
   },
   "stats": {
     "calls": "Calls",

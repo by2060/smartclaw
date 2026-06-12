@@ -34,6 +34,20 @@ def _make_ctx(**extra_kwargs) -> ToolContext:
     return ToolContext(**params)
 
 
+VALID_WORKFLOW_JSON = '{"start":"n1","nodes":[{"id":"n1","type":"python","code":"outputs[\\"ok\\"] = True"}],"edges":[]}\n'
+INVALID_WORKFLOW_JSON_WITH_LINT_DETAILS = '''{
+  "id": "alerts_query",
+  "name": "告警查询与报告生成",
+  "start": "query_alerts",
+  "nodes": [
+    {"id": "query_alerts", "type": "http_request", "description": "查询告警接口"},
+    {"id": "generate_report", "type": "llm", "description": "生成报告"}
+  ],
+  "edges": [{"from": "query_alerts", "to": "generate_report"}]
+}
+'''
+
+
 @pytest.mark.asyncio
 async def test_absolute_path_written_directly(tmp_path):
     """Absolute filePath must be written to the exact location given."""
@@ -397,12 +411,12 @@ async def test_bare_workflow_json_rewritten_to_project_workflows(tmp_path, monke
                 / "workflow.json"
             )
 
-            ctx = _make_ctx()
+            ctx = _make_ctx(extra={"loadedSkills": ["workflow-builder"]})
             result = await ToolRegistry.execute(
                 "write",
                 ctx,
                 filePath="workflow.json",
-                content='{"start": "n1", "nodes": [], "edges": []}\n',
+                content=VALID_WORKFLOW_JSON,
             )
         finally:
             WorkspaceManager._instance = None
@@ -413,6 +427,47 @@ async def test_bare_workflow_json_rewritten_to_project_workflows(tmp_path, monke
     assert not wrong_output.exists()
     assert result.metadata["filepath"] == str(expected)
     assert result.metadata["rewritten_from"] == str(project_dir / "workflow.json")
+
+
+@pytest.mark.asyncio
+async def test_workflow_lint_gate_error_includes_issue_details(tmp_path, monkeypatch):
+    from flocks.config.config import Config
+    from flocks.project.instance import Instance
+    from flocks.workspace.manager import WorkspaceManager
+
+    project_dir = tmp_path / "project"
+    workspace = project_dir / ".flocks" / "workspace"
+    home = tmp_path / "home"
+    project_dir.mkdir()
+    home.mkdir()
+    monkeypatch.setenv("FLOCKS_WORKSPACE_DIR", str(workspace))
+    monkeypatch.setattr("flocks.workspace.manager._user_home_dir", lambda: home)
+    WorkspaceManager._instance = None
+    Config._global_config = None
+    with patch.object(Instance, "get_directory", return_value=str(project_dir)):
+        try:
+            expected = project_dir / ".flocks" / "plugins" / "workflows" / "alerts_query" / "workflow.json"
+            ctx = _make_ctx(extra={"loadedSkills": ["workflow-builder"]})
+            result = await ToolRegistry.execute(
+                "write",
+                ctx,
+                filePath="alerts_query/workflow.json",
+                content=INVALID_WORKFLOW_JSON_WITH_LINT_DETAILS,
+            )
+        finally:
+            WorkspaceManager._instance = None
+            Config._global_config = None
+
+    assert not result.success
+    assert not expected.exists()
+    assert "Lint gate issues:" in (result.error or "")
+    assert "query_alerts" in (result.error or "")
+    assert "missing_fields" in (result.error or "")
+    assert "method" in (result.error or "")
+    assert "url" in (result.error or "")
+    assert "generate_report" in (result.error or "")
+    assert "prompt" in (result.error or "")
+    assert result.metadata["issues"]
 
 
 @pytest.mark.asyncio
@@ -443,12 +498,12 @@ async def test_nested_workflow_json_uses_parent_as_workflow_id(tmp_path, monkeyp
                 / "workflow.json"
             )
 
-            ctx = _make_ctx()
+            ctx = _make_ctx(extra={"loadedSkills": ["workflow-builder"]})
             result = await ToolRegistry.execute(
                 "write",
                 ctx,
                 filePath="alert_triage/workflow.json",
-                content='{"start": "n1", "nodes": [], "edges": []}\n',
+                content=VALID_WORKFLOW_JSON,
             )
         finally:
             WorkspaceManager._instance = None

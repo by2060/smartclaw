@@ -17,6 +17,7 @@ export default function TopBar({ workflow, latestExecution, panelOpen, onToggleP
     draft:    { label: t('status.draft'),    className: 'bg-gray-100 text-gray-700' },
     active:   { label: t('status.active'),   className: 'bg-green-100 text-green-800' },
     archived: { label: t('status.archived'), className: 'bg-yellow-100 text-yellow-800' },
+    invalid:  { label: t('status.invalid'),  className: 'bg-red-100 text-red-700' },
   };
 
   const status = statusConfig[workflow.status];

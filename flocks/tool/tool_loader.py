@@ -47,6 +47,8 @@ _SECRET_PATTERN = re.compile(r"\{secret:([^}]+)\}")
 _USER_PATTERN = re.compile(r"\{user:([^}]+)\}")
 _SM4_PATTERN = re.compile(r"\{sm4:([^}]+)\}")
 _PARAM_PATTERN = re.compile(r"\{([^}]+)\}")
+_EXACT_PARAM_PATTERN = re.compile(r"^\{([^}]+)\}$")
+_MISSING = object()
 
 # ---------------------------------------------------------------------------
 # Tool type constants — each type maps to a subdirectory under _TOOLS_SUBDIR
@@ -372,6 +374,70 @@ def _substitute_params(
     return _PARAM_PATTERN.sub(_replacer, result)
 
 
+def _render_template_value(
+    value: Any,
+    params: Dict[str, Any],
+    *,
+    user_context: Optional[Dict[str, Any]] = None,
+    missing_user_keys: Optional[List[str]] = None,
+) -> Any:
+    """Render a YAML template value while preserving exact JSON values.
+
+    A body field like ``query: "{query}"`` should forward the original dict or
+    list instead of stringifying it. Mixed templates such as ``"id-{id}"`` keep
+    the existing string substitution behavior.
+    """
+    if isinstance(value, str):
+        exact = _EXACT_PARAM_PATTERN.match(value)
+        if exact:
+            key = exact.group(1)
+            if key.startswith("secret:") or key.startswith("user:") or key.startswith("sm4:"):
+                return _substitute_params(
+                    value,
+                    params,
+                    user_context=user_context,
+                    missing_user_keys=missing_user_keys,
+                )
+            if key not in params or params[key] is None:
+                return _MISSING
+            return params[key]
+
+        return _substitute_params(
+            value,
+            params,
+            user_context=user_context,
+            missing_user_keys=missing_user_keys,
+        )
+
+    if isinstance(value, dict):
+        rendered: Dict[str, Any] = {}
+        for k, v in value.items():
+            item = _render_template_value(
+                v,
+                params,
+                user_context=user_context,
+                missing_user_keys=missing_user_keys,
+            )
+            if item is not _MISSING:
+                rendered[k] = item
+        return rendered
+
+    if isinstance(value, list):
+        rendered_list: List[Any] = []
+        for item in value:
+            rendered = _render_template_value(
+                item,
+                params,
+                user_context=user_context,
+                missing_user_keys=missing_user_keys,
+            )
+            if rendered is not _MISSING:
+                rendered_list.append(rendered)
+        return rendered_list
+
+    return value
+
+
 # ---------------------------------------------------------------------------
 # inputSchema normalization
 # ---------------------------------------------------------------------------
@@ -526,18 +592,18 @@ def _build_http_handler(cfg: dict) -> ToolHandler:
             query_params = {k: v for k, v in query_params.items() if v}
 
             body = None
-            if body_template is not None and isinstance(body_template, dict):
+            if body_template is not None:
                 import json as _json
-                body = _json.dumps({
-                    k: _substitute_params(
-                        v,
-                        kwargs,
-                        user_context=user_context,
-                        missing_user_keys=missing_user_keys,
-                    ) if isinstance(v, str) else v
-                    for k, v in body_template.items()
-                })
-                headers.setdefault("Content-Type", "application/json")
+
+                body_obj = _render_template_value(
+                    body_template,
+                    kwargs,
+                    user_context=user_context,
+                    missing_user_keys=missing_user_keys,
+                )
+                if body_obj is not _MISSING:
+                    body = _json.dumps(body_obj, ensure_ascii=False)
+                    headers.setdefault("Content-Type", "application/json")
         except ValueError as e:
             return ToolResult(success=False, error=str(e))
 

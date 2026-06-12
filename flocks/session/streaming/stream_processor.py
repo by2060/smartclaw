@@ -701,6 +701,14 @@ class StreamProcessor:
                         from flocks.session import Session
 
                         session = await Session.get_by_id(self.session_id)
+                        if session:
+                            extra["session_category"] = getattr(session, "category", None)
+                            session_metadata = getattr(session, "metadata", None)
+                            if isinstance(session_metadata, dict):
+                                extra["session_metadata"] = dict(session_metadata)
+                                loaded_skills = session_metadata.get("loadedSkills")
+                                if isinstance(loaded_skills, list):
+                                    extra["loadedSkills"] = list(loaded_skills)
                         user_context = (
                             dict(session.user_context)
                             if session and isinstance(session.user_context, dict)

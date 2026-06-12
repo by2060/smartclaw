@@ -113,7 +113,11 @@ def run_sync(coro: Coroutine[Any, Any, Any]) -> Any:
 
     future = asyncio.run_coroutine_threadsafe(coro, loop)
     try:
-        return future.result()
+        default_timeout = 300.0
+        return future.result(timeout=default_timeout)
+    except concurrent.futures.TimeoutError as exc:
+        future.cancel()
+        raise RuntimeError(f"Async tool execution timeout ({default_timeout}s)") from exc
     except concurrent.futures.CancelledError as exc:
         # Preserve the cancellation semantics of the previous asyncio.run()
         # path: callers (e.g. LLMClient.ask's `except Exception` retry loop,

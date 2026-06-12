@@ -899,9 +899,57 @@ class SessionRunner:
                 getattr(getattr(p, "state", None), "status", None) in ("completed", "error", "running")
                 for p in parts
             )
+            has_invalid_tool_result = any(
+                getattr(p, "type", None) == "tool" and
+                getattr(p, "tool", None) == "invalid" and
+                getattr(getattr(p, "state", None), "status", None) in ("completed", "error", "running")
+                for p in parts
+            )
             if has_tool_result and not has_text:
                 from flocks.session.prompt_strings import PROMPT_TOOL_RESULTS_AVAILABLE
                 system_prompts.append(PROMPT_TOOL_RESULTS_AVAILABLE)
+
+            # If malformed tool calls have already looped, force a plain-text recovery
+            # step instead of giving the model more chances to repeat the same broken
+            # tool invocation.
+            consecutive_invalid_tool_only = 0
+            if has_invalid_tool_result and not has_text:
+                for msg in reversed(messages):
+                    if msg.role != MessageRole.ASSISTANT:
+                        continue
+                    msg_parts = await Message.parts(msg.id, self.session.id)
+                    msg_has_text = any(
+                        getattr(p, "type", None) == "text" and getattr(p, "text", "").strip()
+                        for p in msg_parts
+                    )
+                    msg_has_invalid_tool_result = any(
+                        getattr(p, "type", None) == "tool" and
+                        getattr(p, "tool", None) == "invalid" and
+                        getattr(getattr(p, "state", None), "status", None) in ("completed", "error", "running")
+                        for p in msg_parts
+                    )
+                    msg_has_tool_result = any(
+                        getattr(p, "type", None) == "tool" and
+                        getattr(getattr(p, "state", None), "status", None) in ("completed", "error", "running")
+                        for p in msg_parts
+                    )
+                    if msg_has_invalid_tool_result and msg_has_tool_result and not msg_has_text:
+                        consecutive_invalid_tool_only += 1
+                        continue
+                    break
+
+            if consecutive_invalid_tool_only >= 2:
+                log.warn("runner.invalid_tool_loop_detected", {
+                    "session_id": self.session.id,
+                    "step": self._step,
+                    "count": consecutive_invalid_tool_only,
+                })
+                system_prompts.append(
+                    "<system-reminder>Your recent tool calls had malformed arguments and were rejected. "
+                    "Do not make any more tool calls in this turn. Respond in plain text with the next step, "
+                    "a concise correction request, or a brief explanation.</system-reminder>"
+                )
+                tools = []
             
             # 检查最近几条消息中是否有重复的工具调用（轻量级警告）
             if has_tool_result and self._step > 2:

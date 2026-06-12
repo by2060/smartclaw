@@ -21,6 +21,12 @@ import uuid
 
 from flocks.workflow.models import Workflow, Node, Edge
 from flocks.workflow.runner import run_workflow, RunWorkflowResult
+from flocks.workflow.artifact_service import (
+    WorkflowArtifactError,
+    WorkflowArtifactFiles,
+    validate_workflow_json,
+    write_workflow_artifact,
+)
 from flocks.workflow.center import (
     WorkflowCenterError,
     WorkflowNotFoundError,
@@ -468,6 +474,7 @@ async def _run_workflow_execution_task(
     *,
     workflow_id: str,
     workflow_json: Dict[str, Any],
+    workflow_path: Optional[str],
     req: WorkflowRunRequest,
     exec_id: str,
     cancel_event: threading.Event,
@@ -511,9 +518,10 @@ async def _run_workflow_execution_task(
         })
 
     try:
+        workflow_source: Any = Path(workflow_path) if workflow_path else workflow_json
         result: RunWorkflowResult = await asyncio.to_thread(
             run_workflow,
-            workflow=workflow_json,
+            workflow=workflow_source,
             inputs=req.inputs or {},
             timeout_s=req.timeout_s,
             trace=req.trace,
@@ -674,40 +682,32 @@ async def create_workflow(req: WorkflowCreateRequest):
     of truth. Stats are initialised in Storage on first access.
     """
     try:
-        try:
-            Workflow.from_dict(req.workflow_json)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid workflow JSON: {str(e)}")
-
         workflow_id = str(uuid.uuid4())
-        now_ms = int(time.time() * 1000)
-
-        source = "project"
-        meta = {
-            "id": workflow_id,
-            "name": req.name,
-            "description": req.description,
-            "category": req.category or "default",
-            "status": "draft",
-            "createdBy": req.created_by,
-            "createdAt": now_ms,
-            "updatedAt": now_ms,
-        }
-
-        _write_workflow_to_fs(workflow_id, req.workflow_json, meta)
+        data = await write_workflow_artifact(
+            workflow_id,
+            WorkflowArtifactFiles(workflow_json=req.workflow_json),
+            mode="create",
+            actor=req.created_by,
+            metadata={
+                "name": req.name,
+                "description": req.description,
+                "category": req.category or "default",
+                "status": "draft",
+                "createdBy": req.created_by,
+            },
+            event_publisher=publish_event,
+        )
 
         stats = await _get_workflow_stats(workflow_id)
-        data = {
-            **meta,
-            "workflowJson": req.workflow_json,
-            "markdownContent": None,
-            "stats": stats,
-            "source": source,
-        }
+        data["stats"] = stats
 
         log.info("workflow.created", {"id": workflow_id, "name": req.name})
-        await publish_event("workflow.created", {"id": workflow_id, "name": req.name})
         return WorkflowResponse(**data)
+    except WorkflowArtifactError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": str(e), "issues": e.issues},
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -753,36 +753,36 @@ async def update_workflow(workflow_id: str, req: WorkflowUpdateRequest):
         if not data:
             raise HTTPException(status_code=404, detail=f"Workflow not found: {workflow_id}")
 
-        workflow_json = data["workflowJson"]
-        markdown_content = data.get("markdownContent")
-
+        metadata: Dict[str, Any] = {}
         if req.name is not None:
-            data["name"] = req.name
+            metadata["name"] = req.name
         if req.description is not None:
-            data["description"] = req.description
+            metadata["description"] = req.description
         if req.category is not None:
-            data["category"] = req.category
+            metadata["category"] = req.category
         if req.status is not None:
-            data["status"] = req.status
-        if req.workflow_json is not None:
-            try:
-                Workflow.from_dict(req.workflow_json)
-                workflow_json = req.workflow_json
-            except Exception as e:
-                raise HTTPException(status_code=400, detail=f"Invalid workflow JSON: {str(e)}")
+            metadata["status"] = req.status
 
-        data["updatedAt"] = int(time.time() * 1000)
-
-        _write_workflow_to_fs(workflow_id, workflow_json, data, markdown_content)
-        data["source"] = "project"
+        files = WorkflowArtifactFiles(workflow_json=req.workflow_json)
+        data = await write_workflow_artifact(
+            workflow_id,
+            files,
+            mode="update",
+            actor=None,
+            metadata=metadata,
+            event_publisher=publish_event,
+        )
 
         stats = await _get_workflow_stats(workflow_id)
-        data["workflowJson"] = workflow_json
         data["stats"] = stats
 
         log.info("workflow.updated", {"id": workflow_id})
-        await publish_event("workflow.updated", {"id": workflow_id, "name": data.get("name")})
         return WorkflowResponse(**data)
+    except WorkflowArtifactError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": str(e), "issues": e.issues},
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -864,6 +864,7 @@ async def run_workflow_endpoint(workflow_id: str, req: WorkflowRunRequest):
             raise HTTPException(status_code=404, detail=f"Workflow not found: {workflow_id}")
 
         workflow_json = data["workflowJson"]
+        workflow_path = data.get("workflowPath")
         tool_context = await _build_workflow_tool_context(
             workflow_id=workflow_id,
             action_name="run",
@@ -884,6 +885,7 @@ async def run_workflow_endpoint(workflow_id: str, req: WorkflowRunRequest):
             _run_workflow_execution_task(
                 workflow_id=workflow_id,
                 workflow_json=workflow_json,
+                workflow_path=str(workflow_path) if workflow_path else None,
                 req=req,
                 exec_id=exec_id,
                 cancel_event=cancel_event,
@@ -964,22 +966,17 @@ async def validate_workflow(workflow_id: str):
 
         workflow_json = data["workflowJson"]
 
-        try:
-            workflow = Workflow.from_dict(workflow_json)
-            # Run lint checks (errors + warnings)
-            lint_results = lint_workflow(workflow)
-            lint_errors = [r for r in lint_results if r.get("severity") == "error"]
-
-            log.info("workflow.validated", {"id": workflow_id, "issues": len(lint_results), "errors": len(lint_errors)})
-            return {
-                "valid": len(lint_errors) == 0,
-                "issues": lint_results,
-            }
-        except Exception as e:
-            return {
-                "valid": False,
-                "issues": [{"type": "error", "message": str(e)}],
-            }
+        result = validate_workflow_json(workflow_json)
+        issues = result.issues
+        log.info("workflow.validated", {
+            "id": workflow_id,
+            "issues": len(issues),
+            "errors": len(result.errors),
+        })
+        return {
+            "valid": result.valid,
+            "issues": issues,
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -1265,43 +1262,37 @@ async def import_workflow(workflow_json: Dict[str, Any]):
     Imports a workflow from a JSON definition and writes it to the filesystem.
     """
     try:
-        try:
-            Workflow.from_dict(workflow_json)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid workflow JSON: {str(e)}")
-
         name = workflow_json.get("name", "Imported Workflow")
-        description = workflow_json.get("metadata", {}).get("description")
-        category = workflow_json.get("metadata", {}).get("category", "default")
+        workflow_metadata = workflow_json.get("metadata", {})
+        workflow_metadata = workflow_metadata if isinstance(workflow_metadata, dict) else {}
+        description = workflow_json.get("description") or workflow_metadata.get("description")
+        category = workflow_metadata.get("category", "default")
 
         workflow_id = str(uuid.uuid4())
-        now_ms = int(time.time() * 1000)
-
-        meta = {
-            "id": workflow_id,
-            "name": name,
-            "description": description,
-            "category": category,
-            "status": "draft",
-            "createdBy": None,
-            "createdAt": now_ms,
-            "updatedAt": now_ms,
-        }
-
-        _write_workflow_to_fs(workflow_id, workflow_json, meta)
+        data = await write_workflow_artifact(
+            workflow_id,
+            WorkflowArtifactFiles(workflow_json=workflow_json),
+            mode="create",
+            actor=None,
+            metadata={
+                "name": name,
+                "description": description,
+                "category": category,
+                "status": "draft",
+            },
+            event_publisher=publish_event,
+        )
 
         stats = await _get_workflow_stats(workflow_id)
-        data = {
-            **meta,
-            "workflowJson": workflow_json,
-            "markdownContent": None,
-            "stats": stats,
-            "source": "project",
-        }
+        data["stats"] = stats
 
         log.info("workflow.imported", {"id": workflow_id, "name": name})
-        await publish_event("workflow.created", {"id": workflow_id, "name": name})
         return WorkflowResponse(**data)
+    except WorkflowArtifactError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": str(e), "issues": e.issues},
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -1591,6 +1582,36 @@ class RunNodeResponse(BaseModel):
     success: bool = True
 
 
+async def _save_node_test_result(workflow_id: str, node_id: str, result: Dict[str, Any]) -> None:
+    try:
+        data = _read_workflow_from_fs(workflow_id) or {}
+        current = data.get("nodeTestResults") or {}
+        if not isinstance(current, dict):
+            current = {}
+        current[node_id] = {
+            **result,
+            "node_id": node_id,
+            "checkedAt": int(time.time() * 1000),
+        }
+        await write_workflow_artifact(
+            workflow_id,
+            WorkflowArtifactFiles(node_test_results=current),
+            mode="update",
+            actor=None,
+            event_publisher=publish_event,
+        )
+    except Exception as exc:
+        log.warning("workflow.node_test_result.save_failed", {
+            "workflow_id": workflow_id,
+            "node_id": node_id,
+            "error": str(exc),
+        })
+
+
+def _schedule_node_test_result_save(workflow_id: str, node_id: str, result: Dict[str, Any]) -> None:
+    asyncio.create_task(_save_node_test_result(workflow_id, node_id, result))
+
+
 @router.post("/workflow/{workflow_id}/run-node", response_model=RunNodeResponse)
 async def run_single_node(workflow_id: str, req: RunNodeRequest):
     """
@@ -1605,6 +1626,7 @@ async def run_single_node(workflow_id: str, req: RunNodeRequest):
             raise HTTPException(status_code=404, detail=f"Workflow not found: {workflow_id}")
 
         workflow_json = data["workflowJson"]
+        workflow_path = data.get("workflowPath")
         tool_context = await _build_workflow_tool_context(
             workflow_id=workflow_id,
             action_name=f"run-node:{req.node_id}",
@@ -1623,9 +1645,15 @@ async def run_single_node(workflow_id: str, req: RunNodeRequest):
             engine = WorkflowEngine(
                 wf,
                 runtime=PythonExecRuntime(tool_registry=get_tool_registry(tool_context=tool_context)),
+                workflow_path=str(workflow_path) if workflow_path else None,
             )
+            node_inputs = dict(req.inputs or {})
+            if workflow_path:
+                resolved_workflow_path = str(Path(str(workflow_path)).expanduser().resolve())
+                node_inputs.setdefault("_workflow_path", resolved_workflow_path)
+                node_inputs.setdefault("_workflow_dir", str(Path(resolved_workflow_path).parent))
 
-            step_result = await asyncio.to_thread(engine.run_node, req.node_id, req.inputs)
+            step_result = await asyncio.to_thread(engine.run_node, req.node_id, node_inputs)
 
             log.info("workflow.run_node", {
                 "workflow_id": workflow_id,
@@ -1634,6 +1662,16 @@ async def run_single_node(workflow_id: str, req: RunNodeRequest):
                 "duration_ms": step_result.duration_ms,
             })
 
+            result_payload = {
+                "outputs": step_result.outputs,
+                "stdout": step_result.stdout or "",
+                "error": step_result.error,
+                "traceback": step_result.traceback,
+                "duration_ms": step_result.duration_ms,
+                "success": step_result.error is None,
+                "inputs": node_inputs,
+            }
+            _schedule_node_test_result_save(workflow_id, step_result.node_id, result_payload)
             return RunNodeResponse(
                 node_id=step_result.node_id,
                 outputs=step_result.outputs,
@@ -1647,6 +1685,15 @@ async def run_single_node(workflow_id: str, req: RunNodeRequest):
             raise HTTPException(status_code=400, detail=f"Node not found: {e}")
         except Exception as e:
             log.error("workflow.run_node.error", {"workflow_id": workflow_id, "node_id": req.node_id, "error": str(e)})
+            _schedule_node_test_result_save(workflow_id, req.node_id, {
+                "outputs": {},
+                "stdout": "",
+                "error": str(e),
+                "traceback": None,
+                "duration_ms": None,
+                "success": False,
+                "inputs": req.inputs,
+            })
             return RunNodeResponse(
                 node_id=req.node_id,
                 outputs={},
@@ -1708,20 +1755,70 @@ async def save_sample_inputs(workflow_id: str, req: SampleInputsRequest):
         if not data:
             raise HTTPException(status_code=404, detail=f"Workflow not found: {workflow_id}")
 
-        workflow_json = data.get("workflowJson", {})
-        if "metadata" not in workflow_json or workflow_json["metadata"] is None:
-            workflow_json["metadata"] = {}
-        workflow_json["metadata"]["sampleInputs"] = req.sampleInputs
-
-        meta = {k: v for k, v in data.items() if k not in ("workflowJson", "markdownContent", "stats", "source")}
-        meta["updatedAt"] = int(time.time() * 1000)
-        markdown_content = data.get("markdownContent")
-        _write_workflow_to_fs(workflow_id, workflow_json, meta, markdown_content)
+        await write_workflow_artifact(
+            workflow_id,
+            WorkflowArtifactFiles(sample_inputs=req.sampleInputs),
+            mode="update",
+            actor=None,
+            event_publisher=publish_event,
+        )
 
         log.info("workflow.sample_inputs.saved", {"id": workflow_id})
         return {"ok": True}
     except HTTPException:
         raise
+    except WorkflowArtifactError as e:
+        raise HTTPException(status_code=400, detail={"message": str(e), "issues": e.issues})
     except Exception as e:
         log.error("workflow.sample_inputs.save.error", {"id": workflow_id, "error": str(e)})
         raise HTTPException(status_code=500, detail=f"Failed to save sample inputs: {str(e)}")
+
+
+class NodeTestResultsRequest(BaseModel):
+    """Request to save node test results for a workflow."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    nodeTestResults: Dict[str, Any] = Field(default_factory=dict, description="Latest node test results by node id")
+
+
+@router.get("/workflow/{workflow_id}/node-test-results")
+async def get_node_test_results(workflow_id: str):
+    try:
+        data = _read_workflow_from_fs(workflow_id)
+        if not data:
+            raise HTTPException(status_code=404, detail=f"Workflow not found: {workflow_id}")
+        node_test_results = data.get("nodeTestResults")
+        if not isinstance(node_test_results, dict):
+            workflow_json = data.get("workflowJson", {})
+            metadata = workflow_json.get("metadata") if isinstance(workflow_json, dict) else {}
+            node_test_results = metadata.get("nodeTestResults", {}) if isinstance(metadata, dict) else {}
+        return {"nodeTestResults": node_test_results or {}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error("workflow.node_test_results.get.error", {"id": workflow_id, "error": str(e)})
+        raise HTTPException(status_code=500, detail=f"Failed to get node test results: {str(e)}")
+
+
+@router.post("/workflow/{workflow_id}/node-test-results")
+async def save_node_test_results(workflow_id: str, req: NodeTestResultsRequest):
+    try:
+        data = _read_workflow_from_fs(workflow_id)
+        if not data:
+            raise HTTPException(status_code=404, detail=f"Workflow not found: {workflow_id}")
+        await write_workflow_artifact(
+            workflow_id,
+            WorkflowArtifactFiles(node_test_results=req.nodeTestResults),
+            mode="update",
+            actor=None,
+            event_publisher=publish_event,
+        )
+        log.info("workflow.node_test_results.saved", {"id": workflow_id})
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except WorkflowArtifactError as e:
+        raise HTTPException(status_code=400, detail={"message": str(e), "issues": e.issues})
+    except Exception as e:
+        log.error("workflow.node_test_results.save.error", {"id": workflow_id, "error": str(e)})
+        raise HTTPException(status_code=500, detail=f"Failed to save node test results: {str(e)}")

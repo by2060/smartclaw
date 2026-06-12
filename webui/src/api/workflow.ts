@@ -61,6 +61,7 @@ export interface WorkflowOutputSchema {
 
 export interface WorkflowMetadata {
   sampleInputs?: Record<string, any>;
+  nodeTestResults?: Record<string, any>;
   outputSchema?: WorkflowOutputSchema;
   [key: string]: any;
 }
@@ -81,7 +82,7 @@ export interface Workflow {
   markdownContent?: string;
   category: string;
   workflowJson: WorkflowJSON;
-  status: 'draft' | 'active' | 'archived';
+  status: 'draft' | 'active' | 'archived' | 'invalid';
   source?: 'project' | 'global';
   createdBy?: string;
   createdAt: number;
@@ -249,11 +250,17 @@ export const workflowAPI = {
       sessionId: data.sessionId,
       messageId: data.messageId,
       agent: data.agent,
-    }),
+    }, { timeout: 0 }),
 
   getSampleInputs: (id: string) =>
     client.get<{ sampleInputs: Record<string, any> }>(`/api/workflow/${id}/sample-inputs`),
 
   saveSampleInputs: (id: string, sampleInputs: Record<string, any>) =>
     client.post<{ ok: boolean }>(`/api/workflow/${id}/sample-inputs`, { sampleInputs }),
+
+  getNodeTestResults: (id: string) =>
+    client.get<{ nodeTestResults: Record<string, any> }>(`/api/workflow/${id}/node-test-results`),
+
+  saveNodeTestResults: (id: string, nodeTestResults: Record<string, any>) =>
+    client.post<{ ok: boolean }>(`/api/workflow/${id}/node-test-results`, { nodeTestResults }),
 };

@@ -44,7 +44,7 @@ class FlocksToolAdapter:
         """
         return _run_sync_on_shared_loop(ToolRegistry.execute(name, ctx=ctx, **kwargs))
 
-    def run(self, name: str, /, **kwargs: Any) -> Any:
+    def _execute_tool_result(self, name: str, kwargs: Dict[str, Any]) -> ToolResult:
         name = (name or "").strip()
         if self._blocked(name):
             raise NodeExecutionError(
@@ -56,8 +56,15 @@ class FlocksToolAdapter:
             raise NodeExecutionError(node_id="<tool>", message=f"Tool not found: {name!r}")
 
         ctx = self._ctx or ToolContext(session_id="workflow", message_id="workflow")
+        print(f"[WF DEBUG] About to execute tool: {name}, kwargs: {kwargs}")
         try:
-            result: ToolResult = self._execute_tool_async(name, ctx, dict(kwargs))
+            result = self._execute_tool_async(name, ctx, dict(kwargs))
+            print(f"[WF DEBUG] Tool {name} completed")
+            return result
+        except RuntimeError as re:
+            if "timeout" in str(re).lower():
+                raise _FuturesTimeoutError(str(re)) from re
+            raise
         except _FuturesTimeoutError:
             raise
         except Exception as e:
@@ -65,6 +72,29 @@ class FlocksToolAdapter:
                 node_id="<tool>", message=f"Tool {name!r} failed: {e}"
             ) from e
 
+    @staticmethod
+    def _safe_envelope(result: ToolResult) -> Dict[str, Any]:
+        raw = result.output
+        if isinstance(raw, str):
+            text = raw
+        elif raw is None:
+            text = ""
+        else:
+            try:
+                text = _json.dumps(raw, ensure_ascii=False, default=str)
+            except Exception:
+                text = str(raw)
+        return {
+            "success": result.success,
+            "text": text,
+            "obj": raw,
+            "error": result.error,
+            "metadata": result.metadata or {},
+            "title": result.title,
+        }
+
+    def run(self, name: str, /, **kwargs: Any) -> Any:
+        result = self._execute_tool_result(name, dict(kwargs))
         if not result.success:
             raise NodeExecutionError(
                 node_id="<tool>",
@@ -78,9 +108,11 @@ class FlocksToolAdapter:
         Returns:
             {
                 "success": bool,
-                "text": str,   # always a string (safe for prompt / string ops)
-                "obj": Any,    # raw output (str | dict | list | None)
+                "text": str,       # always a string (safe for prompt / string ops)
+                "obj": Any,        # raw output (str | dict | list | None)
                 "error": str | None,
+                "metadata": dict,  # raw ToolResult metadata
+                "title": str | None,
             }
 
         Unlike ``run()`` which raises on failure and returns raw *output*
@@ -88,21 +120,11 @@ class FlocksToolAdapter:
         returns a dict with a guaranteed ``text`` field.
         """
         try:
-            raw = self.run(name, **kwargs)
-            if isinstance(raw, str):
-                text = raw
-            elif raw is None:
-                text = ""
-            else:
-                try:
-                    text = _json.dumps(raw, ensure_ascii=False, default=str)
-                except Exception:
-                    text = str(raw)
-            return {"success": True, "text": text, "obj": raw, "error": None}
+            return self._safe_envelope(self._execute_tool_result(name, dict(kwargs)))
         except _FuturesTimeoutError:
             raise
         except Exception as exc:
-            return {"success": False, "text": "", "obj": None, "error": str(exc)}
+            return {"success": False, "text": "", "obj": None, "error": str(exc), "metadata": {}, "title": None}
 
     def list(self) -> List[str]:
         ToolRegistry.init()

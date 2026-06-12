@@ -5,7 +5,7 @@
 ## 概念
 
 - **嵌套只是"编译期"概念**：把子工作流当作父工作流的一个节点来建模。
-- **运行时引擎只执行 `workflow.json`**（`python`/`logic`/`branch`/`loop`），不理解子工作流。
+- **运行时引擎只执行展开后的 `workflow.json`**，不理解子工作流；展开后的最终 `workflow.json` 仍必须使用明确节点，禁止保留 `type="logic"`。
 - 产物层面需输出两份 JSON：
   - `workflow.composition.json`：描述"父工作流如何调用子工作流"的组合格式
   - `workflow.json`：展开后的可执行 workflow

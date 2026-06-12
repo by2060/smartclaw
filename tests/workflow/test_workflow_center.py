@@ -44,6 +44,7 @@ async def test_scan_skill_workflows_is_idempotent(
     workflow_path = wf_dir / "workflow.json"
     workflow_path.write_text(json.dumps(_workflow_payload("demo")), encoding="utf-8")
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(center, "resolve_global_workflow_roots", lambda: [])
 
     first = await center.scan_skill_workflows()
     assert len(first) == 1
@@ -74,6 +75,7 @@ async def test_publish_invoke_stop_workflow_service(
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(center, "resolve_global_workflow_roots", lambda: [])
     monkeypatch.setenv("FLOCKS_WORKFLOW_SERVICE_DRIVER", "docker")
     scanned = await center.scan_skill_workflows()
     workflow_id = scanned[0]["workflowId"]

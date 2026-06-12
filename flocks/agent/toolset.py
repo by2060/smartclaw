@@ -24,7 +24,8 @@ def get_all_enabled_tool_names() -> List[str]:
     return [
         tool.name
         for tool in ToolRegistry.list_tools()
-        if getattr(tool, "enabled", True) and tool.name not in {"invalid", "_noop"}
+        # if getattr(tool, "enabled", True) and tool.name not in {"invalid", "_noop"}
+        if getattr(tool, "enabled", True) and tool.name not in {"_noop"}
     ]
 
 

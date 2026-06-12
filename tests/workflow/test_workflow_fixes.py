@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from flocks.tool import ToolResult
 from flocks.workflow.models import Workflow
 from flocks.workflow.engine import WorkflowEngine
 from flocks.workflow.repl_runtime import PythonExecRuntime
@@ -38,15 +39,17 @@ class _MockToolAdapter(FlocksToolAdapter):
         self._outputs = outputs or {}
         self.calls = []
 
-    def run(self, name: str, /, **kwargs: Any) -> Any:
+    def _execute_tool_result(self, name: str, kwargs: Dict[str, Any]) -> ToolResult:
         self.calls.append((name, dict(kwargs)))
         if name in self._outputs:
             val = self._outputs[name]
             if isinstance(val, Exception):
                 from flocks.workflow.errors import NodeExecutionError
                 raise NodeExecutionError(node_id="<tool>", message=str(val))
-            return val
-        return f"mock_output_for_{name}"
+            if isinstance(val, ToolResult):
+                return val
+            return ToolResult(success=True, output=val)
+        return ToolResult(success=True, output=f"mock_output_for_{name}")
 
 
 # ===================================================================
@@ -64,6 +67,20 @@ class TestRunSafe:
         assert result["text"] == "line1\nline2"
         assert result["obj"] == "line1\nline2"
         assert result["error"] is None
+
+    def test_run_safe_preserves_tool_metadata(self):
+        adapter = _MockToolAdapter(outputs={
+            "write": ToolResult(
+                success=True,
+                output="Wrote file successfully.",
+                title="report.md",
+                metadata={"filepath": "C:/outputs/ses_123/report.md"},
+            )
+        })
+        result = adapter.run_safe("write", filePath="C:/outputs/default-session/report.md")
+        assert result["success"] is True
+        assert result["metadata"]["filepath"] == "C:/outputs/ses_123/report.md"
+        assert result["title"] == "report.md"
 
     def test_run_safe_dict_output(self):
         adapter = _MockToolAdapter(outputs={
@@ -211,6 +228,66 @@ class TestLintJoinRequirements:
         results = lint_join_requirements(wf)
         assert len(results) == 0
 
+    def test_direct_branch_labels_to_same_target_no_error(self):
+        """Distinct labels from one branch to one target are exclusive."""
+        wf = Workflow.from_dict({
+            "name": "direct_branch_target",
+            "start": "start",
+            "nodes": [
+                {"id": "start", "type": "python", "code": "outputs['verdict'] = 'true_positive'"},
+                {"id": "check_verdict", "type": "branch", "select_key": "verdict"},
+                {"id": "generate_response_decision", "type": "python", "code": "outputs['ok'] = True"},
+            ],
+            "edges": [
+                {"from": "start", "to": "check_verdict"},
+                {
+                    "from": "check_verdict",
+                    "to": "generate_response_decision",
+                    "label": "true_positive",
+                },
+                {
+                    "from": "check_verdict",
+                    "to": "generate_response_decision",
+                    "label": "false_positive",
+                },
+                {
+                    "from": "check_verdict",
+                    "to": "generate_response_decision",
+                    "label": "needs_confirmation",
+                },
+            ],
+        })
+        results = lint_join_requirements(wf)
+        assert len(results) == 0
+
+    def test_duplicate_branch_label_to_same_target_still_errors(self):
+        """Duplicate labels can select multiple edges, so they are not exclusive."""
+        wf = Workflow.from_dict({
+            "name": "duplicate_direct_branch_target",
+            "start": "start",
+            "nodes": [
+                {"id": "start", "type": "python", "code": "outputs['verdict'] = 'true_positive'"},
+                {"id": "check_verdict", "type": "branch", "select_key": "verdict"},
+                {"id": "generate_response_decision", "type": "python", "code": "outputs['ok'] = True"},
+            ],
+            "edges": [
+                {"from": "start", "to": "check_verdict"},
+                {
+                    "from": "check_verdict",
+                    "to": "generate_response_decision",
+                    "label": "true_positive",
+                },
+                {
+                    "from": "check_verdict",
+                    "to": "generate_response_decision",
+                    "label": "true_positive",
+                },
+            ],
+        })
+        results = lint_join_requirements(wf)
+        assert len(results) == 1
+        assert results[0]["kind"] == "multi_incoming_no_join"
+
     def test_join_true_no_error(self):
         """Node with join=true should not trigger the lint."""
         wf = Workflow.from_dict({
@@ -282,6 +359,42 @@ class TestLintExpensiveNodeMultiTrigger:
         assert results[0]["kind"] == "expensive_node_multi_trigger"
         assert results[0]["node_id"] == "expensive"
 
+    def test_expensive_direct_branch_labels_to_same_target_no_error(self):
+        """Expensive node behind one branch's distinct labels is exclusive."""
+        wf = Workflow.from_dict({
+            "name": "expensive_direct_branch_target",
+            "start": "start",
+            "nodes": [
+                {"id": "start", "type": "python", "code": "outputs['verdict'] = 'true_positive'"},
+                {"id": "check_verdict", "type": "branch", "select_key": "verdict"},
+                {
+                    "id": "generate_response_decision",
+                    "type": "python",
+                    "code": "result = llm.ask('decide response')\noutputs['decision'] = result",
+                },
+            ],
+            "edges": [
+                {"from": "start", "to": "check_verdict"},
+                {
+                    "from": "check_verdict",
+                    "to": "generate_response_decision",
+                    "label": "true_positive",
+                },
+                {
+                    "from": "check_verdict",
+                    "to": "generate_response_decision",
+                    "label": "false_positive",
+                },
+                {
+                    "from": "check_verdict",
+                    "to": "generate_response_decision",
+                    "label": "needs_confirmation",
+                },
+            ],
+        })
+        results = lint_expensive_node_multi_trigger(wf)
+        assert len(results) == 0
+
     def test_non_expensive_node_no_error(self):
         """Non-expensive node with multiple edges -> no error from this check."""
         wf = Workflow.from_dict({
@@ -300,8 +413,12 @@ class TestLintExpensiveNodeMultiTrigger:
         results = lint_expensive_node_multi_trigger(wf)
         assert len(results) == 0
 
-    def test_write_tool_detected_as_expensive(self):
-        """Node calling tool.run('write', ...) is detected as expensive."""
+    @pytest.mark.parametrize("call", [
+        "tool.run('write', filePath='out.md', content='hi')",
+        "tool.run_safe('write', filePath='out.md', content='hi')",
+    ])
+    def test_write_tool_detected_as_expensive(self, call):
+        """Nodes calling write through tool.run/run_safe are detected as expensive."""
         wf = Workflow.from_dict({
             "name": "write_bad",
             "start": "a",
@@ -311,7 +428,7 @@ class TestLintExpensiveNodeMultiTrigger:
                 {
                     "id": "writer",
                     "type": "python",
-                    "code": "tool.run('write', filePath='out.md', content='hi')",
+                    "code": call,
                 },
             ],
             "edges": [

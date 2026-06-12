@@ -406,7 +406,7 @@ async def run_workflow_tool(
             error="workflow parameter is required"
         )
     
-    # Accept workflow as dict, JSON string, or file path.
+    # Accept workflow as dict, JSON string, workflow ID, or file path.
     workflow_source: Union[Dict[str, Any], Path]
     if isinstance(workflow, str):
         raw = workflow.strip()
@@ -416,10 +416,12 @@ async def run_workflow_tool(
         except json.JSONDecodeError:
             existing_workflow = read_workflow_from_fs(raw)
             if existing_workflow is not None:
-                workflow_source = existing_workflow["workflowJson"]
-                raw = existing_workflow["id"]
+                if existing_workflow.get("workflowPath"):
+                    workflow_source = Path(str(existing_workflow["workflowPath"]))
+                else:
+                    workflow_source = existing_workflow.get("workflowJson") or existing_workflow
             else:
-            # Otherwise treat it as a file path.
+                # Otherwise treat it as a file path.
                 p = Path(raw).expanduser()
                 if p.exists() and p.is_file():
                     workflow_source = p
@@ -438,18 +440,17 @@ async def run_workflow_tool(
             success=False,
             error=f"workflow must be a dictionary or string, got {type(workflow).__name__}"
         )
-    
-    # Request permission (workflow execution can run arbitrary code)
-    if isinstance(workflow_source, dict):
-        workflow_name = workflow_source.get("name", "unnamed workflow")
-        # Use id if available, otherwise use name or generate a fallback
-        workflow_id = workflow_source.get("id") or workflow_source.get("name") or "unknown"
-    else:
-        workflow_name = workflow_source.name
-        workflow_id = str(workflow_source)
 
     workflow_inputs = inputs or {}
     canonical_workflow_id = resolve_workflow_id_from_source(workflow_source)
+    # Request permission (workflow execution can run arbitrary code)
+    if isinstance(workflow_source, dict):
+        workflow_name = workflow_source.get("name", "unnamed workflow")
+        workflow_id = canonical_workflow_id or workflow_source.get("id") or workflow_source.get("name") or "unknown"
+    else:
+        workflow_name = workflow_source.parent.name if workflow_source.name == "workflow.json" else workflow_source.name
+        workflow_id = canonical_workflow_id or str(workflow_source)
+
     display_workflow_id = canonical_workflow_id or workflow_id
     tracked_execution: Optional[Dict[str, Any]] = None
     tracked_history: list[Dict[str, Any]] = []

@@ -2,6 +2,7 @@
 Tests for the YAML tool plugin system (flocks.tool.tool_loader).
 """
 
+import json
 import textwrap
 from pathlib import Path
 from typing import Any, Dict
@@ -993,6 +994,62 @@ class TestHttpHandler:
 
         assert result.success is True
         assert result.output == {"data": [1, 2, 3]}
+
+    @pytest.mark.asyncio
+    async def test_post_body_preserves_exact_json_placeholders(self):
+        cfg = {
+            "type": "http",
+            "method": "POST",
+            "url": "https://api.example.com/assets",
+            "body": {
+                "query": "{query}",
+                "selectMode": "{selectMode}",
+                "pageSize": "{pageSize}",
+                "currentPage": "{currentPage}",
+                "orderBy": "{orderBy}",
+                "customField": "{customField}",
+                "label": "asset-{api_name}",
+                "nested": {"filters": "{filters}"},
+            },
+            "timeout": 10,
+        }
+        handler = _build_http_handler(cfg)
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={"ok": True})
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = AsyncMock()
+        mock_session.request = MagicMock(return_value=mock_resp)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        ctx = ToolContext(session_id="test", message_id="test")
+
+        query = {"statement": "update_time >= '2026-06-01T00:00:00Z'"}
+        filters = [{"field": "owner", "op": "eq", "value": "secops"}]
+        with patch("aiohttp.ClientSession", return_value=mock_session):
+            result = await handler(
+                ctx,
+                query=query,
+                selectMode="STANDARD",
+                pageSize="50",
+                currentPage="1",
+                orderBy=["-update_time"],
+                filters=filters,
+                api_name="asset_search",
+            )
+
+        assert result.success is True
+        sent_body = json.loads(mock_session.request.call_args.kwargs["data"])
+        assert sent_body["query"] == query
+        assert sent_body["orderBy"] == ["-update_time"]
+        assert sent_body["nested"]["filters"] == filters
+        assert sent_body["label"] == "asset-asset_search"
+        assert "customField" not in sent_body
+        assert mock_session.request.call_args.kwargs["headers"]["Content-Type"] == "application/json"
 
     @pytest.mark.asyncio
     async def test_sm4_header_uses_user_context(self, monkeypatch):

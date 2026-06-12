@@ -20,6 +20,7 @@ from flocks.agent.controls import (
     rex_session_uses_full_skill_catalog,
 )
 from flocks.utils.log import Log
+from flocks.workflow.skill_guard import mark_workflow_builder_loaded
 
 
 log = Log.create(service="tool.skill")
@@ -276,6 +277,8 @@ async def skill_tool_impl(
         "bytes": len(output.encode("utf-8")),
         "lines": output.count("\n") + 1,
     })
+
+    await mark_workflow_builder_loaded(ctx, skill.name)
 
     return ToolResult(
         success=True,

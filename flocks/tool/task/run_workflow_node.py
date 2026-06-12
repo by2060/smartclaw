@@ -7,6 +7,7 @@ Follows the same interface as the POST /api/workflow/{id}/run-node endpoint.
 
 import asyncio
 import json
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
@@ -19,6 +20,8 @@ from flocks.tool.registry import (
     ToolResult,
 )
 from flocks.utils.log import Log
+from flocks.workflow.artifact_service import WorkflowArtifactFiles, write_workflow_artifact
+from flocks.workflow.fs_store import read_workflow_from_fs, resolve_workflow_id_from_source
 
 
 log = Log.create(service="tool.run_workflow_node")
@@ -58,20 +61,29 @@ DESCRIPTION_CN = """隔离执行单个工作流节点，用于逐步测试。
 """
 
 
-def _load_workflow_dict(workflow: Union[Dict[str, Any], str]) -> Dict[str, Any]:
-    """Resolve workflow parameter to a dict."""
+def _load_workflow_source(workflow: Union[Dict[str, Any], str]) -> tuple[Dict[str, Any], Optional[str], Optional[str]]:
+    """Resolve workflow parameter to (workflow dict, workflow path, workflow id)."""
     if isinstance(workflow, dict):
-        return workflow
+        workflow_id = resolve_workflow_id_from_source(workflow)
+        return workflow, None, workflow_id
     raw = str(workflow).strip()
     try:
-        return json.loads(raw)
+        workflow_dict = json.loads(raw)
+        if not isinstance(workflow_dict, dict):
+            raise ValueError("workflow JSON string must be an object")
+        workflow_id = resolve_workflow_id_from_source(workflow_dict)
+        return workflow_dict, None, workflow_id
     except json.JSONDecodeError:
+        existing = read_workflow_from_fs(raw)
+        if existing is not None:
+            return existing["workflowJson"], str(existing.get("workflowPath") or ""), str(existing.get("id") or raw)
         p = Path(raw).expanduser()
         if p.exists() and p.is_file():
             with open(p, encoding="utf-8") as f:
-                return json.load(f)
+                workflow_dict = json.load(f)
+            return workflow_dict, str(p), resolve_workflow_id_from_source(p)
         raise ValueError(
-            f"Unsupported workflow value. Provide a workflow dict or a valid workflow.json file path. Got: {raw!r}"
+            f"Unsupported workflow value. Provide a workflow ID, workflow dict, or a valid workflow.json file path. Got: {raw!r}"
         )
 
 
@@ -80,6 +92,7 @@ def _run_node_sync(
     node_id: str,
     inputs: Dict[str, Any],
     sandbox: Optional[Dict[str, Any]] = None,
+    workflow_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Synchronous helper: run one node via WorkflowEngine.run_node()."""
     from flocks.workflow.models import Workflow as WfModel
@@ -88,7 +101,7 @@ def _run_node_sync(
 
     wf = WfModel.from_dict(workflow_dict)
     runtime = SandboxPythonExecRuntime(sandbox=sandbox) if sandbox else PythonExecRuntime()
-    engine = WorkflowEngine(wf, runtime=runtime)
+    engine = WorkflowEngine(wf, runtime=runtime, workflow_path=workflow_path)
     step = engine.run_node(node_id, inputs)
     return {
         "node_id": step.node_id,
@@ -99,6 +112,35 @@ def _run_node_sync(
         "duration_ms": step.duration_ms,
         "success": step.error is None,
     }
+
+
+async def _record_node_test_result(
+    workflow_id: Optional[str],
+    node_id: str,
+    result: Dict[str, Any],
+    ctx: ToolContext,
+) -> None:
+    if not workflow_id:
+        return
+    try:
+        data = read_workflow_from_fs(workflow_id) or {}
+        current = data.get("nodeTestResults") or {}
+        if not isinstance(current, dict):
+            current = {}
+        current[node_id] = dict(result)
+        await write_workflow_artifact(
+            workflow_id,
+            WorkflowArtifactFiles(node_test_results=current),
+            mode="update",
+            actor=ctx.agent,
+            event_publisher=ctx.event_publish_callback,
+        )
+    except Exception as exc:
+        log.warning("run_workflow_node.record_failed", {
+            "workflow_id": workflow_id,
+            "node_id": node_id,
+            "error": str(exc),
+        })
 
 
 def _format_node_result(result: Dict[str, Any]) -> str:
@@ -181,11 +223,15 @@ async def run_workflow_node_tool(
 ) -> ToolResult:
     """Execute a single workflow node in isolation."""
     try:
-        workflow_dict = _load_workflow_dict(workflow)
+        workflow_dict, workflow_path, workflow_id = _load_workflow_source(workflow)
     except (ValueError, json.JSONDecodeError, FileNotFoundError) as e:
         return ToolResult(success=False, error=str(e))
 
-    node_inputs = inputs or {}
+    node_inputs = dict(inputs or {})
+    if workflow_path:
+        resolved_workflow_path = str(Path(workflow_path).expanduser().resolve())
+        node_inputs.setdefault("_workflow_path", resolved_workflow_path)
+        node_inputs.setdefault("_workflow_dir", str(Path(resolved_workflow_path).parent))
 
     log.info("run_workflow_node.start", {
         "node_id": node_id,
@@ -205,7 +251,7 @@ async def run_workflow_node_tool(
 
     try:
         result = await asyncio.wait_for(
-            asyncio.to_thread(_run_node_sync, workflow_dict, node_id, node_inputs, sandbox),
+            asyncio.to_thread(_run_node_sync, workflow_dict, node_id, node_inputs, sandbox, workflow_path),
             timeout=NODE_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError:
@@ -223,6 +269,12 @@ async def run_workflow_node_tool(
         log.error("run_workflow_node.error", {"node_id": node_id, "error": str(e)})
         return ToolResult(success=False, error=f"Failed to run node '{node_id}': {e}")
 
+    record_payload = {
+        **result,
+        "inputs": node_inputs,
+        "checkedAt": int(time.time() * 1000),
+    }
+    await _record_node_test_result(workflow_id, node_id, record_payload, ctx)
     output_text = _format_node_result(result)
 
     log.info("run_workflow_node.done", {

@@ -19,6 +19,7 @@ from flocks.server.routes._timing import log_route_timing
 from flocks.session.session import Session, SessionInfo as SessionModel
 from flocks.session.policy import SessionPolicy
 from flocks.sandbox.uploads import UPLOADS_CHAT_PREFIX, rewrite_upload_paths_for_prompt
+from flocks.workflow.skill_guard import workflow_session_metadata
 from flocks.utils.log import Log
 from flocks.utils.json_repair import parse_json_robust, repair_truncated_json
 from flocks.server.auth import require_user
@@ -70,6 +71,7 @@ class SessionCreateRequest(BaseModel):
     title: Optional[str] = Field(None, description="Session title")
     permission: Optional[List[PermissionRule]] = Field(None, description="Permission rules")
     category: Optional[str] = Field(None, description="Session category (e.g. 'user', 'workflow')")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Session metadata")
     user_context: Optional[Dict[str, Any]] = Field(
         None,
         alias="userContext",
@@ -354,6 +356,9 @@ async def create_session(http_request: Request, request: Optional[SessionCreateR
         ]
 
     
+    session_category = request.category or "user"
+    metadata = workflow_session_metadata(session_category, request.metadata)
+
     session = await Session.create(
         project_id=project_id,
         directory=directory,
@@ -362,6 +367,7 @@ async def create_session(http_request: Request, request: Optional[SessionCreateR
         permission=permission,
         owner_user_id=current_user.id,
         user_context=effective_user_context,
+        metadata=metadata,
         **({"category": request.category} if request.category else {}),
     )
 

@@ -84,6 +84,28 @@ def read_workflow_dir(
         if md_file.is_file():
             markdown_content = md_file.read_text(encoding="utf-8")
             updated_candidates.append(int(md_file.stat().st_mtime * 1000))
+
+        sample_inputs = None
+        sample_inputs_file = wf_dir / "sample-inputs.json"
+        if sample_inputs_file.is_file():
+            sample_inputs = json.loads(sample_inputs_file.read_text(encoding="utf-8"))
+            updated_candidates.append(int(sample_inputs_file.stat().st_mtime * 1000))
+
+        node_test_results = None
+        node_test_results_file = wf_dir / "node-test-results.json"
+        if node_test_results_file.is_file():
+            node_test_results = json.loads(node_test_results_file.read_text(encoding="utf-8"))
+            updated_candidates.append(int(node_test_results_file.stat().st_mtime * 1000))
+
+        if sample_inputs is not None or node_test_results is not None:
+            metadata = workflow_json.get("metadata")
+            metadata = dict(metadata) if isinstance(metadata, dict) else {}
+            if sample_inputs is not None:
+                metadata["sampleInputs"] = sample_inputs
+            if node_test_results is not None:
+                metadata["nodeTestResults"] = node_test_results
+            workflow_json = {**workflow_json, "metadata": metadata}
+
         if meta_file.is_file():
             updated_candidates.append(int(meta_file.stat().st_mtime * 1000))
             updated_candidates.append(int(meta.get("updatedAt") or 0))
@@ -93,8 +115,12 @@ def read_workflow_dir(
             **meta,
             "id": workflow_id,
             "source": source,
+            "workflowPath": str(json_file),
+            "workflowDir": str(wf_dir),
             "workflowJson": workflow_json,
             "markdownContent": markdown_content,
+            "sampleInputs": sample_inputs,
+            "nodeTestResults": node_test_results,
         }
     except Exception as exc:
         log.warning(

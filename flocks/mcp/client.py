@@ -120,6 +120,7 @@ class McpClient:
         self._transport_type: Optional[str] = None
         self._command_queue: asyncio.Queue[_ClientCommand] | None = None
         self._owner_task: asyncio.Task[None] | None = None
+        self._owner_loop: Optional[asyncio.AbstractEventLoop] = None
         self._owner_error: BaseException | None = None
     
     async def connect(self) -> None:
@@ -141,6 +142,7 @@ class McpClient:
         loop = asyncio.get_running_loop()
         startup_future: asyncio.Future[None] = loop.create_future()
         self._owner_error = None
+        self._owner_loop = loop
         self._command_queue = asyncio.Queue()
 
         owner_task = asyncio.create_task(
@@ -226,6 +228,7 @@ class McpClient:
         self._connected = False
         self._transport_type = None
         self._command_queue = None
+        self._owner_loop = None
         if self._owner_task is not None and self._owner_task.done():
             self._owner_task = None
         if clear_owner_error:
@@ -799,15 +802,38 @@ class McpClient:
                 ) from self._owner_error
             raise RuntimeError(f"Client not connected: {self.name}")
 
-        response = asyncio.get_running_loop().create_future()
-        command = _ClientCommand(action=action, payload=payload, response=response)
-        await self._command_queue.put(command)
+        current_loop = asyncio.get_running_loop()
+        owner_loop = self._owner_loop
+        if owner_loop is None:
+            if self._owner_error is not None:
+                raise RuntimeError(
+                    f"Client not connected: {self.name}: {_extract_root_cause(self._owner_error)}"
+                ) from self._owner_error
+            raise RuntimeError(f"Client not connected: {self.name}")
 
-        if owner_task.done() and not response.done():
-            owner_error = self._owner_error or RuntimeError(f"Client not connected: {self.name}")
-            response.set_exception(owner_error)
+        async def _submit_on_owner_loop() -> Any:
+            if self._command_queue is None:
+                if self._owner_error is not None:
+                    raise RuntimeError(
+                        f"Client not connected: {self.name}: {_extract_root_cause(self._owner_error)}"
+                    ) from self._owner_error
+                raise RuntimeError(f"Client not connected: {self.name}")
 
-        return await response
+            response = owner_loop.create_future()
+            command = _ClientCommand(action=action, payload=payload, response=response)
+            await self._command_queue.put(command)
+
+            if owner_task.done() and not response.done():
+                owner_error = self._owner_error or RuntimeError(f"Client not connected: {self.name}")
+                response.set_exception(owner_error)
+
+            return await response
+
+        if current_loop is owner_loop:
+            return await _submit_on_owner_loop()
+
+        cross_loop_future = asyncio.run_coroutine_threadsafe(_submit_on_owner_loop(), owner_loop)
+        return await asyncio.wrap_future(cross_loop_future)
     
     @property
     def is_connected(self) -> bool:

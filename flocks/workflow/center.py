@@ -86,8 +86,7 @@ def _runtime_key(workflow_id: str) -> str:
 
 
 def _normalize_workflow_id(path: Path) -> str:
-    digest = hashlib.sha256(str(path.resolve()).encode("utf-8")).hexdigest()
-    return digest[:24]
+    return path.parent.name
 
 
 def _fingerprint(path: Path) -> str:
@@ -165,6 +164,9 @@ async def _allocate_port() -> int:
 async def _read_registry(workflow_id: str) -> Dict[str, Any]:
     data = await Storage.read(_registry_key(workflow_id))
     if not data:
+        await scan_skill_workflows()
+        data = await Storage.read(_registry_key(workflow_id))
+    if not data:
         raise WorkflowNotFoundError(f"Workflow not registered: {workflow_id}")
     return data
 
@@ -194,12 +196,15 @@ async def _scan_workflow_dir(
 
         workflow_id = _normalize_workflow_id(workflow_path)
         fp = _fingerprint(workflow_path)
+        path_hash = hashlib.sha256(str(workflow_path.resolve()).encode("utf-8")).hexdigest()[:24]
         now_ms = _now_ms()
         existing = await Storage.read(_registry_key(workflow_id)) or {}
         created_at = existing.get("registeredAt", now_ms)
         draft_changed = bool(existing) and existing.get("fingerprint") != fp
         entry = {
             "workflowId": workflow_id,
+            "pathHash": path_hash,
+            "aliases": [path_hash] if path_hash != workflow_id else [],
             "name": raw.get("name") or workflow_path.parent.name,
             "description": raw.get("description") or "",
             "sourceType": source_type,
@@ -284,12 +289,18 @@ def format_workflow_entries(
 
 async def list_registry_entries() -> List[Dict[str, Any]]:
     """List registered skill workflows."""
+    await scan_skill_workflows()
     keys = await Storage.list(_REGISTRY_PREFIX)
     items: List[Dict[str, Any]] = []
     for raw_key in keys:
         key = _key_to_string(raw_key)
         entry = await Storage.read(key)
         if entry:
+            workflow_path = entry.get("workflowPath")
+            if workflow_path:
+                canonical_id = Path(str(workflow_path)).parent.name
+                if entry.get("workflowId") != canonical_id:
+                    continue
             items.append(entry)
     items.sort(key=lambda item: item.get("updatedAt", 0), reverse=True)
     return items
