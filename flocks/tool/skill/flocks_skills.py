@@ -247,10 +247,21 @@ async def flocks_skills(
         )
 
     # Build the command list — no shell interpolation, safe from injection.
-    from flocks.agent.controls import agent_allows_skill, agent_skill_allowlist
+    from flocks.agent.controls import (
+        agent_allows_skill,
+        agent_skill_allowlist,
+        rex_session_uses_full_skill_catalog,
+    )
 
     agent_name = _ctx_agent(ctx)
-    skill_allowlist = await agent_skill_allowlist(agent_name)
+    if await rex_session_uses_full_skill_catalog(
+        getattr(ctx, "session_id", None),
+        agent_name,
+        getattr(ctx, "extra", None),
+    ):
+        skill_allowlist = None
+    else:
+        skill_allowlist = await agent_skill_allowlist(agent_name)
     if skill_allowlist is not None:
         if subcommand in {"install", "install-deps", "remove"}:
             target_skill = _infer_skill_name(args)

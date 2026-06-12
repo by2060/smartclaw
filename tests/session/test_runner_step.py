@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch, AsyncMock
 
 import flocks.session.runner as runner_mod
+from flocks.agent.agent import AgentInfo
 from flocks.session.message import UserMessageInfo
 from flocks.session.runner import (
     RunnerCallbacks,
@@ -471,6 +472,92 @@ class TestBuildTools:
         assert tools[0]["function"]["name"] == "skill"
         assert tools[0]["function"]["description"] == "Dynamic skill description"
 
+    @pytest.mark.asyncio
+    async def test_build_tools_skill_description_uses_workflow_full_skill_catalog(self):
+        session = _make_session("ses_workflow_skill_schema")
+        session.category = "workflow"
+        runner = SessionRunner(session=session)
+        agent = AgentInfo(
+            name="rex",
+            mode="primary",
+            tools=["skill"],
+            skills=["allowed-skill"],
+        )
+        skill_tool = ToolInfo(
+            name="skill",
+            description="Original skill description",
+            category=ToolCategory.SYSTEM,
+            native=True,
+            enabled=True,
+        )
+        allowed_skill = SimpleNamespace(
+            name="allowed-skill",
+            description="Allowed skill",
+            location="/tmp/allowed-skill/SKILL.md",
+        )
+        workflow_skill = SimpleNamespace(
+            name="workflow-only-skill",
+            description="Workflow-only skill",
+            location="/tmp/workflow-only-skill/SKILL.md",
+        )
+
+        with patch.object(
+            SessionRunner,
+            "_list_callable_tool_infos_for_turn",
+            AsyncMock(return_value=([skill_tool], {"enabledToolCount": 3})),
+        ), patch(
+            "flocks.tool.system.skill.Skill.all",
+            AsyncMock(return_value=[allowed_skill, workflow_skill]),
+        ):
+            tools = await runner._build_callable_tool_schema(agent, [])
+
+        description = tools[0]["function"]["description"]
+        assert "<name>allowed-skill</name>" in description
+        assert "<name>workflow-only-skill</name>" in description
+
+    @pytest.mark.asyncio
+    async def test_build_tools_skill_description_filters_non_workflow_by_agent_skills(self):
+        session = _make_session("ses_user_skill_schema")
+        session.category = "user"
+        runner = SessionRunner(session=session)
+        agent = AgentInfo(
+            name="rex",
+            mode="primary",
+            tools=["skill"],
+            skills=["allowed-skill"],
+        )
+        skill_tool = ToolInfo(
+            name="skill",
+            description="Original skill description",
+            category=ToolCategory.SYSTEM,
+            native=True,
+            enabled=True,
+        )
+        allowed_skill = SimpleNamespace(
+            name="allowed-skill",
+            description="Allowed skill",
+            location="/tmp/allowed-skill/SKILL.md",
+        )
+        blocked_skill = SimpleNamespace(
+            name="blocked-skill",
+            description="Blocked skill",
+            location="/tmp/blocked-skill/SKILL.md",
+        )
+
+        with patch.object(
+            SessionRunner,
+            "_list_callable_tool_infos_for_turn",
+            AsyncMock(return_value=([skill_tool], {"enabledToolCount": 3})),
+        ), patch(
+            "flocks.tool.system.skill.Skill.all",
+            AsyncMock(return_value=[allowed_skill, blocked_skill]),
+        ):
+            tools = await runner._build_callable_tool_schema(agent, [])
+
+        description = tools[0]["function"]["description"]
+        assert "<name>allowed-skill</name>" in description
+        assert "<name>blocked-skill</name>" not in description
+
 
 class TestBuildSystemPrompts:
     @pytest.mark.asyncio
@@ -576,6 +663,35 @@ class TestBuildSystemPrompts:
         assert "answer directly from the account-scoped memory" in answer_rule_prompt
         assert "do not have personal hobbies" in answer_rule_prompt
 
+    @pytest.mark.asyncio
+    async def test_rex_system_prompt_cache_key_includes_allowed_subagents(self):
+        shared_cache = {}
+        session = _make_session("ses_prompts_rex_scope")
+        session.user_context = {"allowedSubagents": ["alpha"]}
+        runner = SessionRunner(session=session, static_cache=shared_cache)
+        agent = AgentInfo(name="rex", mode="primary", prompt="fallback prompt")
+
+        with patch("flocks.session.runner.ToolRegistry.revision", return_value=1), \
+             patch("flocks.session.runner.SystemPrompt.provider", return_value=["provider prompt"]), \
+             patch("flocks.session.runner.SystemPrompt.environment", AsyncMock(return_value=["env prompt"])), \
+             patch("flocks.session.runner.SystemPrompt.custom", AsyncMock(return_value=["custom prompt"])), \
+             patch.object(SessionRunner, "_build_sandbox_prompt", AsyncMock(return_value="")), \
+             patch.object(SessionRunner, "_build_channel_context_prompt", AsyncMock(return_value="")), \
+             patch.object(SessionRunner, "_get_tool_instructions", return_value="tool instructions"), \
+             patch.object(SessionRunner, "_build_tool_catalog_prompt", return_value=None), \
+             patch.object(
+                 SessionRunner,
+                 "_build_agent_identity_prompt",
+                 AsyncMock(side_effect=["prompt alpha", "prompt beta"]),
+             ) as prompt_mock:
+            prompts1 = await runner._build_system_prompts(agent)
+            session.user_context = {"allowedSubagents": ["beta"]}
+            prompts2 = await runner._build_system_prompts(agent)
+
+        assert "prompt alpha" in prompts1
+        assert "prompt beta" in prompts2
+        assert prompt_mock.await_count == 2
+
     def test_build_tool_catalog_prompt_for_rex(self):
         runner = _make_runner()
         agent = _make_agent(name="rex")
@@ -598,8 +714,8 @@ class TestBuildSystemPrompts:
 
         assert prompt is not None
         assert "Tool Catalog Awareness" in prompt
-        assert "tool_search" in prompt
-        assert "full tool catalog" in prompt
+        assert "full tool catalog" not in prompt
+        assert "derived from your configured callable tool set" in prompt
         assert "reference-only" in prompt
         assert "sole source of truth for parameters" in prompt
         assert "- read: Read file contents" in prompt
@@ -628,9 +744,9 @@ class TestBuildSystemPrompts:
         assert "derived from your configured callable tool set" in prompt
         assert "use `tool_search` first" not in prompt
 
-    def test_list_catalog_tool_infos_returns_full_catalog_for_rex(self):
+    def test_list_catalog_tool_infos_filters_rex_to_declared_and_always_load(self):
         runner = _make_runner()
-        agent = _make_agent(name="rex")
+        agent = _make_agent(name="rex", tools=["read", "tool_search"])
         agent.mode = "primary"
         shell_tool = ToolInfo(
             name="bash",
@@ -646,14 +762,28 @@ class TestBuildSystemPrompts:
             native=True,
             enabled=True,
         )
+        question_tool = ToolInfo(
+            name="question",
+            description="Ask the user",
+            category=ToolCategory.SYSTEM,
+            native=True,
+            enabled=True,
+        )
+        search_tool = ToolInfo(
+            name="tool_search",
+            description="Search tools",
+            category=ToolCategory.SYSTEM,
+            native=True,
+            enabled=True,
+        )
 
         with patch(
             "flocks.session.runner.list_tool_catalog_infos",
-            return_value=[shell_tool, helper_tool],
+            return_value=[shell_tool, helper_tool, question_tool, search_tool],
         ):
             infos = runner._list_catalog_tool_infos(agent)
 
-        assert [tool.name for tool in infos] == ["bash", "read"]
+        assert [tool.name for tool in infos] == ["read", "question", "tool_search"]
 
     def test_list_catalog_tool_infos_filters_subagent_boundaries(self):
         runner = _make_runner()
@@ -663,13 +793,14 @@ class TestBuildSystemPrompts:
         tool_infos = [
             ToolInfo(name="bash", description="Run commands", category=ToolCategory.CODE, native=True, enabled=True),
             ToolInfo(name="read", description="Read file contents", category=ToolCategory.FILE, native=True, enabled=True),
+            ToolInfo(name="question", description="Ask the user", category=ToolCategory.SYSTEM, native=True, enabled=True),
             ToolInfo(name="websearch", description="Search web", category=ToolCategory.BROWSER, native=True, enabled=True),
         ]
 
         with patch("flocks.session.runner.list_tool_catalog_infos", return_value=tool_infos):
             infos = runner._list_catalog_tool_infos(agent)
 
-        assert [tool.name for tool in infos] == ["bash", "read"]
+        assert [tool.name for tool in infos] == ["read", "question"]
 
 
 class TestMiniMaxTextToolMode:

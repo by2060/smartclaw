@@ -9,6 +9,7 @@ Flocks TUI expects Agent format:
     "description"?: string,
     "descriptionCn"?: string,
     "mode": "subagent" | "primary" | "all",
+    "agent_type"?: string,
     "native"?: boolean,
     "hidden"?: boolean,
     "topP"?: number,
@@ -104,6 +105,7 @@ class AgentResponse(BaseModel):
     description: Optional[str] = None
     descriptionCn: Optional[str] = None
     mode: str = "primary"
+    agent_type: Optional[str] = None
     native: Optional[bool] = True
     hidden: Optional[bool] = False
     topP: Optional[float] = None
@@ -160,6 +162,7 @@ def agent_to_response(
         description=agent.description,
         descriptionCn=agent.description_cn,
         mode=agent.mode,
+        agent_type=getattr(agent, "agent_type", None),
         native=agent.native,
         hidden=agent.hidden,
         topP=agent.top_p,
@@ -193,6 +196,7 @@ def _agent_data_to_info(agent_data: Dict[str, Any]) -> AgentInfoModel:
         temperature=agent_data.get("temperature"),
         color=agent_data.get("color"),
         mode=agent_data.get("mode", "primary"),
+        agent_type=agent_data.get("agent_type"),
         model=AgentModelConfig(
             model_id=model_data["modelID"],
             provider_id=model_data["providerID"],
@@ -219,6 +223,7 @@ def _custom_agent_data_to_response(agent_data: Dict[str, Any]) -> AgentResponse:
         temperature=agent_data.get("temperature"),
         color=agent_data.get("color"),
         mode=agent_data.get("mode", "primary"),
+        agent_type=agent_data.get("agent_type"),
         model=model_info,
         native=agent_data.get("native", False),
         hidden=agent_data.get("hidden", False),
@@ -392,6 +397,7 @@ class AgentCreateRequest(BaseModel):
     temperature: Optional[float] = Field(None, description="Temperature")
     color: Optional[str] = Field(None, description="Color")
     mode: str = Field("primary", description="Agent mode")
+    agent_type: Optional[str] = Field(None, description="Agent type label")
     model: Optional[AgentModelInfo] = Field(None, description="Preferred model")
     delegatable: bool = Field(False, description="Whether this agent can be delegated to")
     skills: Optional[List[str]] = Field(None, description="Enabled skill names")
@@ -408,6 +414,7 @@ class AgentUpdateRequest(BaseModel):
     prompt: Optional[str] = Field(None, description="System prompt")
     temperature: Optional[float] = Field(None, description="Temperature")
     color: Optional[str] = Field(None, description="Color")
+    agent_type: Optional[str] = Field(None, description="Agent type label")
     model: Optional[AgentModelInfo] = Field(None, description="Preferred model")
     delegatable: Optional[bool] = Field(None, description="Whether this agent can be delegated to")
     skills: Optional[List[str]] = Field(None, description="Enabled skill names")
@@ -448,6 +455,7 @@ async def create_agent(req: AgentCreateRequest):
             "temperature": req.temperature,
             "color": req.color,
             "mode": req.mode,
+            "agent_type": req.agent_type,
             "model": (
                 {"provider_id": req.model.providerID, "model_id": req.model.modelID}
                 if req.model
@@ -516,6 +524,8 @@ async def update_agent(name: str, req: AgentUpdateRequest):
                 agent_data["temperature"] = req.temperature
             if req.color is not None:
                 agent_data["color"] = req.color
+            if req.agent_type is not None:
+                agent_data["agent_type"] = req.agent_type
             if req.model is not None:
                 agent_data["model"] = req.model.model_dump()
             overlay = _agent_overlay(
@@ -559,6 +569,8 @@ async def update_agent(name: str, req: AgentUpdateRequest):
                 updates["temperature"] = req.temperature
             if req.color is not None:
                 updates["color"] = req.color
+            if req.agent_type is not None:
+                updates["agent_type"] = req.agent_type
             if req.model is not None:
                 updates["model"] = req.model.model_dump()
             updates.update(_agent_overlay(
@@ -603,6 +615,8 @@ async def update_agent(name: str, req: AgentUpdateRequest):
                     agent.temperature = req.temperature
                 if req.color is not None:
                     agent.color = req.color
+                if req.agent_type is not None:
+                    agent.agent_type = req.agent_type
                 if req.model is not None:
                     agent.model = AgentModelConfig(
                         model_id=req.model.modelID,

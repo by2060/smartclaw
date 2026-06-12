@@ -27,9 +27,10 @@ from flocks.session.session_loop import SessionLoop
 from flocks.agent.registry import is_delegatable
 from flocks.agent.controls import (
     agent_allowed_skills,
-    agent_allowed_subagents,
     agent_allows_skill,
-    agent_allows_subagent,
+    rex_session_allowed_subagents_text,
+    rex_session_allows_subagent,
+    rex_session_uses_full_skill_catalog,
 )
 from flocks.skill.skill import Skill
 from flocks.config.config import Config
@@ -303,7 +304,16 @@ async def delegate_task_tool(
             return prev
 
     # skills权限控制新增
-    blocked_skills = [skill for skill in load_skills if not await agent_allows_skill(ctx.agent, skill)]
+    full_skill_catalog = await rex_session_uses_full_skill_catalog(
+        ctx.session_id,
+        ctx.agent,
+        getattr(ctx, "extra", None),
+    )
+    blocked_skills = (
+        []
+        if full_skill_catalog
+        else [skill for skill in load_skills if not await agent_allows_skill(ctx.agent, skill)]
+    )
     if blocked_skills:
         allowed = await agent_allowed_skills(ctx.agent)
         allowed_text = ", ".join(allowed) or "none"
@@ -326,6 +336,19 @@ async def delegate_task_tool(
     agent_to_use: Optional[str] = None
 
     if session_id:
+        session = await Session.get_by_id(session_id)
+        if not session:
+            return ToolResult(success=False, error=f"Session {session_id} not found")
+        target_agent = session.agent or ctx.agent
+        if target_agent != ctx.agent and not await rex_session_allows_subagent(ctx.session_id, ctx.agent, target_agent):
+            allowed_text = await rex_session_allowed_subagents_text(ctx.session_id, ctx.agent)
+            return ToolResult(
+                success=False,
+                error=(
+                    f'Agent "{ctx.agent}" is not allowed to continue delegated session '
+                    f'"{session_id}" for "{target_agent}". Allowed subagents: {allowed_text}'
+                ),
+            )
         if run_in_background:
             manager = get_background_manager()
             task = await manager.resume(
@@ -348,9 +371,6 @@ async def delegate_task_tool(
             )
             return ToolResult(success=True, output=output, title=description, metadata={"sessionId": task.session_id})
         # Sync continuation
-        session = await Session.get_by_id(session_id)
-        if not session:
-            return ToolResult(success=False, error=f"Session {session_id} not found")
         await Message.create(
             session_id=session.id,
             role=MessageRole.USER,
@@ -408,14 +428,18 @@ async def delegate_task_tool(
         agent_to_use = subagent_type
 
     # subagents权限控制新增
-    if agent_to_use and not await agent_allows_subagent(ctx.agent, agent_to_use):
-        allowed = await agent_allowed_subagents(ctx.agent)
-        allowed_text = ", ".join(allowed) or "none"
+    if agent_to_use and not await rex_session_allows_subagent(
+        ctx.session_id,
+        ctx.agent,
+        agent_to_use,
+        getattr(ctx, "extra", None),
+    ):
+        allowed_text = await rex_session_allowed_subagents_text(ctx.session_id, ctx.agent)
         return ToolResult(
             success=False,
             error=(
                 f'Agent "{ctx.agent}" is not allowed to delegate to "{agent_to_use}". '
-                f"Allowed sub_agents: {allowed_text}"
+                f"Allowed subagents: {allowed_text}"
             ),
         )
 

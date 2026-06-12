@@ -55,6 +55,7 @@ Usage:
 - You have the capability to call multiple tools in a single response. It is always better to speculatively read multiple files as a batch that are potentially useful.
 - If you read a file that exists but has empty contents you will receive a system reminder warning in place of file contents.
 - You can read image files using this tool.
+- Logs may contain sensitive deployment information such as IPs, ports, service names, credentials, and PIDs. Use log reads for diagnosis by default; do not convert discovered clues into destructive operations such as stopping services, closing ports, killing processes, or changing firewall/security-group rules without explicit high-risk authorization.
 - Do not use this tool to extract text from PDF, Word, Excel, PowerPoint, or HTML documents. Use doc_parser first, then read the generated Markdown if needed."""
 
 DESCRIPTION_CN = """读取本地文件系统中的文件。你可以使用此工具直接访问任何文件。

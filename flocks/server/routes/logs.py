@@ -2,6 +2,8 @@
 Log viewing routes for WebUI.
 
 Provides endpoints to list and read log files from ~/.flocks/logs.
+Logs may contain sensitive deployment information. These routes are intended
+for diagnosis, not as authorization to perform destructive operations.
 """
 
 from collections import deque
@@ -60,7 +62,7 @@ async def list_logs():
 async def read_latest_log(
     tail: int = Query(200, ge=1, le=5000, description="Number of lines from the end"),
 ):
-    """Read the last N lines of the most recent log file."""
+    """Read the last N lines of the most recent log file for diagnosis only."""
     log_dir = get_log_dir()
     if not log_dir.is_dir():
         raise HTTPException(status_code=404, detail="Log directory not found")
@@ -81,7 +83,7 @@ async def read_log(
     filename: str,
     tail: int = Query(200, ge=1, le=5000, description="Number of lines from the end"),
 ):
-    """Read the last N lines of a specific log file."""
+    """Read the last N lines of a specific log file for diagnosis only."""
     log_dir = get_log_dir()
     log_path = log_dir / filename
 

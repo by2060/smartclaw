@@ -6,10 +6,10 @@ description: >-
   tool-builder skill, and verifies everything works before reporting back.
 description_cn: 能力扩展智能体，当 Rex 遇到能力缺口时研究并安装解决方案
 mode: subagent
-hidden: false
+hidden: true
 tags: [system]
 color: "#27AE60"
-delegatable: true
+delegatable: false
 steps: 40
 tools:
   - read

@@ -143,6 +143,11 @@ class WorkflowRunRequest(BaseModel):
         description="Optional parent message ID",
     )
     agent: Optional[str] = Field(None, description="Optional agent name for tool context")
+    user_context: Optional[Dict[str, Any]] = Field(
+        None,
+        alias="userContext",
+        description="Optional runtime user context for workflow-created sessions",
+    )
 
 
 class WorkflowExecutionResponse(BaseModel):
@@ -221,6 +226,7 @@ async def _build_workflow_tool_context(
     session_id: Optional[str] = None,
     message_id: Optional[str] = None,
     agent: Optional[str] = None,
+    user_context: Optional[Dict[str, Any]] = None,
 ) -> ToolContext:
     """Build a real ToolContext for workflow execution.
 
@@ -245,6 +251,9 @@ async def _build_workflow_tool_context(
         workspace_dir = str(_find_workspace_root())
 
     parent_session = None
+    effective_user_context: Dict[str, Any] = (
+        dict(user_context) if isinstance(user_context, dict) else {}
+    )
     if effective_session_id:
         parent_session = await Session.get_by_id(effective_session_id)
         if not parent_session:
@@ -254,13 +263,16 @@ async def _build_workflow_tool_context(
             project_id = str(parent_session.project_id)
         if not effective_agent:
             effective_agent = str(getattr(parent_session, "agent", None) or "rex")
+        if not effective_user_context and isinstance(getattr(parent_session, "user_context", None), dict):
+            effective_user_context = dict(parent_session.user_context)
     else:
         parent_session = await Session.create(
             project_id=project_id,
             directory=workspace_dir,
             title=f"Workflow {action_name}: {workflow_id}",
             agent=effective_agent or "rex",
-            category="task",
+            category="workflow",
+            user_context=effective_user_context,
             metadata={
                 "workflowTempParent": True,
                 "hideFromSessionManager": True,
@@ -272,6 +284,8 @@ async def _build_workflow_tool_context(
         workspace_dir = str(getattr(parent_session, "directory", None) or workspace_dir)
         if not effective_agent:
             effective_agent = str(getattr(parent_session, "agent", None) or "rex")
+        if isinstance(getattr(parent_session, "user_context", None), dict):
+            effective_user_context = dict(parent_session.user_context)
 
     if not effective_message_id:
         message = await Message.create(
@@ -294,6 +308,8 @@ async def _build_workflow_tool_context(
             "workspace_dir": workspace_dir,
             "main_session_key": output_session_id,
             "output_session_id": output_session_id,
+            "workflow_tool_context": True,
+            "user_context": effective_user_context,
         },
     )
 
@@ -854,6 +870,7 @@ async def run_workflow_endpoint(workflow_id: str, req: WorkflowRunRequest):
             session_id=req.session_id,
             message_id=req.message_id,
             agent=req.agent,
+            user_context=req.user_context,
         )
 
         exec_data = await create_execution_record(
@@ -1554,6 +1571,11 @@ class RunNodeRequest(BaseModel):
         description="Optional parent message ID",
     )
     agent: Optional[str] = Field(None, description="Optional agent name for tool context")
+    user_context: Optional[Dict[str, Any]] = Field(
+        None,
+        alias="userContext",
+        description="Optional runtime user context for workflow-created sessions",
+    )
 
 
 class RunNodeResponse(BaseModel):
@@ -1589,6 +1611,7 @@ async def run_single_node(workflow_id: str, req: RunNodeRequest):
             session_id=req.session_id,
             message_id=req.message_id,
             agent=req.agent,
+            user_context=req.user_context,
         )
 
         try:

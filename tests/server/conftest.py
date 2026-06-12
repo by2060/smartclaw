@@ -20,7 +20,13 @@ async def _server_isolated_env(tmp_path: Path, monkeypatch):
     """
     data_dir = tmp_path / "flocks_data"
     data_dir.mkdir(parents=True, exist_ok=True)
+    config_dir = tmp_path / "flocks_config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = tmp_path / "flocks_logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("FLOCKS_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("FLOCKS_CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("FLOCKS_LOG_DIR", str(log_dir))
 
     from flocks.config.config import Config
     from flocks.storage.storage import Storage

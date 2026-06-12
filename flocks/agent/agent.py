@@ -128,6 +128,7 @@ class AgentInfo(BaseModel):
     # "subagent" – invocable via delegate_task() only
     # "all"      – can function as either (legacy / plugin default)
     mode: str = "all"
+    agent_type: Optional[str] = None
 
     native: bool = Field(default=False)
     hidden: bool = Field(default=False)

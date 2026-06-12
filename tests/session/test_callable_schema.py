@@ -141,3 +141,31 @@ async def test_callable_schema_keeps_user_plugin_tools_visible(monkeypatch: pyte
 
     names = [tool.name for tool in result.tool_infos]
     assert "project_memory" in names
+
+
+@pytest.mark.asyncio
+async def test_callable_schema_uses_full_catalog_for_rex_workflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tools = [
+        _tool("read", ToolCategory.FILE),
+        _tool("bash", ToolCategory.CODE),
+        _tool("custom_lookup", ToolCategory.CUSTOM),
+        _tool("invalid", ToolCategory.SYSTEM),
+    ]
+
+    monkeypatch.setattr("flocks.session.callable_schema.ToolRegistry.list_tools", lambda: tools)
+    monkeypatch.setattr(
+        "flocks.agent.controls.rex_session_uses_full_tool_catalog",
+        AsyncMock(return_value=True),
+    )
+
+    result = await list_session_callable_tool_infos(
+        session_id="workflow-session",
+        declared_tool_names=["read"],
+        agent_name="rex",
+    )
+
+    names = [tool.name for tool in result.tool_infos]
+    assert names == ["read", "bash", "custom_lookup"]
+    assert result.metadata["workflowFullToolCatalog"] is True

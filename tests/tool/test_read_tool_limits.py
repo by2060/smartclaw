@@ -25,6 +25,15 @@ def test_read_tool_limit_constants():
     assert read_tool_module.MAX_BYTES == 20 * 1024
 
 
+def test_read_description_marks_log_operational_clues_sensitive():
+    description = read_tool_module.DESCRIPTION
+
+    assert "Logs may contain sensitive deployment information" in description
+    assert "ports" in description
+    assert "PIDs" in description
+    assert "without explicit high-risk authorization" in description
+
+
 @pytest.mark.asyncio
 async def test_default_read_limit_is_2000_lines(tool_context, tmp_path):
     file_path = tmp_path / "many-lines.txt"

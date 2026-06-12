@@ -484,6 +484,62 @@ class Agent:
         return agent.prompt if agent else None
 
     @classmethod
+    async def prompt_builder_context(cls) -> Dict[str, Any]:
+        """Return full dynamic prompt context for session-scoped builders."""
+        from flocks.tool.delegate_task_constants import CATEGORY_DESCRIPTIONS, DEFAULT_CATEGORIES
+        from flocks.tool.registry import ToolRegistry
+
+        cfg = await Config.get()
+        agents = await cls.state()
+
+        ToolRegistry.init()
+        available_tools = [t.name for t in ToolRegistry.list_tools() if t.enabled]
+        categorized_tools = categorize_tools(available_tools)
+
+        skills = await Skill.all()
+        available_skills = [
+            AvailableSkill(name=s.name, description=s.description, location=s.source or "project")
+            for s in skills
+        ]
+
+        category_configs = {**DEFAULT_CATEGORIES, **(cfg.categories or {})}
+        available_categories = [
+            AvailableCategory(
+                name=name,
+                description=(
+                    cfg.categories.get(name).description
+                    if cfg.categories and cfg.categories.get(name)
+                    else CATEGORY_DESCRIPTIONS.get(name, name)
+                ),
+            )
+            for name in category_configs.keys()
+        ]
+
+        available_workflows: List[AvailableWorkflow] = []
+        try:
+            from flocks.workflow.center import scan_skill_workflows
+
+            workflow_entries = await scan_skill_workflows()
+            for entry in workflow_entries:
+                available_workflows.append(AvailableWorkflow(
+                    name=entry.get("name") or "",
+                    description=entry.get("description") or "",
+                    path=entry.get("workflowPath") or "",
+                    source=entry.get("sourceType") or "project",
+                ))
+        except Exception as _wf_err:
+            log.debug("agent.registry.workflow_scan_skipped", {"error": str(_wf_err)})
+
+        return {
+            "agents": agents,
+            "available_agents": _build_available_agents(agents),
+            "tools": categorized_tools,
+            "skills": available_skills,
+            "categories": available_categories,
+            "workflows": available_workflows,
+        }
+
+    @classmethod
     async def get_model_config(cls, agent_name: str) -> Optional[Dict[str, str]]:
         agent = await cls.get(agent_name)
         if not agent or not agent.model:

@@ -18,9 +18,7 @@ import pytest
 from flocks.agent.agent import AvailableAgent, AvailableCategory, AvailableSkill, AvailableTool, AvailableWorkflow
 from flocks.agent.prompt_utils import (
     _format_tools_for_prompt,
-    build_category_skills_delegation_guide,
     build_tool_selection_table,
-    build_ultrawork_section,
     build_workflows_section,
     categorize_tools,
 )
@@ -208,7 +206,7 @@ class TestBuildToolSelectionTable:
     def test_contains_available_tools_header(self):
         tools = [AvailableTool(name="bash", category="terminal")]
         output = build_tool_selection_table([], tools)
-        assert "可用工具" in output
+        assert "Available Tools" in output
 
     def test_tools_rendered_in_output(self):
         tools = [
@@ -224,13 +222,6 @@ class TestBuildToolSelectionTable:
         output = build_tool_selection_table(agents, [])
         assert "explore" in output
         assert "CHEAP" in output
-
-    def test_agent_table_prefers_description_cn(self):
-        agent = self._make_agent("explore")
-        agent.description_cn = "中文探索描述"
-        output = build_tool_selection_table([agent], [])
-        assert "中文探索描述" in output
-        assert "explore agent" not in output
 
     def test_utility_agents_excluded(self):
         normal = self._make_agent("explore")
@@ -251,48 +242,7 @@ class TestBuildToolSelectionTable:
 
     def test_default_flow_hint_present(self):
         output = build_tool_selection_table([], [])
-        assert "默认流程" in output
-
-
-class TestLocalizedDescriptions:
-
-    def _make_agent(self) -> AvailableAgent:
-        meta = MagicMock()
-        meta.cost = "CHEAP"
-        meta.category = "general"
-        meta.triggers = []
-        meta.key_trigger = None
-        return AvailableAgent(
-            name="oracle",
-            description="English oracle description.",
-            description_cn="中文 oracle 描述",
-            metadata=meta,
-        )
-
-    def test_category_skills_guide_prefers_skill_description_cn(self):
-        skill = AvailableSkill(
-            name="tool-builder",
-            description="English tool builder description.",
-            description_cn="中文工具构建描述",
-            location="project",
-        )
-        output = build_category_skills_delegation_guide([], [skill])
-        assert "中文工具构建描述" in output
-        assert "English tool builder" not in output
-
-    def test_ultrawork_section_prefers_description_cn(self):
-        agent = self._make_agent()
-        skill = AvailableSkill(
-            name="tool-builder",
-            description="English tool builder description.",
-            description_cn="中文工具构建描述",
-            location="project",
-        )
-        output = build_ultrawork_section([agent], [], [skill])
-        assert "中文 oracle 描述" in output
-        assert "中文工具构建描述" in output
-        assert "English oracle" not in output
-        assert "English tool builder" not in output
+        assert "Default flow" in output
 
 
 # ===========================================================================
@@ -326,12 +276,12 @@ class TestBuildWorkflowsSection:
     def test_project_scope_label(self):
         wf = self._make_workflow(source="project")
         output = build_workflows_section([wf])
-        assert "项目" in output
+        assert "project" in output
 
     def test_global_scope_label(self):
         wf = self._make_workflow(source="global")
         output = build_workflows_section([wf])
-        assert "全局" in output
+        assert "global" in output
 
     def test_project_workflows_before_global(self):
         project_wf = self._make_workflow(name="proj_wf", source="project")
@@ -358,7 +308,7 @@ class TestBuildWorkflowsSection:
     def test_section_header_present(self):
         wf = self._make_workflow()
         output = build_workflows_section([wf])
-        assert "可用工作流" in output
+        assert "Available Workflows" in output
 
     def test_path_column_in_table(self):
         wf = self._make_workflow(path="/home/user/.flocks/workflow/ndr/workflow.json")
@@ -368,7 +318,7 @@ class TestBuildWorkflowsSection:
     def test_table_has_path_header(self):
         wf = self._make_workflow()
         output = build_workflows_section([wf])
-        assert "路径" in output
+        assert "Path" in output
 
     def test_multiline_description_uses_first_line_only(self):
         wf = self._make_workflow(description="First line.\nSecond line.")

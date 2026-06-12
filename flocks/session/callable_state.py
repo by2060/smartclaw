@@ -91,19 +91,21 @@ async def add_session_callable_tools(
     tool_names: Iterable[str],
     *,
     agent_name: Optional[str] = None,
+    extra: Optional[dict] = None,
 ) -> Set[str]:
     current = await get_session_callable_tools(session_id)
     requested = _normalize_tool_names(tool_names)
     if agent_name:
         try:
-            from flocks.agent.controls import agent_allows_tool
+            from flocks.agent.controls import agent_allows_tool, rex_session_uses_full_tool_catalog
 
-            allowed = {
-                name
-                for name in requested
-                if await agent_allows_tool(agent_name, name)
-            }
-            requested = allowed
+            if not await rex_session_uses_full_tool_catalog(session_id, agent_name, extra):
+                allowed = {
+                    name
+                    for name in requested
+                    if await agent_allows_tool(agent_name, name)
+                }
+                requested = allowed
         except Exception:
             requested = set()
     current.update(requested)

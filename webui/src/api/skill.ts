@@ -56,6 +56,21 @@ export interface SkillInstallRequest {
   deletable?: boolean;
 }
 
+export interface SkillRequestContext {
+  agent?: string;
+  sessionId?: string;
+  category?: string;
+}
+
+function skillRequestParams(context?: SkillRequestContext) {
+  if (!context) return undefined;
+  return {
+    agent: context.agent,
+    session_id: context.sessionId,
+    category: context.category,
+  };
+}
+
 export interface SkillInstallResponse {
   success: boolean;
   skill_name?: string;
@@ -79,32 +94,32 @@ export interface DepInstallResponse {
 }
 
 export const skillAPI = {
-  list: () =>
-    client.get<Skill[]>('/api/skills'),
+  list: (context?: SkillRequestContext) =>
+    client.get<Skill[]>('/api/skills', { params: skillRequestParams(context) }),
 
   /** List all skills with eligibility status (bin/env checks). */
-  status: () =>
-    client.get<Skill[]>('/api/skills/status'),
+  status: (context?: SkillRequestContext) =>
+    client.get<Skill[]>('/api/skills/status', { params: skillRequestParams(context) }),
 
-  get: (name: string) =>
-    client.get<Skill>(`/api/skills/${name}`),
+  get: (name: string, context?: SkillRequestContext) =>
+    client.get<Skill>(`/api/skills/${name}`, { params: skillRequestParams(context) }),
 
   create: (data: {
     name: string;
     description: string;
     content: string;
-  }) =>
-    client.post<Skill>('/api/skills', data),
+  }, context?: SkillRequestContext) =>
+    client.post<Skill>('/api/skills', data, { params: skillRequestParams(context) }),
 
   update: (name: string, data: {
     name: string;
     description: string;
     content: string;
-  }) =>
-    client.put<Skill>(`/api/skills/${name}`, data),
+  }, context?: SkillRequestContext) =>
+    client.put<Skill>(`/api/skills/${name}`, data, { params: skillRequestParams(context) }),
 
-  delete: (name: string) =>
-    client.delete(`/api/skills/${name}`),
+  delete: (name: string, context?: SkillRequestContext) =>
+    client.delete(`/api/skills/${name}`, { params: skillRequestParams(context) }),
 
   refresh: () =>
     client.post('/api/skills/refresh'),
@@ -119,8 +134,8 @@ export const skillAPI = {
    *   /local/path           – local filesystem
    *   safeskill:<name>      – SafeSkill registry (future)
    */
-  install: (req: SkillInstallRequest) =>
-    client.post<SkillInstallResponse>('/api/skills/install', req),
+  install: (req: SkillInstallRequest, context?: SkillRequestContext) =>
+    client.post<SkillInstallResponse>('/api/skills/install', req, { params: skillRequestParams(context) }),
 
   /**
    * Install a skill's declared tool dependencies (brew, npm, uv, pip …).
@@ -129,11 +144,11 @@ export const skillAPI = {
    * @param installId  Optional: only run the spec with this id
    * @param timeoutMs  Subprocess timeout in ms (default 300000)
    */
-  installDeps: (name: string, installId?: string, timeoutMs?: number) =>
+  installDeps: (name: string, installId?: string, timeoutMs?: number, context?: SkillRequestContext) =>
     client.post<DepInstallResponse>(`/api/skills/${name}/install-deps`, {
       install_id: installId,
       timeout_ms: timeoutMs,
-    }),
+    }, { params: skillRequestParams(context) }),
 };
 
 export const commandAPI = {

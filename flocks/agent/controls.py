@@ -5,8 +5,15 @@ from __future__ import annotations
 from typing import Any, Iterable, Optional
 
 
+_REX_AGENT_NAMES = {"rex", "sisyphus"}
+
+
 def _normalize_names(values: Iterable[str]) -> set[str]:
     return {str(value).strip().lower() for value in values if str(value).strip()}
+
+
+def is_rex_agent(agent_name: Optional[str]) -> bool:
+    return str(agent_name or "").strip().lower() in _REX_AGENT_NAMES
 
 
 async def _canonical_agent_name(name: Optional[str]) -> str:
@@ -58,13 +65,169 @@ async def agent_allowed_subagents(parent_agent_name: Optional[str]) -> list[str]
     return list(getattr(parent, "sub_agents", None) or [])
 
 
+def _session_user_context(session: Any) -> dict[str, Any]:
+    context = getattr(session, "user_context", None)
+    return dict(context) if isinstance(context, dict) else {}
+
+
+async def rex_session_allowed_subagents(session_id: Optional[str]) -> Optional[list[str]]:
+    """Return Rex's dynamic subagent allowlist for a session.
+
+    ``None`` means no dynamic restriction was supplied. An explicit empty list
+    means Rex may not delegate to any subagent.
+    """
+    if not session_id:
+        return None
+
+    try:
+        from flocks.session.session import Session
+
+        session = await Session.get_by_id(session_id)
+    except Exception:
+        session = None
+    if not session:
+        return None
+
+    context = _session_user_context(session)
+    raw_allowed = context.get("allowedSubagents", None)
+    if raw_allowed is None:
+        return None
+    if isinstance(raw_allowed, str):
+        raw_allowed = [raw_allowed]
+    if not isinstance(raw_allowed, Iterable):
+        return []
+    return [
+        str(value).strip()
+        for value in raw_allowed
+        if str(value).strip()
+    ]
+
+
+async def rex_session_allows_subagent(
+    session_id: Optional[str],
+    parent_agent_name: Optional[str],
+    child_agent_name: Optional[str],
+    extra: Optional[dict[str, Any]] = None,
+) -> bool:
+    """Return whether Rex may delegate to ``child_agent_name`` in this session.
+
+    Dynamic userContext scoping applies only to Rex. Other agents are governed
+    solely by their own ``agent.yaml`` controls.
+    """
+    if not await agent_allows_subagent(parent_agent_name, child_agent_name):
+        return False
+    if not is_rex_agent(parent_agent_name):
+        return True
+
+    workflow_context = (
+        isinstance(extra, dict)
+        and bool(extra.get("workflow_tool_context"))
+    ) or await _session_is_workflow(session_id)
+    if workflow_context and not await _agent_is_l1(child_agent_name):
+        return False
+
+    allowed = await rex_session_allowed_subagents(session_id)
+    if allowed is None:
+        return True
+    if len(allowed) == 0:
+        return False
+
+    allowed_names = _normalize_names(allowed)
+    for allowed_name in allowed:
+        canonical_allowed = await _canonical_agent_name(str(allowed_name))
+        if canonical_allowed:
+            allowed_names.add(canonical_allowed)
+    child = await _canonical_agent_name(child_agent_name)
+    return child in allowed_names or str(child_agent_name or "").strip().lower() in allowed_names
+
+
+async def rex_session_allowed_subagents_text(
+    session_id: Optional[str],
+    parent_agent_name: Optional[str],
+) -> str:
+    if is_rex_agent(parent_agent_name):
+        dynamic_allowed = await rex_session_allowed_subagents(session_id)
+        if dynamic_allowed is not None:
+            return ", ".join(dynamic_allowed) or "none"
+    allowed = await agent_allowed_subagents(parent_agent_name)
+    return ", ".join(allowed) or "none"
+
+
+async def rex_session_uses_full_tool_catalog(
+    session_id: Optional[str],
+    agent_name: Optional[str],
+    extra: Optional[dict[str, Any]] = None,
+) -> bool:
+    """Return whether Rex should see/execute the full tool catalog.
+
+    This is intentionally Rex-only. Other agents remain scoped to their own
+    ``agent.yaml.tools`` even when they run inside a workflow-related session.
+    """
+    if not is_rex_agent(agent_name):
+        return False
+
+    if isinstance(extra, dict) and extra.get("workflow_tool_context"):
+        return True
+
+    return await _session_is_workflow(session_id)
+
+
+async def rex_session_uses_full_skill_catalog(
+    session_id: Optional[str],
+    agent_name: Optional[str],
+    extra: Optional[dict[str, Any]] = None,
+) -> bool:
+    """Return whether Rex should be allowed to load/manage all skills."""
+    if not is_rex_agent(agent_name):
+        return False
+
+    if isinstance(extra, dict) and extra.get("workflow_tool_context"):
+        return True
+
+    return await _session_is_workflow(session_id)
+
+
+async def _session_is_workflow(session_id: Optional[str]) -> bool:
+    if not session_id:
+        return False
+    try:
+        from flocks.session.session import Session
+
+        session = await Session.get_by_id(session_id)
+    except Exception:
+        session = None
+    return str(getattr(session, "category", "") or "").strip().lower() == "workflow"
+
+
+async def _agent_is_l1(agent_name: Optional[str]) -> bool:
+    if not agent_name:
+        return False
+
+    from flocks.agent.registry import Agent
+
+    agent = await Agent.get(agent_name or "")
+    if not agent:
+        return False
+
+    if str(getattr(agent, "mode", "") or "").strip().lower() == "l1":
+        return True
+    if str(getattr(agent, "agent_type", "") or "").strip().lower() == "l1":
+        return True
+
+    options = getattr(agent, "options", None)
+    if isinstance(options, dict):
+        for key in ("agent_type", "agentType", "level"):
+            if str(options.get(key) or "").strip().lower() == "l1":
+                return True
+    return False
+
+
 async def agent_allows_tool(agent_name: Optional[str], tool_name: Optional[str]) -> bool:
     """Return whether agent may execute a tool.
 
     Tool permission is:
     - always-load tools are always allowed;
     - tools explicitly declared in ``agent.yaml`` are allowed;
-    - declaring ``tool_search`` grants dynamic access to the full tool catalog.
 
     Unknown agents are allowed for backward compatibility with tests and
     non-session utility contexts that do not bind a real agent.
@@ -90,8 +253,6 @@ async def agent_allows_tool(agent_name: Optional[str], tool_name: Optional[str])
         for value in (getattr(agent, "tools", None) or [])
         if str(value).strip()
     }
-    if "tool_search" in declared:
-        return True
     return normalized_tool in declared
 
 
@@ -177,7 +338,8 @@ def filter_agent_tools(agent: Any, tools: Iterable[Any]) -> list[Any]:
     """Filter prompt-visible tools according to ``agent.yaml`` tools.
 
     Always-load tools are visible for every agent. Declaring ``tool_search``
-    keeps the full catalog visible because dynamic tool discovery is enabled.
+    only exposes the search tool itself; it does not expand visibility to the
+    full catalog.
     """
     tool_list = list(tools)
     declared = {
@@ -185,9 +347,6 @@ def filter_agent_tools(agent: Any, tools: Iterable[Any]) -> list[Any]:
         for value in (getattr(agent, "tools", None) or [])
         if str(value).strip()
     }
-    if "tool_search" in declared:
-        return tool_list
-
     try:
         from flocks.tool.catalog import get_always_load_tool_names
 

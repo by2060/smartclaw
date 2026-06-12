@@ -7,13 +7,18 @@ Ported from original skill tool.
 """
 
 import os
-from typing import List
+from typing import Any, List
 
 from flocks.tool.registry import (
     ToolRegistry, ToolCategory, ToolParameter, ParameterType, ToolResult, ToolContext
 )
 from flocks.skill.skill import Skill, SkillInfo
-from flocks.agent.controls import agent_allowed_skills, agent_allows_skill, filter_agent_skills
+from flocks.agent.controls import (
+    agent_allowed_skills,
+    agent_allows_skill,
+    filter_agent_skills,
+    rex_session_uses_full_skill_catalog,
+)
 from flocks.utils.log import Log
 
 
@@ -155,6 +160,30 @@ def build_description_cn(skills: List[SkillInfo]) -> str:
     parts.append("</available_skills>")
     return " ".join(parts)
 
+async def list_skills_for_agent_context(
+    *,
+    agent_name: str | None = None,
+    agent_info: Any | None = None,
+    session_id: str | None = None,
+    extra: dict[str, Any] | None = None,
+    skills: List[SkillInfo] | None = None,
+) -> List[SkillInfo]:
+    """Return skills visible to an agent in the current session context."""
+    skill_list = list(skills) if skills is not None else await Skill.all()
+    if await rex_session_uses_full_skill_catalog(session_id, agent_name, extra):
+        return skill_list
+    if agent_info is not None:
+        return filter_agent_skills(agent_info, skill_list)
+    if not agent_name:
+        return skill_list
+
+    from flocks.agent.registry import Agent
+
+    agent = await Agent.get(agent_name)
+    if not agent:
+        return skill_list
+    return filter_agent_skills(agent, skill_list)
+
 
 async def skill_tool_impl(
     ctx: ToolContext,
@@ -176,7 +205,11 @@ async def skill_tool_impl(
             error="Skill name is required"
         )
     # 按agent.yaml添加skills权限控制新增
-    if not await agent_allows_skill(ctx.agent, name):
+    if not await rex_session_uses_full_skill_catalog(
+        ctx.session_id,
+        ctx.agent,
+        getattr(ctx, "extra", None),
+    ) and not await agent_allows_skill(ctx.agent, name):
         allowed = await agent_allowed_skills(ctx.agent)
         allowed_text = ", ".join(allowed) or "none"
         return ToolResult(
@@ -257,7 +290,11 @@ async def skill_tool_impl(
     )
 
 
-async def get_all_skills(agent_name: str | None = None) -> List[dict]:
+async def get_all_skills(
+    agent_name: str | None = None,
+    session_id: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> List[dict]:
     """
     Get all available skills as dictionaries
     
@@ -266,13 +303,11 @@ async def get_all_skills(agent_name: str | None = None) -> List[dict]:
     Returns:
         List of skill dictionaries with name, description, location
     """
-    skills = await Skill.all()
-    if agent_name:
-        from flocks.agent.registry import Agent
-
-        agent = await Agent.get(agent_name)
-        if agent:
-            skills = filter_agent_skills(agent, skills)
+    skills = await list_skills_for_agent_context(
+        agent_name=agent_name,
+        session_id=session_id,
+        extra=extra,
+    )
     return [
         {
             "name": skill.name,
@@ -284,7 +319,12 @@ async def get_all_skills(agent_name: str | None = None) -> List[dict]:
     ]
 
 
-async def get_skill(name: str, agent_name: str | None = None) -> dict | None:
+async def get_skill(
+    name: str,
+    agent_name: str | None = None,
+    session_id: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict | None:
     """
     Get a specific skill by name as a dictionary
     
@@ -296,7 +336,12 @@ async def get_skill(name: str, agent_name: str | None = None) -> dict | None:
     Returns:
         Skill dictionary or None if not found
     """
-    if agent_name and not await agent_allows_skill(agent_name, name):
+    full_skill_catalog = await rex_session_uses_full_skill_catalog(
+        session_id,
+        agent_name,
+        extra,
+    )
+    if agent_name and not full_skill_catalog and not await agent_allows_skill(agent_name, name):
         return None
 
     skill = await Skill.get(name)
@@ -342,17 +387,20 @@ async def skill_tool(
     ctx: ToolContext,
     name: str,
 ) -> ToolResult:
-    """Wrapper that updates description and calls implementation"""
-    # Update tool description with available skills on first call
-    tool = ToolRegistry.get("skill")
-    if tool:
-        skills = await Skill.all()
+    """Wrapper for ToolRegistry execution.
+
+    The per-turn schema description is built by SessionRunner with session
+    context. Avoid mutating ToolRegistry's global description here because one
+    session's scoped skill list would otherwise leak into another session.
+    """
+    return await skill_tool_impl(ctx, name)
+    """
         # 通过agent.yaml的skiils控制权限新增
         from flocks.agent.registry import Agent
         agent = await Agent.get(ctx.agent or "")
         if agent:
             skills = filter_agent_skills(agent, skills)
         tool.info.description = build_description(skills)
-        tool.info.description_cn = build_description_cn(skills)
-
+    
     return await skill_tool_impl(ctx, name)
+    """

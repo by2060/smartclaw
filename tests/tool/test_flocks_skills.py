@@ -189,6 +189,30 @@ async def test_nonzero_exit_returns_failure():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
+async def test_workflow_context_bypasses_agent_skill_allowlist_for_management():
+    from flocks.tool.skill.flocks_skills import flocks_skills
+
+    ctx = make_ctx()
+    ctx.agent = "rex"
+    ctx.session_id = "ses_workflow_skills"
+    ctx.extra = {"workflow_tool_context": True}
+    proc = make_proc(stdout=b"installed\n", returncode=0)
+
+    with (
+        patch("flocks.tool.skill.flocks_skills._flocks_executable", return_value="/usr/bin/flocks"),
+        patch("flocks.tool.skill.flocks_skills.asyncio.create_subprocess_exec", return_value=proc),
+    ):
+        result = await flocks_skills(ctx, subcommand="install", args="workflow-only-skill")
+
+    assert result.success is True
+    ctx.ask.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Timeout
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
 async def test_timeout_kills_process():
     from flocks.tool.skill.flocks_skills import flocks_skills
 

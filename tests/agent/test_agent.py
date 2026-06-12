@@ -98,7 +98,8 @@ class TestSubagents:
         agent = await Agent.get("self-enhance")
         assert agent is not None
         assert agent.mode == "subagent"
-        assert agent.delegatable is True
+        assert agent.hidden is True
+        assert agent.delegatable is False
 
     @pytest.mark.asyncio
     async def test_security_agents(self):

@@ -671,19 +671,6 @@ class TestBuildAvailableAgents:
         assert available[0].metadata.category == "plugin"
         assert available[0].metadata.cost == "medium"
 
-    def test_default_metadata_prefers_description_cn_for_trigger(self):
-        from flocks.agent.registry import _make_default_prompt_metadata
-        agent = AgentInfo(
-            name="plugin_x",
-            description="Does X",
-            description_cn="执行 X",
-            mode="subagent",
-            delegatable=True,
-            native=False,
-        )
-        metadata = _make_default_prompt_metadata(agent)
-        assert metadata.triggers[0].trigger == "执行 X"
-
 
 # ===========================================================================
 # Project-level plugin agent scanning

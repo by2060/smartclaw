@@ -9,7 +9,12 @@ from __future__ import annotations
 
 from typing import Optional
 
-from flocks.tool.catalog import normalize_tool_search_query, search_tool_catalog
+from flocks.agent.controls import agent_allowed_tools, rex_session_uses_full_tool_catalog
+from flocks.tool.catalog import (
+    get_always_load_tool_names,
+    normalize_tool_search_query,
+    search_tool_catalog,
+)
 from flocks.tool.registry import (
     ParameterType,
     ToolCategory,
@@ -33,6 +38,19 @@ DESCRIPTION_CN = """按任务意图、关键字、类别或精确名称搜索可
 
 当需要发现当前轮次尚未暴露的工具时使用此工具。可以按用户目标、能力或关键字搜索。返回的匹配工具会立即加入当前会话的可调用工具集合。
 如果已经知道需要的工具名称，优先使用一次精确批量查询，例如 `select:websearch,webfetch,skill`，而不是多次单独搜索。"""
+
+
+async def _searchable_tool_names(ctx: ToolContext) -> Optional[set[str]]:
+    if await rex_session_uses_full_tool_catalog(
+        ctx.session_id,
+        getattr(ctx, "agent", None),
+        getattr(ctx, "extra", None),
+    ):
+        return None
+    agent_name = getattr(ctx, "agent", None)
+    declared = set(await agent_allowed_tools(agent_name))
+    declared.update(get_always_load_tool_names())
+    return {name for name in declared if name}
 
 @ToolRegistry.register_function(
     name="tool_search",
@@ -71,13 +89,20 @@ async def tool_search(
     limit: int = 8,
 ) -> ToolResult:
     limit = max(1, min(limit or 8, 20))
-    matches, matched_tags = search_tool_catalog(query, category=category, limit=limit)
+    searchable_tool_names = await _searchable_tool_names(ctx)
+    matches, matched_tags = search_tool_catalog(
+        query,
+        category=category,
+        limit=limit,
+        tool_names=searchable_tool_names,
+    )
     normalized_query = normalize_tool_search_query(query or "")
     callable_candidates = [match["name"] for match in matches]
     callable_tools = await add_session_callable_tools(
         ctx.session_id,
         callable_candidates,
         agent_name=getattr(ctx, "agent", None),
+        extra=getattr(ctx, "extra", None),
     )
     if ctx.event_publish_callback:
         await ctx.event_publish_callback("runtime.tool_discovery", {

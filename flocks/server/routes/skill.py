@@ -81,10 +81,23 @@ def _infer_skill_name_from_source(source: str) -> str:
     return base.strip()
 
 
-async def _agent_allowed_skill_or_403(agent: Optional[str], skill_name: str) -> None:
+async def _agent_allowed_skill_or_403(
+    agent: Optional[str],
+    skill_name: str,
+    session_id: Optional[str] = None,
+    category: Optional[str] = None,
+) -> None:
     if not agent:
         return
-    from flocks.agent.controls import agent_allowed_skills, agent_allows_skill
+    from flocks.agent.controls import (
+        agent_allowed_skills,
+        agent_allows_skill,
+        rex_session_uses_full_skill_catalog,
+    )
+
+    extra = {"workflow_tool_context": True} if str(category or "").strip().lower() == "workflow" else None
+    if await rex_session_uses_full_skill_catalog(session_id, agent, extra):
+        return
 
     if await agent_allows_skill(agent, skill_name):
         return
@@ -102,16 +115,18 @@ async def _agent_allowed_skill_or_403(agent: Optional[str], skill_name: str) -> 
 async def _filter_skills_for_agent(
     skills: List[SkillInfo],
     agent: Optional[str],
+    session_id: Optional[str] = None,
+    category: Optional[str] = None,
 ) -> List[SkillInfo]:
-    if not agent:
-        return skills
-    from flocks.agent.controls import filter_agent_skills
-    from flocks.agent.registry import Agent
+    from flocks.tool.system.skill import list_skills_for_agent_context
 
-    agent_info = await Agent.get(agent)
-    if not agent_info:
-        return skills
-    return filter_agent_skills(agent_info, skills)
+    extra = {"workflow_tool_context": True} if str(category or "").strip().lower() == "workflow" else None
+    return await list_skills_for_agent_context(
+        agent_name=agent,
+        session_id=session_id,
+        extra=extra,
+        skills=skills,
+    )
 
 
 # =============================================================================
@@ -320,14 +335,18 @@ def _skill_to_response(skill: SkillInfo, include_content: bool = False) -> Skill
 # =============================================================================
 
 @router.get("/skills", response_model=List[SkillResponse])
-async def list_skills(agent: Optional[str] = Query(None)):
+async def list_skills(
+    agent: Optional[str] = Query(None),
+    session_id: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+):
     """
     Get skill list
 
     Returns list of all discovered skills from SKILL.md files.
     """
     try:
-        skills = await _filter_skills_for_agent(await Skill.all(), agent)
+        skills = await _filter_skills_for_agent(await Skill.all(), agent, session_id, category)
         result = [_skill_to_response(skill) for skill in skills]
         log.info("skills.list", {"count": len(result)})
         return result
@@ -337,7 +356,11 @@ async def list_skills(agent: Optional[str] = Query(None)):
 
 
 @router.get("/skills/status", response_model=List[SkillResponse])
-async def skill_status(agent: Optional[str] = Query(None)):
+async def skill_status(
+    agent: Optional[str] = Query(None),
+    session_id: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+):
     """
     Get skill status with eligibility information
 
@@ -345,7 +368,7 @@ async def skill_status(agent: Optional[str] = Query(None)):
     on runtime dependency checks (bins in PATH, env vars set).
     """
     try:
-        skills = await _filter_skills_for_agent(await Skill.all(), agent)
+        skills = await _filter_skills_for_agent(await Skill.all(), agent, session_id, category)
         result = []
         for skill in skills:
             checked = Skill.check_eligibility(skill)
@@ -379,7 +402,12 @@ async def refresh_skills():
 
 
 @router.post("/skills/install", response_model=SkillInstallResponse, status_code=status.HTTP_200_OK)
-async def install_skill(req: SkillInstallRequest, agent: Optional[str] = Query(None)):
+async def install_skill(
+    req: SkillInstallRequest,
+    agent: Optional[str] = Query(None),
+    session_id: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+):
     """
     Install a skill from an external source
 
@@ -393,7 +421,7 @@ async def install_skill(req: SkillInstallRequest, agent: Optional[str] = Query(N
     try:
         inferred_name = _infer_skill_name_from_source(req.source)
         if inferred_name:
-            await _agent_allowed_skill_or_403(agent, inferred_name)
+            await _agent_allowed_skill_or_403(agent, inferred_name, session_id, category)
         result = await SkillInstaller.install_from_source(
             req.source,
             scope=req.scope,
@@ -404,7 +432,7 @@ async def install_skill(req: SkillInstallRequest, agent: Optional[str] = Query(N
                 status_code=422,
                 detail=result.error or "Install failed",
             )
-        await _agent_allowed_skill_or_403(agent, result.skill_name)
+        await _agent_allowed_skill_or_403(agent, result.skill_name, session_id, category)
         await _refresh_agents_for_skill_change()
         log.info("skill.install.api.ok", {"source": req.source, "name": result.skill_name})
         return SkillInstallResponse(
@@ -421,14 +449,19 @@ async def install_skill(req: SkillInstallRequest, agent: Optional[str] = Query(N
 
 
 @router.get("/skills/{name}", response_model=SkillResponse)
-async def get_skill(name: str, agent: Optional[str] = Query(None)):
+async def get_skill(
+    name: str,
+    agent: Optional[str] = Query(None),
+    session_id: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+):
     """
     Get skill details
 
     Returns skill information including full SKILL.md content.
     """
     try:
-        await _agent_allowed_skill_or_403(agent, name)
+        await _agent_allowed_skill_or_403(agent, name, session_id, category)
         skill = await Skill.get(name)
         if not skill:
             raise HTTPException(status_code=404, detail=f"Skill not found: {name}")
@@ -447,6 +480,8 @@ async def install_skill_deps(
     name: str,
     req: DepInstallRequest,
     agent: Optional[str] = Query(None),
+    session_id: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
 ):
     """
     Install a skill's tool dependencies
@@ -455,7 +490,7 @@ async def install_skill_deps(
     (brew, npm, uv, pip, go).  Returns per-spec results.
     """
     try:
-        await _agent_allowed_skill_or_403(agent, name)
+        await _agent_allowed_skill_or_403(agent, name, session_id, category)
         results = await SkillInstaller.install_deps(
             name,
             install_id=req.install_id,
@@ -483,7 +518,12 @@ async def install_skill_deps(
 
 
 @router.post("/skills", response_model=SkillResponse, status_code=status.HTTP_201_CREATED)
-async def create_skill(req: SkillCreateRequest, agent: Optional[str] = Query(None)):
+async def create_skill(
+    req: SkillCreateRequest,
+    agent: Optional[str] = Query(None),
+    session_id: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+):
     """
     Create a new skill
 
@@ -491,7 +531,7 @@ async def create_skill(req: SkillCreateRequest, agent: Optional[str] = Query(Non
     (<project>/.flocks/plugins/skills/<name>/SKILL.md).
     """
     try:
-        await _agent_allowed_skill_or_403(agent, req.name)
+        await _agent_allowed_skill_or_403(agent, req.name, session_id, category)
         skill_dir = _project_skills_root() / req.name
         # skill输出到项目级目录下新增
         skill_dir = _project_skills_root() / req.name
@@ -499,7 +539,7 @@ async def create_skill(req: SkillCreateRequest, agent: Optional[str] = Query(Non
 
         skill_path = skill_dir / "SKILL.md"
 
-        frontmatter = _build_skill_frontmatter(req)
+        frontmatter = f"---\nname: {req.name}\ndescription: {req.description}\n---\n\n"
         full_content = frontmatter + req.content
 
         skill_path.write_text(full_content, encoding="utf-8")
@@ -530,6 +570,8 @@ async def update_skill(
     name: str,
     req: SkillCreateRequest,
     agent: Optional[str] = Query(None),
+    session_id: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
 ):
     """
     Update a skill.
@@ -539,13 +581,13 @@ async def update_skill(
     writes file, removes old directory.
     """
     try:
-        await _agent_allowed_skill_or_403(agent, name)
-        await _agent_allowed_skill_or_403(agent, req.name)
+        await _agent_allowed_skill_or_403(agent, name, session_id, category)
+        await _agent_allowed_skill_or_403(agent, req.name, session_id, category)
         skill = await Skill.get(name)
         if not skill:
             raise HTTPException(status_code=404, detail=f"Skill not found: {name}")
 
-        frontmatter = _build_skill_frontmatter(req)
+        frontmatter = f"---\nname: {req.name}\ndescription: {req.description}\n---\n\n"
         full_content = frontmatter + req.content
         is_rename = req.name != name
 
@@ -601,7 +643,12 @@ async def update_skill(
 
 
 @router.delete("/skills/{name}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_skill(name: str, agent: Optional[str] = Query(None)):
+async def delete_skill(
+    name: str,
+    agent: Optional[str] = Query(None),
+    session_id: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+):
     """
     Delete a skill
 
@@ -609,7 +656,7 @@ async def delete_skill(name: str, agent: Optional[str] = Query(None)):
     (~/.flocks/plugins/skills/) can be deleted via the API.
     """
     try:
-        await _agent_allowed_skill_or_403(agent, name)
+        await _agent_allowed_skill_or_403(agent, name, session_id, category)
         skill = await Skill.get(name)
         if not skill:
             raise HTTPException(status_code=404, detail=f"Skill not found: {name}")

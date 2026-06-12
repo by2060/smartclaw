@@ -20,14 +20,14 @@ class TestOmoToolParity:
 
 @pytest.mark.asyncio
 async def test_call_omo_agent_respects_parent_subagent_allowlist(monkeypatch):
-    async def fake_allows(parent, child):
+    async def fake_allows(session_id, parent, child):
         return False
 
-    async def fake_allowed(parent):
-        return []
+    async def fake_allowed_text(session_id, parent):
+        return "none"
 
-    monkeypatch.setattr("flocks.tool.agent.call_omo_agent.agent_allows_subagent", fake_allows)
-    monkeypatch.setattr("flocks.tool.agent.call_omo_agent.agent_allowed_subagents", fake_allowed)
+    monkeypatch.setattr("flocks.tool.agent.call_omo_agent.rex_session_allows_subagent", fake_allows)
+    monkeypatch.setattr("flocks.tool.agent.call_omo_agent.rex_session_allowed_subagents_text", fake_allowed_text)
 
     ctx = ToolContext(session_id="s", message_id="m", agent="parent")
     result = await call_omo_agent_tool(

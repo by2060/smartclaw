@@ -6,6 +6,7 @@ export interface Agent {
   /** Chinese UI label; English \`description\` is used for delegation/tooling. */
   descriptionCn?: string;
   mode: string;
+  agent_type?: string;
   native?: boolean;
   hidden?: boolean;
   topP?: number;
@@ -60,6 +61,7 @@ export const agentAPI = {
     temperature?: number;
     color?: string;
     mode?: string;
+    agent_type?: string;
     model?: { modelID: string; providerID: string };
     delegatable?: boolean;
     skills?: string[];
@@ -74,6 +76,7 @@ export const agentAPI = {
     prompt?: string;
     temperature?: number;
     color?: string;
+    agent_type?: string;
     model?: { modelID: string; providerID: string };
     delegatable?: boolean;
     skills?: string[];

@@ -204,6 +204,7 @@ def _select_tool_catalog(
     *,
     category: Optional[str],
     limit: int,
+    tool_names: Optional[Iterable[str]] = None,
 ) -> Optional[Tuple[List[Dict[str, Any]], List[str]]]:
     lowered = (query or "").strip().lower()
     if not lowered.startswith("select:"):
@@ -219,7 +220,7 @@ def _select_tool_catalog(
 
     tools_by_canonical = {
         canonical_tool_token(tool_info.name): tool_info
-        for tool_info in list_tool_catalog_infos()
+        for tool_info in list_tool_catalog_infos(tool_names=tool_names)
         if not category
         or getattr(tool_info.category, "value", str(tool_info.category)).lower() == category.lower()
     }
@@ -243,15 +244,21 @@ def search_tool_catalog(
     *,
     category: Optional[str] = None,
     limit: int = 8,
+    tool_names: Optional[Iterable[str]] = None,
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
     limit = max(1, min(limit or 8, 20))
-    selected = _select_tool_catalog(query or "", category=category, limit=limit)
+    selected = _select_tool_catalog(
+        query or "",
+        category=category,
+        limit=limit,
+        tool_names=tool_names,
+    )
     if selected is not None:
         return selected
 
     ranked: List[Tuple[int, Any, List[str]]] = []
 
-    for tool_info in list_tool_catalog_infos():
+    for tool_info in list_tool_catalog_infos(tool_names=tool_names):
         if category:
             tool_category = getattr(tool_info.category, "value", str(tool_info.category))
             if tool_category.lower() != category.lower():

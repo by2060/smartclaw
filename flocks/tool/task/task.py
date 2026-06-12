@@ -18,7 +18,10 @@ from flocks.tool.registry import (
     ToolRegistry, ToolCategory, ToolParameter, ParameterType, ToolResult, ToolContext
 )
 from flocks.agent.registry import is_delegatable
-from flocks.agent.controls import agent_allowed_subagents, agent_allows_subagent
+from flocks.agent.controls import (
+    rex_session_allowed_subagents_text,
+    rex_session_allows_subagent,
+)
 from flocks.task.background import get_background_manager, LaunchInput, ResumeInput
 from flocks.session.session import Session
 from flocks.session.message import Message, MessageRole
@@ -238,14 +241,18 @@ async def task_tool(
             error=f'Agent "{subagent_type}" cannot be delegated to (it may be a primary agent or restricted).',
         )
     # 通过agent.yaml文件中配置的sub_agents来完成权限控制新增
-    if not await agent_allows_subagent(ctx.agent, normalized):
-        allowed = await agent_allowed_subagents(ctx.agent)
-        allowed_text = ", ".join(allowed) or "none"
+    if not await rex_session_allows_subagent(
+        ctx.session_id,
+        ctx.agent,
+        normalized,
+        getattr(ctx, "extra", None),
+    ):
+        allowed_text = await rex_session_allowed_subagents_text(ctx.session_id, ctx.agent)
         return ToolResult(
             success=False,
             error=(
                 f'Agent "{ctx.agent}" is not allowed to delegate to "{normalized}". '
-                f"Allowed sub_agents: {allowed_text}"
+                f"Allowed subagents: {allowed_text}"
             ),
         )
 

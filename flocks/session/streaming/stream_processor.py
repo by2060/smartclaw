@@ -942,11 +942,15 @@ class StreamProcessor:
 
     async def _validate_tool_callable(self, tool_name: str) -> Optional[ToolResult]:
         """Reject tool calls that are not exposed for the current session."""
+        from flocks.agent.controls import rex_session_uses_full_tool_catalog
         from flocks.session.callable_state import (
             get_session_callable_tools,
             initialize_session_callable_tools,
         )
         from flocks.tool.catalog import get_always_load_tool_names
+
+        if await rex_session_uses_full_tool_catalog(self.session_id, getattr(self.agent, "name", None)):
+            return None
 
         callable_tools = await get_session_callable_tools(self.session_id)
         if not callable_tools:

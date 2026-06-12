@@ -19,6 +19,15 @@ from flocks.config.config import ConfigInfo
 from flocks.tool.registry import ToolContext
 
 
+def test_bash_description_marks_ops_changes_high_risk() -> None:
+    description = bash_module.get_description("/workspace")
+
+    assert "High-risk operations" in description
+    assert "stopping services" in description
+    assert "closing or blocking ports" in description
+    assert "capability gap" in description
+
+
 class _FakeStream:
     def __init__(self, chunks):
         self._chunks = list(chunks)

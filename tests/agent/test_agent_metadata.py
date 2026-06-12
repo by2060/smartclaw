@@ -11,6 +11,7 @@
 因此本测试文件使用 asyncio fixtures 提前触发加载。
 """
 
+import ast
 import asyncio
 import pytest
 from flocks.agent.registry import (
@@ -118,7 +119,13 @@ class TestDelegateTaskIntegration:
 
         # 检查模块源码（import 在模块级别，不在函数体内）
         source = inspect.getsource(delegate_task_module)
-        assert "from flocks.agent.registry import is_delegatable" in source
+        tree = ast.parse(source)
+        assert any(
+            isinstance(node, ast.ImportFrom)
+            and node.module == "flocks.agent.registry"
+            and any(alias.name == "is_delegatable" for alias in node.names)
+            for node in tree.body
+        )
         assert "from flocks.agent.metadata import is_delegatable" not in source
 
 

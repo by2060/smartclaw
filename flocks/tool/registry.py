@@ -749,10 +749,19 @@ class ToolRegistry:
             )
 
         try:
-            from flocks.agent.controls import agent_allowed_tools, agent_allows_tool
+            from flocks.agent.controls import (
+                agent_allowed_tools,
+                agent_allows_tool,
+                rex_session_uses_full_tool_catalog,
+            )
             from flocks.tool.catalog import get_always_load_tool_names
 
-            if not await agent_allows_tool(ctx.agent, tool_name):
+            use_full_catalog = await rex_session_uses_full_tool_catalog(
+                ctx.session_id,
+                ctx.agent,
+                getattr(ctx, "extra", None),
+            )
+            if not use_full_catalog and not await agent_allows_tool(ctx.agent, tool_name):
                 declared = await agent_allowed_tools(ctx.agent)
                 allowed_text = ", ".join(
                     sorted(set(declared) | set(get_always_load_tool_names()))

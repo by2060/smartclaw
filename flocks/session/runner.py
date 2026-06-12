@@ -1335,6 +1335,13 @@ class SessionRunner:
     async def _build_system_prompts(self, agent: AgentInfo) -> List[str]:
         """Build system prompts."""
         tool_revision = ToolRegistry.revision()
+        session_category = str(getattr(self.session, "category", "") or "")
+        user_context = (
+            getattr(self.session, "user_context", None)
+            if isinstance(getattr(self.session, "user_context", None), dict)
+            else {}
+        )
+        prompt_scope_key = self._build_prompt_scope_cache_key(agent, session_category, user_context)
         # 输出按会话隔离修改
         # 删除
         '''
@@ -1346,7 +1353,7 @@ class SessionRunner:
         output_session_id = await self._resolve_output_session_id()
         prompt_locale = get_prompt_locale()
         cache_key = (
-            f"system_prompts:{self.session.id}:{output_session_id}:{agent.name}:{self.provider_id}:{self.model_id}:{prompt_locale}:{tool_revision}"
+            f"system_prompts:{self.session.id}:{output_session_id}:{agent.name}:{self.provider_id}:{self.model_id}:{prompt_locale}:{tool_revision}:{prompt_scope_key}"
         )
         # -------------end-----------------
         cached = self._static_cache.get(cache_key)
@@ -1421,8 +1428,13 @@ class SessionRunner:
         prompts.extend(custom_prompts)
         
         # Agent-specific prompt (if any)
-        if agent.prompt:
-            prompts.append(agent.prompt)
+        agent_prompt = await self._build_agent_identity_prompt(
+            agent=agent,
+            session_category=session_category,
+            user_context=user_context,
+        )
+        if agent_prompt:
+            prompts.append(agent_prompt)
 
         # Keep this after the agent identity prompt so user-profile questions
         # are answered from account memory instead of the assistant persona.
@@ -1460,6 +1472,58 @@ class SessionRunner:
         
         self._static_cache[cache_key] = list(prompts)
         return list(prompts)
+
+    def _build_prompt_scope_cache_key(
+        self,
+        agent: AgentInfo,
+        session_category: str,
+        user_context: Dict[str, Any],
+    ) -> str:
+        if not (isinstance(agent, AgentInfo) and agent.name == "rex"):
+            return "default"
+        payload = {
+            "category": session_category,
+            "allowedSubagents": user_context.get("allowedSubagents", None),
+        }
+        try:
+            return json.dumps(payload, sort_keys=True, ensure_ascii=True, default=str)
+        except Exception:
+            return str(payload)
+
+    async def _build_agent_identity_prompt(
+        self,
+        *,
+        agent: AgentInfo,
+        session_category: str,
+        user_context: Dict[str, Any],
+    ) -> Optional[str]:
+        if not (isinstance(agent, AgentInfo) and agent.name == "rex"):
+            return agent.prompt
+        try:
+            from flocks.agent.agents.rex.prompt_builder import build_session_dynamic_rex_prompt
+
+            context = await Agent.prompt_builder_context()
+            agents = context.get("agents", {})
+            return build_session_dynamic_rex_prompt(
+                rex_agent_info=agent,
+                agent_lookup={
+                    str(name).strip().lower(): info
+                    for name, info in agents.items()
+                },
+                session_category=session_category,
+                user_context=user_context,
+                available_agents=context.get("available_agents", []),
+                available_tools=context.get("tools", []),
+                available_skills=context.get("skills", []),
+                available_categories=context.get("categories", []),
+                available_workflows=context.get("workflows", []),
+            )
+        except Exception as exc:
+            log.warn("runner.rex_prompt.session_build_failed", {
+                "session_id": self.session.id,
+                "error": str(exc),
+            })
+            return agent.prompt
     # 输出按会话隔离新增
     async def _resolve_output_session_id(self) -> str:
         """Use the root parent session for user-facing output directories."""
@@ -1566,13 +1630,8 @@ class SessionRunner:
 
     def _list_catalog_tool_infos(self, agent: AgentInfo) -> List[Any]:
         tool_infos: List[Any] = []
-        has_tool_search = agent_declares_tool(agent, "tool_search")
 
         for tool_info in list_tool_catalog_infos():
-            if has_tool_search:
-                tool_infos.append(tool_info)
-                continue
-
             metadata = get_tool_catalog_metadata(tool_info.name, tool_info)
             if not agent_declares_tool(agent, tool_info.name) and not metadata.always_load:
                 continue
@@ -1595,24 +1654,14 @@ class SessionRunner:
         if not catalog_summary:
             return None
 
-        if agent_declares_tool(agent, "tool_search"):
-            rules = (
-                "You can see the full tool catalog for awareness. "
-                "This catalog is reference-only and does not define parameter names. "
-                "Only tools exposed in the current callable schema may be called directly. "
-                "If a tool appears in the catalog but is not exposed this turn, use `tool_search` first. "
-                "Use the current callable schema as the sole source of truth for parameters. "
-                "Do not invent parameters for tools that are not currently exposed."
-            )
-        else:
-            rules = (
-                "You can see a tool catalog derived from your configured callable tool set. "
-                "This catalog is reference-only and does not define parameter names. "
-                "Only tools exposed in the current callable schema may be called directly. "
-                "Use the current callable schema as the sole source of truth for parameters. "
-                "Do not infer argument names from the catalog. "
-                "Do not invent parameters for tools that are not currently exposed."
-            )
+        rules = (
+            "You can see a tool catalog derived from your configured callable tool set. "
+            "This catalog is reference-only and does not define parameter names. "
+            "Only tools exposed in the current callable schema may be called directly. "
+            "Use the current callable schema as the sole source of truth for parameters. "
+            "Do not infer argument names from the catalog. "
+            "Do not invent parameters for tools that are not currently exposed."
+        )
 
         return (
             "## Tool Catalog Awareness\n\n"
@@ -1689,12 +1738,19 @@ class SessionRunner:
             description = tool_info.description
             if tool_info.name == "skill":
                 # Import here to avoid circular dependency
-                from flocks.agent.controls import filter_agent_skills
-                from flocks.tool.system.skill import build_description
-                from flocks.skill.skill import Skill
-                
-                skills = await Skill.all()
-                skills = filter_agent_skills(agent, skills)
+                from flocks.tool.system.skill import build_description, list_skills_for_agent_context
+
+                extra = (
+                    {"workflow_tool_context": True}
+                    if str(getattr(self.session, "category", "") or "").strip().lower() == "workflow"
+                    else None
+                )
+                skills = await list_skills_for_agent_context(
+                    agent_name=getattr(agent, "name", None),
+                    agent_info=agent,
+                    session_id=self.session.id,
+                    extra=extra,
+                )
                 description = build_description(skills)
                 log.info("runner.build_tools.skill_description", {
                     "skill_count": len(skills),

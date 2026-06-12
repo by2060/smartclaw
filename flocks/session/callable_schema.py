@@ -49,6 +49,38 @@ async def list_session_callable_tool_infos(
     step: int = 0,
     event_publish_callback: Optional[Callable[[str, Dict[str, Any]], Awaitable[None]]] = None,
 ) -> CallableSchemaResult:
+    try:
+        from flocks.agent.controls import rex_session_uses_full_tool_catalog
+
+        use_full_catalog = await rex_session_uses_full_tool_catalog(session_id, agent_name)
+    except Exception:
+        use_full_catalog = False
+
+    if use_full_catalog:
+        enabled_names = {
+            tool_info.name
+            for tool_info in ToolRegistry.list_tools()
+            if tool_info.name not in {"invalid", "_noop"}
+            and getattr(tool_info, "enabled", True)
+        }
+        tool_infos, enabled_count = resolve_callable_tool_infos(enabled_names)
+        metadata = {
+            "enabledToolCount": enabled_count,
+            "callableToolCount": len(enabled_names),
+            "alwaysLoadToolCount": len(get_always_load_tool_names()),
+            "callableToolNames": sorted(enabled_names),
+            "alwaysLoadToolNames": sorted(get_always_load_tool_names()),
+            "callableAgent": agent_name,
+            "workflowFullToolCatalog": True,
+        }
+        if event_publish_callback:
+            await event_publish_callback("runtime.tool_selection", {
+                "sessionID": session_id,
+                "step": step,
+                **metadata,
+            })
+        return CallableSchemaResult(tool_infos=tool_infos, metadata=metadata)
+
     callable_tool_names = await get_session_callable_tools(session_id)
     callable_agent = await get_session_callable_agent(session_id)
     callable_base_tools = await get_session_callable_base_tools(session_id)

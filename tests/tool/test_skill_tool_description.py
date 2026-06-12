@@ -27,6 +27,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from flocks.agent.agent import AgentInfo
 from flocks.skill.skill import Skill, SkillInfo
 from flocks.tool.registry import ToolContext, ToolRegistry
 from flocks.tool.system.skill import (
@@ -48,7 +49,7 @@ def _make_ctx() -> ToolContext:
     ctx.ask = AsyncMock(return_value=None)
     ctx.metadata = MagicMock()
     ctx.aborted = False
-    ctx.extra = {}
+    ctx.extra = {"workflow_tool_context": True}
     ctx.agent = "rex"
     ctx.session_id = "ses_test_skill"
     return ctx
@@ -261,7 +262,11 @@ class TestSkillLoadNoTruncation:
         assert skill_tool is not None, "skill tool must be registered"
 
         with patch.object(Skill, "all", AsyncMock(return_value=[skill_info])), \
-             patch.object(Skill, "get", AsyncMock(return_value=skill_info)):
+             patch.object(Skill, "get", AsyncMock(return_value=skill_info)), \
+             patch(
+                 "flocks.agent.registry.Agent.get",
+                 AsyncMock(return_value=AgentInfo(name="rex", mode="primary", tools=["skill"])),
+             ):
             result = await skill_tool.execute(_make_ctx(), name="huge-skill")
 
         assert result.success is True
@@ -272,3 +277,18 @@ class TestSkillLoadNoTruncation:
         assert "Use Grep to search the full content" not in result.output
         assert "lines truncated" not in result.output
         assert "bytes truncated" not in result.output
+
+    @pytest.mark.asyncio
+    async def test_workflow_context_can_load_skill_outside_rex_yaml_allowlist(self, fake_skill_dir):
+        skill_info = SkillInfo(
+            name="workflow-only-skill",
+            description="Workflow skill",
+            location=str(fake_skill_dir / "SKILL.md"),
+        )
+        ctx = _make_ctx()
+        ctx.extra = {"workflow_tool_context": True}
+
+        with patch.object(Skill, "get", AsyncMock(return_value=skill_info)):
+            result = await skill_tool_impl(ctx, name="workflow-only-skill")
+
+        assert result.success is True
