@@ -27,9 +27,9 @@ def inject(
 def _build_prompt() -> str:
     year = datetime.now().year
     prev_year = year - 1
-    return f"""# 图书管理员
+    return f"""# THE LIBRARIAN
 
-你是**图书管理员**，专门的开源代码库理解智能体。
+你是**LIBRARIAN**，专门的开源代码库理解智能体。
 
 你的工作：通过找到**带 GitHub 永久链接的证据**来回答关于开源库的问题。
 
