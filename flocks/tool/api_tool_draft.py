@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import re
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
 
-_PLACEHOLDER_PATTERN = re.compile(r"\{([^}]+)\}")
 _ALLOWED_AUTH_TYPES = {"smart", "iam6", "bearerToken", "basicAuth", "custom"}
 _ALLOWED_AUTH_EXT_INJECT_AS = {"header", "query_param", "body"}
 
@@ -84,30 +82,6 @@ def _copy_non_empty(data: dict[str, Any], keys: list[str]) -> dict[str, Any]:
         if _is_non_empty(value):
             result[key] = value
     return result
-
-
-def _declared_parameter_names(tool: ToolDraft) -> set[str]:
-    declared: set[str] = set()
-    if isinstance(tool.inputSchema, dict):
-        properties = tool.inputSchema.get("properties")
-        if isinstance(properties, dict):
-            declared.update(str(name) for name in properties.keys())
-    if isinstance(tool.parameters, list):
-        for param in tool.parameters:
-            if isinstance(param, dict) and param.get("name"):
-                declared.add(str(param["name"]))
-    return declared
-
-
-def _iter_template_strings(value: Any):
-    if isinstance(value, str):
-        yield value
-    elif isinstance(value, dict):
-        for item in value.values():
-            yield from _iter_template_strings(item)
-    elif isinstance(value, list):
-        for item in value:
-            yield from _iter_template_strings(item)
 
 
 def _normalize_required_from_property_flags(schema: dict[str, Any]) -> None:
@@ -298,18 +272,6 @@ def validate_api_tool_draft(draft: APIToolDraft, *, check_collisions: bool = Tru
                 path=f"{prefix}.inputSchema",
                 message="工具未声明参数",
             ))
-
-        declared = _declared_parameter_names(tool)
-        for template in _iter_template_strings(handler):
-            for match in _PLACEHOLDER_PATTERN.finditer(template):
-                placeholder = match.group(1)
-                if placeholder == "base_url" or placeholder.startswith("secret:") or placeholder.startswith("user:"):
-                    continue
-                if placeholder not in declared:
-                    issues.append(DraftValidationIssue(
-                        path=f"{prefix}.handler",
-                        message=f"占位符 '{{{placeholder}}}' 未声明为工具参数",
-                    ))
 
     return issues
 
