@@ -175,7 +175,7 @@ API 不相关材料包括但不限于：
   "is_api_related": true,
   "provider": {{
     "id": "snake_case_provider_id",
-    "name": "服务展示名称(英文，仅支持大小写字母、数字、下划线)",
+    "name": "服务英文名称(仅支持大小写字母、数字、下划线，不能包含空格)",
     "service_id": "snake_case_provider_id",
     "description": "英文服务能力描述，说明服务能解决什么问题",
     "description_cn": "自然中文服务能力描述",
@@ -265,7 +265,7 @@ API 不相关材料包括但不限于：
    - 如果相关，继续生成 APIToolDraft。
 
 2. 识别 API 服务信息：
-   - 服务展示名称
+   - 服务名称
    - 服务能力描述
    - 文档地址 docs_url
    - 公共根地址 base_url
