@@ -117,6 +117,60 @@ class TestRexPromptBuilder:
         assert "Do NOT use direct Dify retrieval to bypass required skills" in prompt
         assert "Clearly state when an answer is based on Dify" in prompt
 
+    def test_skill_matching_rule_requires_authorized_visible_skill(self):
+        prompt = build_dynamic_rex_prompt(
+            available_agents=[],
+            available_tools=[],
+            available_skills=[],
+            available_categories=[],
+            available_workflows=[],
+        )
+
+        assert "current session's authorized skill list" in prompt
+        assert "do not infer skill access from installed files" in prompt
+        assert "not available in the current session" in prompt
+
+    def test_capability_self_intro_is_in_rex_prompt(self):
+        prompt = build_dynamic_rex_prompt(
+            available_agents=[],
+            available_tools=[],
+            available_skills=[],
+            available_categories=[],
+            available_workflows=[],
+        )
+
+        assert "Capability Self-Introduction" in prompt
+        assert "current session's authorized scope" in prompt
+        assert "Do not present broad SecOps positioning" in prompt
+        assert "actually exposed by the current prompt" in prompt
+        assert "I will not assume access to tools" in prompt
+        assert "threat intelligence and IOC analysis" not in prompt
+        assert "alert and log triage" not in prompt
+
+    def test_session_capability_intro_summarizes_kb_without_ids(self):
+        prompt = _session_prompt(
+            user_context={
+                "knowledgeBaseIds": ["kb_secret_alpha"],
+                "allowedSubagents": [],
+            }
+        )
+
+        assert "authorized knowledge-base retrieval is available" in prompt
+        assert "kb_secret_alpha" not in prompt
+        assert "authorized specialist delegation is not indicated" in prompt
+
+    def test_session_capability_intro_summarizes_authorized_specialists(self):
+        prompt = _session_prompt(
+            user_context={
+                "knowledgeBaseIds": [],
+                "allowedSubagents": ["beta"],
+            }
+        )
+
+        assert "knowledge-base retrieval authorization is not indicated" in prompt
+        assert "authorized specialist delegation is available" in prompt
+        assert "authorized specialist agents" in prompt
+
     def test_session_prompt_missing_allowed_subagents_keeps_all_subagents(self):
         prompt = _session_prompt(user_context={})
 

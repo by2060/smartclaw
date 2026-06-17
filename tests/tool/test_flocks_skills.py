@@ -44,6 +44,16 @@ def make_proc(stdout: bytes = b"", stderr: bytes = b"", returncode: int = 0):
     return proc
 
 
+def make_skill(name: str, description: str = "desc", source: str = "project"):
+    skill = MagicMock()
+    skill.name = name
+    skill.description = description
+    skill.description_cn = None
+    skill.source = source
+    skill.requires = None
+    return skill
+
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
@@ -206,6 +216,86 @@ async def test_workflow_context_bypasses_agent_skill_allowlist_for_management():
 
     assert result.success is True
     ctx.ask.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_user_session_list_uses_agent_allowlist_without_cli():
+    from flocks.tool.skill.flocks_skills import flocks_skills
+
+    ctx = make_ctx()
+    ctx.agent = "rex"
+    ctx.session_id = "ses_user_skills"
+    ctx.extra = {}
+    skills = [
+        make_skill("find-skills", "Find authorized skills"),
+        make_skill("onesec-use", "OneSEC platform skill"),
+    ]
+
+    with (
+        patch("flocks.tool.skill.flocks_skills._flocks_executable", return_value="/usr/bin/flocks"),
+        patch("flocks.agent.controls.agent_skill_allowlist", new_callable=AsyncMock, return_value=["find-skills"]),
+        patch("flocks.agent.controls.rex_session_uses_full_skill_catalog", new_callable=AsyncMock, return_value=False),
+        patch("flocks.skill.skill.Skill.all", new_callable=AsyncMock, return_value=skills),
+        patch("flocks.tool.skill.flocks_skills.asyncio.create_subprocess_exec") as mock_exec,
+    ):
+        result = await flocks_skills(ctx, subcommand="list")
+
+    assert result.success is True
+    assert "find-skills" in (result.output or "")
+    assert "onesec-use" not in (result.output or "")
+    assert result.metadata.get("agent_scoped") is True
+    mock_exec.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_user_session_find_searches_only_allowed_installed_skills():
+    from flocks.tool.skill.flocks_skills import flocks_skills
+
+    ctx = make_ctx()
+    ctx.agent = "rex"
+    ctx.session_id = "ses_user_find_skills"
+    ctx.extra = {}
+    skills = [
+        make_skill("find-skills", "Find authorized skills"),
+        make_skill("workflow-builder", "Build workflows"),
+        make_skill("qingteng-use", "Qingteng platform skill"),
+    ]
+
+    with (
+        patch("flocks.tool.skill.flocks_skills._flocks_executable", return_value="/usr/bin/flocks"),
+        patch("flocks.agent.controls.agent_skill_allowlist", new_callable=AsyncMock, return_value=["find-skills", "workflow-builder"]),
+        patch("flocks.agent.controls.rex_session_uses_full_skill_catalog", new_callable=AsyncMock, return_value=False),
+        patch("flocks.skill.skill.Skill.all", new_callable=AsyncMock, return_value=skills),
+        patch("flocks.tool.skill.flocks_skills.asyncio.create_subprocess_exec") as mock_exec,
+    ):
+        result = await flocks_skills(ctx, subcommand="find", args="platform")
+
+    assert result.success is True
+    assert "qingteng-use" not in (result.output or "")
+    assert "No allowed installed skills matched" in (result.output or "")
+    mock_exec.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_workflow_context_read_only_still_uses_cli_full_catalog():
+    from flocks.tool.skill.flocks_skills import flocks_skills
+
+    ctx = make_ctx()
+    ctx.agent = "rex"
+    ctx.session_id = "ses_workflow_list_skills"
+    ctx.extra = {"workflow_tool_context": True}
+    proc = make_proc(stdout=b"onesec-use\nqingteng-use\n", returncode=0)
+
+    with (
+        patch("flocks.tool.skill.flocks_skills._flocks_executable", return_value="/usr/bin/flocks"),
+        patch("flocks.agent.controls.rex_session_uses_full_skill_catalog", new_callable=AsyncMock, return_value=True),
+        patch("flocks.tool.skill.flocks_skills.asyncio.create_subprocess_exec", return_value=proc) as mock_exec,
+    ):
+        result = await flocks_skills(ctx, subcommand="list")
+
+    assert result.success is True
+    assert "onesec-use" in (result.output or "")
+    mock_exec.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

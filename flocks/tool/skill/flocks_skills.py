@@ -163,26 +163,88 @@ def _infer_skill_name(args: str) -> str:
     return base.strip()
 
 
-def _filter_text_output_by_skills(output: str, allowed: list[str]) -> str:
-    if not allowed:
+def _skill_allowed(skill_name: str, allowed: list[str]) -> bool:
+    allowed_names = {str(name).strip().lower() for name in allowed if str(name).strip()}
+    return str(skill_name).strip().lower() in allowed_names
+
+
+def _format_allowed_skill_list(skills: list[object]) -> str:
+    if not skills:
         return "No skills are allowed for this agent."
 
-    allowed_lower = [name.lower() for name in allowed]
-    kept: list[str] = []
-    for line in (output or "").splitlines():
-        stripped = line.strip()
-        lower = stripped.lower()
-        if not stripped:
-            kept.append(line)
-        elif any(name in lower for name in allowed_lower):
-            kept.append(line)
-        elif set(stripped) <= {"-", "=", " "}:
-            kept.append(line)
-        elif lower.startswith(("skill", "name", "available", "status", "eligible", "source")):
-            kept.append(line)
+    lines = ["Allowed installed skills for this agent:", ""]
+    for skill in sorted(skills, key=lambda item: str(getattr(item, "name", ""))):
+        name = getattr(skill, "name", "")
+        description = getattr(skill, "description", "") or ""
+        source = getattr(skill, "source", None) or "project"
+        lines.append(f"- {name}: {description} (source: {source})")
+    return "\n".join(lines)
 
-    filtered = "\n".join(kept).strip()
-    return filtered or "No allowed skills matched the command output."
+
+def _format_allowed_skill_status(skills: list[object]) -> str:
+    if not skills:
+        return "No skills are allowed for this agent."
+
+    lines = ["Allowed installed skill status for this agent:", ""]
+    for skill in sorted(skills, key=lambda item: str(getattr(item, "name", ""))):
+        name = getattr(skill, "name", "")
+        eligible = getattr(skill, "eligible", None)
+        missing = getattr(skill, "missing", None) or []
+        if eligible is True:
+            status = "ready"
+        elif eligible is False:
+            status = "missing: " + ", ".join(missing)
+        else:
+            status = "unknown"
+        lines.append(f"- {name}: {status}")
+    return "\n".join(lines)
+
+
+def _format_allowed_skill_find(skills: list[object], query: str) -> str:
+    query = (query or "").strip()
+    if not skills:
+        return "No allowed installed skills matched the query."
+
+    heading = (
+        f'Allowed installed skills matching "{query}":'
+        if query
+        else "Allowed installed skills for this agent:"
+    )
+    lines = [heading, ""]
+    for skill in sorted(skills, key=lambda item: str(getattr(item, "name", ""))):
+        name = getattr(skill, "name", "")
+        description = getattr(skill, "description", "") or ""
+        source = getattr(skill, "source", None) or "project"
+        lines.append(f"- {name}: {description} (source: {source})")
+    return "\n".join(lines)
+
+
+async def _read_only_allowed_skill_output(subcommand: str, args: str, allowed: list[str]) -> str:
+    from flocks.skill.skill import Skill
+
+    skills = [
+        skill
+        for skill in await Skill.all()
+        if _skill_allowed(getattr(skill, "name", ""), allowed)
+    ]
+
+    if subcommand == "list":
+        return _format_allowed_skill_list(skills)
+
+    if subcommand == "status":
+        checked = [Skill.check_eligibility(skill) for skill in skills]
+        return _format_allowed_skill_status(checked)
+
+    query = (args or "").strip().lower()
+    if query:
+        skills = [
+            skill
+            for skill in skills
+            if query in str(getattr(skill, "name", "")).lower()
+            or query in str(getattr(skill, "description", "") or "").lower()
+            or query in str(getattr(skill, "description_cn", "") or "").lower()
+        ]
+    return _format_allowed_skill_find(skills, args)
 
 
 def _flocks_executable() -> Optional[str]:
@@ -280,6 +342,18 @@ async def flocks_skills(
                 output="No skills are allowed for this agent.",
                 title=f"flocks skills {subcommand}",
             )
+        elif subcommand in _READ_ONLY_SUBCOMMANDS:
+            output = await _read_only_allowed_skill_output(subcommand, args, skill_allowlist)
+            return ToolResult(
+                success=True,
+                output=output,
+                title=f"flocks skills {subcommand}",
+                metadata={
+                    "agent_scoped": True,
+                    "agent": agent_name,
+                    "allowed_skills": list(skill_allowlist),
+                },
+            )
 
     cmd: list[str] = [flocks_bin, "skills", subcommand]
     if args.strip():
@@ -339,9 +413,6 @@ async def flocks_skills(
     # Truncate very long output so we don't flood the context window.
     if len(output) > _MAX_OUTPUT:
         output = output[:_MAX_OUTPUT] + f"\n\n[… output truncated at {_MAX_OUTPUT} chars]"
-
-    if subcommand in _READ_ONLY_SUBCOMMANDS and skill_allowlist is not None:
-        output = _filter_text_output_by_skills(output, skill_allowlist)
 
     exit_code = proc.returncode
     success = exit_code == 0

@@ -53,4 +53,7 @@ tools:
   # 通道/企微	channel_message, wecom_mcp
   #  always-load 工具包含 question, memory_search, memory_get, memory_write
   # Web	webfetch, websearch
+kb:
+   - all
+
 # prompt is left empty – injected dynamically by prompt_builder.py

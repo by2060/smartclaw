@@ -157,6 +157,8 @@ async def _resolve_agent_knowledge_base_ids(ctx: ToolContext) -> Optional[List[s
     agent_kb = getattr(agent, "kb", None)
     if agent_kb is None:
         return None
+    if "all" in agent_kb:
+        return ["all"]
     return _normalize_dataset_ids(agent_kb)
 
 
@@ -170,8 +172,11 @@ async def _resolve_effective_dataset_scope(ctx: ToolContext) -> tuple[List[str],
     if agent_kb_ids is None:
         missing_required_scopes.append("agent.kb")
 
-    agent_kb_set = set(agent_kb_ids or [])
-    effective_dataset_ids = [dataset_id for dataset_id in knowledge_base_ids if dataset_id in agent_kb_set]
+    if len(agent_kb_ids) == 1 and "all" == agent_kb_ids[0]:
+        effective_dataset_ids = knowledge_base_ids
+    else:
+        agent_kb_set = set(agent_kb_ids or [])
+        effective_dataset_ids = [dataset_id for dataset_id in knowledge_base_ids if dataset_id in agent_kb_set]
 
     scope_metadata = {
         "knowledge_base_count": len(knowledge_base_ids),
