@@ -22,7 +22,8 @@ ALWAYS_LOAD_TOOL_NAMES: Set[str] = {
     "question",
     "memory_search",
     "memory_get",
-    "memory_write"
+    "memory_write",
+    "read"
 }
 
 

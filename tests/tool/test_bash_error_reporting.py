@@ -15,6 +15,7 @@ from flocks.tool.code.bash import (
 )
 from flocks.tool.code import bash as bash_module
 from flocks.tool.code.bash_blacklist import find_blacklisted_command
+from flocks.tool.code.shell_risk import classify_shell_risk
 from flocks.config.config import ConfigInfo
 from flocks.tool.registry import ToolContext
 
@@ -202,6 +203,26 @@ def test_bash_blacklist_matches_command_names_without_text_false_positives() -> 
     assert find_blacklisted_command("cat remove.txt", rules) is None
 
 
+def test_shell_risk_classifier_detects_service_stop_scripts() -> None:
+    direct = classify_shell_risk("/opt/smartgpt103/smartclaw/stop.sh")
+    chained = classify_shell_risk("cd /opt/smartgpt103/smartclaw && ./stop.sh")
+    interpreted = classify_shell_risk("bash /opt/smartgpt103/smartclaw/restart.sh")
+
+    assert direct is not None
+    assert direct.risk_type == "service_stop"
+    assert chained is not None
+    assert chained.risk_type == "service_stop"
+    assert interpreted is not None
+    assert interpreted.risk_type == "service_restart"
+
+
+def test_shell_risk_classifier_detects_ops_control_commands() -> None:
+    assert classify_shell_risk("sudo systemctl stop nginx").risk_type == "service_stop"
+    assert classify_shell_risk("kill -9 1234").risk_type == "process_control"
+    assert classify_shell_risk("docker restart api").risk_type == "container_restart"
+    assert classify_shell_risk("iptables -A INPUT -p tcp --dport 8080 -j DROP").risk_type == "firewall_change"
+
+
 @pytest.mark.asyncio
 async def test_bash_tool_rejects_configured_blacklisted_command_before_execution(monkeypatch) -> None:
     requests = []
@@ -238,3 +259,45 @@ async def test_bash_tool_rejects_configured_blacklisted_command_before_execution
     assert result.metadata["blocked_by_bash_blacklist"] is True
     assert result.metadata["blocked_command"] == "rm"
     assert requests == []
+
+
+@pytest.mark.asyncio
+async def test_bash_tool_blocks_high_risk_command_before_execution(monkeypatch) -> None:
+    requests = []
+    process_started = False
+
+    async def permission_callback(request):
+        requests.append(request)
+
+    async def fake_create_subprocess_shell(*_args, **_kwargs):
+        nonlocal process_started
+        process_started = True
+        raise AssertionError("high-risk command should not start a process")
+
+    ctx = ToolContext(
+        session_id="s-bash",
+        message_id="m-bash",
+        permission_callback=permission_callback,
+    )
+
+    monkeypatch.setattr(bash_module.Instance, "contains_path", lambda _path: True)
+    monkeypatch.setattr(bash_module.sys, "platform", "linux")
+    monkeypatch.setattr(bash_module.asyncio, "create_subprocess_shell", fake_create_subprocess_shell)
+
+    result = await bash_module._execute_host(
+        ctx=ctx,
+        command="/opt/smartgpt103/smartclaw/stop.sh",
+        cwd=str(Path.cwd()),
+        timeout_sec=1,
+        timeout_ms=1000,
+        description="Stop service",
+    )
+
+    assert result.success is False
+    assert "出于安全考虑" in result.error
+    assert "不能直接执行" in result.error
+    assert result.metadata["blocked_by_high_risk_shell"] is True
+    assert result.metadata["risk_level"] == "high"
+    assert result.metadata["command"] == "/opt/smartgpt103/smartclaw/stop.sh"
+    assert requests == []
+    assert process_started is False

@@ -91,6 +91,49 @@ class TestStepResult:
         assert result.error == "LLM failed"
 
 
+@pytest.mark.asyncio
+async def test_direct_session_shell_blocks_high_risk_command(monkeypatch):
+    session = _make_session("ses_shell_high_risk")
+    user_msg = SimpleNamespace(id="msg_user")
+    assistant_msg = SimpleNamespace(id="msg_assistant")
+    process_started = False
+
+    async def fake_session_get_by_id(_session_id):
+        return session
+
+    async def fake_message_create(*_args, **kwargs):
+        if kwargs.get("role") == runner_mod.MessageRole.USER:
+            return user_msg
+        return assistant_msg
+
+    async def fake_check_blacklist(_command):
+        return None
+
+    async def fake_create_subprocess_shell(*_args, **_kwargs):
+        nonlocal process_started
+        process_started = True
+        raise AssertionError("high-risk command should not start a process")
+
+    monkeypatch.setattr(runner_mod.Session, "get_by_id", fake_session_get_by_id)
+    monkeypatch.setattr(runner_mod.Message, "create", fake_message_create)
+    monkeypatch.setattr("flocks.tool.code.bash_blacklist.check_bash_blacklist", fake_check_blacklist)
+    monkeypatch.setattr(runner_mod.asyncio, "create_subprocess_shell", fake_create_subprocess_shell)
+
+    result = await runner_mod.SessionRunner.shell(
+        session_id=session.id,
+        agent="rex",
+        command="/opt/smartgpt103/smartclaw/stop.sh",
+    )
+
+    state = result["parts"][0]["state"]
+    assert "出于安全考虑" in state["output"]
+    assert "不能直接执行" in state["output"]
+    assert state["metadata"]["blocked_by_high_risk_shell"] is True
+    assert state["metadata"]["risk_level"] == "high"
+    assert state["metadata"]["command"] == "/opt/smartgpt103/smartclaw/stop.sh"
+    assert process_started is False
+
+
 # ---------------------------------------------------------------------------
 # RunnerCallbacks dataclass
 # ---------------------------------------------------------------------------

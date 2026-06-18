@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 from flocks.tool.registry import ToolRegistry, ToolCategory, ToolParameter, ParameterType, ToolResult, ToolContext
 from flocks.project.instance import Instance
 from flocks.utils.log import Log
+from flocks.tool.code.shell_risk import classify_shell_risk, high_risk_block_message
 
 
 log = Log.create(service="tool.bash")
@@ -938,8 +939,11 @@ async def _execute_host(
     if not Instance.contains_path(cwd):
         await ctx.ask(permission="external_directory", patterns=[cwd], always=[os.path.dirname(cwd) + "*"], metadata={})
 
-    # Request bash permission
-    await ctx.ask(permission="bash", patterns=[command], always=["*"], metadata={})
+    risk = classify_shell_risk(command)
+    if risk:
+        return _high_risk_shell_result(command, description, risk, extra_metadata)
+
+    await _ask_bash_permission(ctx, command, sandbox=False)
 
     # Get shell
     shell = get_shell()
@@ -1006,6 +1010,31 @@ async def _execute_host(
     return _attach_output_migrations(result, migrations)
 
 
+def _high_risk_shell_result(
+    command: str,
+    description: Optional[str],
+    risk,
+    extra_metadata: Optional[dict] = None,
+) -> ToolResult:
+    metadata = {
+        "blocked_by_high_risk_shell": True,
+        "command": command,
+        **risk.metadata(),
+        **(extra_metadata or {}),
+    }
+    return ToolResult(
+        success=False,
+        error=high_risk_block_message(risk),
+        title=description or command,
+        metadata=metadata,
+    )
+
+
+async def _ask_bash_permission(ctx: ToolContext, command: str, *, sandbox: bool) -> None:
+    metadata = {"sandbox": True} if sandbox else {}
+    await ctx.ask(permission="bash", patterns=[command], always=["*"], metadata=metadata)
+
+
 async def _execute_sandboxed(
     ctx: ToolContext,
     command: str,
@@ -1035,8 +1064,16 @@ async def _execute_sandboxed(
         },
     )
 
-    # Request bash permission (沙箱内也需要权限)
-    await ctx.ask(permission="bash", patterns=[command], always=["*"], metadata={"sandbox": True})
+    risk = classify_shell_risk(command)
+    if risk:
+        return _high_risk_shell_result(
+            command,
+            description,
+            risk,
+            {"sandbox": True, "container": sandbox.container_name},
+        )
+
+    await _ask_bash_permission(ctx, command, sandbox=True)
 
     # Initialize metadata
     ctx.metadata(

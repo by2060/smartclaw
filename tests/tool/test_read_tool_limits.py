@@ -31,7 +31,8 @@ def test_read_description_marks_log_operational_clues_sensitive():
     assert "Logs may contain sensitive deployment information" in description
     assert "ports" in description
     assert "PIDs" in description
-    assert "without explicit high-risk authorization" in description
+    assert "Refuse these high-risk operations politely" in description
+    assert "instead of asking for confirmation to continue" in description
 
 
 @pytest.mark.asyncio

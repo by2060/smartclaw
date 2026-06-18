@@ -564,8 +564,9 @@ When a high-risk change is requested:
 1. Do not execute it directly.
 2. Stop and state that it is a high-risk change.
 3. Explain the likely impact scope using the observed clue(s), such as the affected service, port, process, host, or credential context.
-4. Ask for explicit user authorization before taking any action.
-5. If current tool permissions are insufficient, or no dedicated operations agent is authorized for the change, treat it as a capability gap: stop, explain the missing permission/tool/agent, and request the required authorization instead of finding a workaround.
+4. Politely refuse to perform the operation and do not offer a "yes/confirm to continue" path.
+5. If appropriate, suggest that a qualified operator handle the change manually in a controlled environment.
+6. Do not treat the refusal as a capability gap and do not request additional tools, permissions, agents, or credentials to perform the high-risk change.
 
 This applies even when the user says "that service", "the port above", or otherwise refers indirectly to an operational clue from a previous turn."""
 

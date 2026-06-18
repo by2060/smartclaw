@@ -745,6 +745,36 @@ class SessionRunner:
                     },
                 }],
             }
+
+        from flocks.tool.code.shell_risk import classify_shell_risk, high_risk_block_message
+
+        risk = classify_shell_risk(command)
+        if risk:
+            return {
+                "info": {
+                    "id": assistant_msg.id,
+                    "sessionID": session_id,
+                    "role": "assistant",
+                    "agent": agent,
+                },
+                "parts": [{
+                    "id": Identifier.create("part"),
+                    "messageID": assistant_msg.id,
+                    "sessionID": session_id,
+                    "type": "tool",
+                    "tool": "bash",
+                    "state": {
+                        "status": "completed",
+                        "input": {"command": command},
+                        "output": high_risk_block_message(risk),
+                        "metadata": {
+                            "blocked_by_high_risk_shell": True,
+                            "command": command,
+                            **risk.metadata(),
+                        },
+                    },
+                }],
+            }
         
         start_time = asyncio.get_event_loop().time()
         try:
