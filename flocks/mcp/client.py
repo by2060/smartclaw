@@ -20,6 +20,7 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
 from flocks.mcp.types import McpResource, McpToolDef
+from flocks.mcp.auth import McpAuth
 from flocks.mcp.oauth2 import McpOAuth2ClientCredentials
 from flocks.mcp.utils import build_mcp_url, resolve_env_var
 from flocks.utils.log import Log
@@ -787,6 +788,50 @@ class McpClient:
 
     async def _submit_command(self, action: str, **payload: Any) -> Any:
         """Send a serialized command to the owner task."""
+        await self._refresh_oauth_connection_if_needed()
+        try:
+            return await self._submit_command_once(action, **payload)
+        except Exception as exc:
+            if await self._reconnect_after_auth_failure(exc):
+                return await self._submit_command_once(action, **payload)
+            raise
+
+    async def _refresh_oauth_connection_if_needed(self) -> None:
+        """Reconnect remote OAuth MCP sessions before their static headers expire."""
+        if (
+            self.server_type == "local"
+            or not self._connected
+            or not McpOAuth2ClientCredentials.is_config(self.auth_config)
+        ):
+            return
+
+        if not await McpAuth.is_token_expired(self.name):
+            return
+
+        log.info("mcp.client.oauth_token_expiring_reconnect", {"server": self.name})
+        await self.disconnect()
+        await self.connect()
+
+    async def _reconnect_after_auth_failure(self, exc: Exception) -> bool:
+        """Reconnect once when a remote OAuth session is rejected by the server."""
+        if self.server_type == "local" or not McpOAuth2ClientCredentials.is_config(self.auth_config):
+            return False
+
+        error = _extract_root_cause(exc)
+        if "HTTP 401" not in error and "Unauthorized" not in error:
+            return False
+
+        log.warn("mcp.client.oauth_401_reconnect", {
+            "server": self.name,
+            "error": error,
+        })
+        await McpAuth.remove(self.name)
+        await self.disconnect()
+        await self.connect()
+        return True
+
+    async def _submit_command_once(self, action: str, **payload: Any) -> Any:
+        """Send a serialized command to the owner task without auth refresh retries."""
         if not self._connected or self._command_queue is None:
             if self._owner_error is not None:
                 raise RuntimeError(

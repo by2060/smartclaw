@@ -21,6 +21,7 @@ class McpAuthEntry(BaseModel):
     tokens: Optional[Dict[str, Any]] = None
     created_at: float
     expires_at: Optional[float] = None
+    expires_in: Optional[int] = None
 
 
 class McpAuth:
@@ -67,7 +68,8 @@ class McpAuth:
             server_name=server_name,
             tokens=tokens,
             created_at=time.time(),
-            expires_at=time.time() + expires_in if expires_in else None
+            expires_at=time.time() + expires_in if expires_in else None,
+            expires_in=expires_in,
         )
         cls._auth_storage[server_name] = entry
         
@@ -103,8 +105,13 @@ class McpAuth:
         if not entry or not entry.expires_at:
             return False
         
-        # Mark as expired 5 minutes early
-        return time.time() >= entry.expires_at - 300
+        # Refresh before expiry, but do not treat short-lived tokens as expired
+        # immediately. Some MCP servers issue 5-minute tokens.
+        lifetime = entry.expires_in
+        if lifetime is None:
+            lifetime = max(0, int(entry.expires_at - entry.created_at))
+        refresh_margin = min(300, max(5, int(lifetime * 0.1)))
+        return time.time() >= entry.expires_at - refresh_margin
     
     @classmethod
     async def list_all(cls) -> Dict[str, McpAuthEntry]:

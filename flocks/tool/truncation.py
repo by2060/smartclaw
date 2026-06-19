@@ -27,11 +27,11 @@ from flocks.workspace.manager import WorkspaceManager
 
 log = Log.create(service="tool.truncation")
 
-MAX_LINES = 1000
-MAX_BYTES = 100 * 1024  # 100 KB
+MAX_LINES = 10_000
+MAX_BYTES = 1024 * 1024  # 100 KB
 
-MAX_TOOL_RESULT_CONTEXT_SHARE = 0.3
-HARD_MAX_TOOL_RESULT_CHARS = 100_000
+MAX_TOOL_RESULT_CONTEXT_SHARE = 0.5
+HARD_MAX_TOOL_RESULT_CHARS = 500_000
 MIN_KEEP_CHARS = 1_000
 
 # 输出按会话隔离

@@ -52,7 +52,7 @@ class TestMcpAuth:
     @pytest.mark.asyncio
     async def test_is_token_expired(self):
         """Test token expiration check"""
-        # Set long-lived token (expires in 3600s, greater than 5-minute buffer)
+        # Set long-lived token (expires in 3600s)
         tokens = {"access_token": "token123"}
         await McpAuth.set("test_server", tokens, expires_in=3600)
         
@@ -60,10 +60,17 @@ class TestMcpAuth:
         expired = await McpAuth.is_token_expired("test_server")
         assert not expired
         
-        # Set expiring token (expires in 200s, less than 5-minute buffer)
+        # Short-lived tokens should not be considered expired immediately.
         await McpAuth.set("test_server_expiring", tokens, expires_in=200)
         expired = await McpAuth.is_token_expired("test_server_expiring")
-        assert expired  # Because 200 < 300 (5-minute buffer)
+        assert not expired
+
+        # Once the same token is near the end of its dynamic refresh window, expire it.
+        entry = await McpAuth.get("test_server_expiring")
+        assert entry is not None
+        entry.expires_at = time.time() + 5
+        expired = await McpAuth.is_token_expired("test_server_expiring")
+        assert expired
         
         # Set token without expiration
         await McpAuth.set("test_server2", tokens, expires_in=None)

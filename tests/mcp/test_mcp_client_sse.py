@@ -3,6 +3,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 from types import MethodType, SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from mcp import types as mcp_types
