@@ -18,6 +18,135 @@ def _load_dify_module():
     return module
 
 
+def test_dify_kb_builds_compact_markdown_event_payload():
+    module = _load_dify_module()
+    records = [
+        {
+            "dataset_id": "kb_a",
+            "score": 0.989856,
+            "segment": {
+                "id": "seg_a",
+                "position": 8,
+                "document_id": "doc_a",
+                "content": "plain ![image](http://example.test/plain.png)",
+                "sign_content": "signed ![image](http://example.test/signed.png?sign=abc)",
+                "document": {
+                    "id": "doc_a",
+                    "name": "Guide.docx",
+                    "data_source_type": "upload_file",
+                    "doc_metadata": {"auth_tag": "team"},
+                },
+            },
+            "child_chunks": [{"id": "child_a", "score": 0.9}],
+        }
+    ]
+
+    ctx = ToolContext(session_id="ses_kb", message_id="msg_kb", agent="worker", call_id="call_kb")
+    payload = module._build_knowledge_search_event(
+        query="gateway process screenshot",
+        records=records,
+        scope_metadata={"effective_dataset_count": 1},
+        ctx=ctx,
+    )
+
+    assert set(payload) == {
+        "schema",
+        "event_type",
+        "tool",
+        "sessionID",
+        "messageID",
+        "callID",
+        "query",
+        "count",
+        "image_count",
+        "scope",
+        "records",
+        "markdown",
+    }
+    assert payload["schema"] == "knowledge_search_result.v1"
+    assert payload["event_type"] == "knowledge.search.result.v1"
+    assert payload["tool"] == "dify_kb_search"
+    assert payload["sessionID"] == "ses_kb"
+    assert payload["messageID"] == "msg_kb"
+    assert payload["callID"] == "call_kb"
+    assert payload["scope"] == {"effective_dataset_count": 1}
+    assert payload["count"] == 1
+    assert payload["image_count"] == 1
+    assert "Guide.docx" in payload["markdown"]
+    assert "http://example.test/signed.png?sign=abc" in payload["markdown"]
+
+    record = payload["records"][0]
+    assert set(record) == {"dataset_id", "score", "document", "segment", "images"}
+    assert record["dataset_id"] == "kb_a"
+    assert record["document"] == {"id": "doc_a", "name": "Guide.docx"}
+    assert record["segment"] == {
+        "id": "seg_a",
+        "position": 8,
+        "markdown": "signed ![image](http://example.test/signed.png?sign=abc)",
+    }
+    assert record["images"] == [{"alt": "image", "url": "http://example.test/signed.png?sign=abc"}]
+    assert "download_url" not in str(payload)
+    assert "doc_metadata" not in str(payload)
+    assert "child_chunks" not in str(payload)
+    assert "document_download_url_count" not in str(payload)
+
+@pytest.mark.asyncio
+async def test_dify_kb_tool_output_records_keep_raw_dify_records(monkeypatch):
+    module = _load_dify_module()
+    raw_records = [
+        {
+            "dataset_id": "kb_a",
+            "score": 0.989856,
+            "segment": {
+                "id": "seg_a",
+                "position": 8,
+                "document_id": "doc_a",
+                "content": "plain content",
+                "sign_content": "signed ![image](http://example.test/signed.png?sign=abc)",
+                "document": {
+                    "id": "doc_a",
+                    "name": "Guide.docx",
+                    "data_source_type": "upload_file",
+                    "doc_metadata": {"auth_tag": "team"},
+                },
+            },
+            "child_chunks": [{"id": "child_a", "score": 0.9}],
+        }
+    ]
+
+    async def fake_scope(ctx):
+        return ["kb_a"], {"effective_dataset_count": 1, "missing_required_scopes": []}
+
+    async def fake_retrieve_from_dify_kb(query, dataset_ids, *, top_k=None):
+        return raw_records
+
+    monkeypatch.setattr(module, "_load_runtime_config", lambda top_k=None: ("http://dify.test/v1", "token", 5))
+    monkeypatch.setattr(module, "_resolve_effective_dataset_scope", fake_scope)
+    monkeypatch.setattr(module, "retrieve_from_dify_kb", fake_retrieve_from_dify_kb)
+
+    ctx = ToolContext(session_id="http-tool", message_id="msg_kb", agent="worker", call_id="call_kb")
+    result = await module.dify_kb_search(ctx, query="gateway process screenshot")
+
+    assert result.success is True
+    assert result.output["records"] is raw_records
+    assert result.output["records"][0]["child_chunks"] == [{"id": "child_a", "score": 0.9}]
+    assert result.output["records"][0]["segment"]["document"]["doc_metadata"] == {"auth_tag": "team"}
+
+    event_records = result.metadata["knowledge_search_result"]["records"]
+    assert event_records == [
+        {
+            "dataset_id": "kb_a",
+            "score": 0.989856,
+            "document": {"id": "doc_a", "name": "Guide.docx"},
+            "segment": {
+                "id": "seg_a",
+                "position": 8,
+                "markdown": "signed ![image](http://example.test/signed.png?sign=abc)",
+            },
+            "images": [{"alt": "image", "url": "http://example.test/signed.png?sign=abc"}],
+        }
+    ]
+
 @pytest.mark.asyncio
 async def test_dify_kb_scope_falls_back_to_session_user_context(monkeypatch):
     module = _load_dify_module()

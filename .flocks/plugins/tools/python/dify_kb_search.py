@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -24,6 +25,9 @@ log = Log.create(service="tool.dify_kb_search")
 
 DEFAULT_TIMEOUT = 20
 DEFAULT_RETRIEVAL_SIZE = 5
+KNOWLEDGE_SEARCH_EVENT_TYPE = "knowledge.search.result.v1"
+KNOWLEDGE_SEARCH_SCHEMA = "knowledge_search_result.v1"
+IMAGE_MARKDOWN_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 
 
 def _normalize_base_url(raw_url: Optional[str]) -> str:
@@ -138,6 +142,26 @@ def _resolve_user_context_knowledge_base_ids(ctx: ToolContext) -> List[str]:
     return _normalize_dataset_ids(user_context.get("knowledgeBaseIds"))
 
 
+async def _resolve_session_knowledge_base_ids(ctx: ToolContext) -> List[str]:
+    session_id = str(getattr(ctx, "session_id", "") or "").strip()
+    if not session_id:
+        return []
+
+    try:
+        from flocks.session.session import Session
+
+        session = await Session.get_by_id(session_id)
+    except Exception as exc:
+        log.warn("dify_kb_search.session_kb_resolve_failed", {"session_id": session_id, "error": str(exc)})
+        return []
+
+    user_context = getattr(session, "user_context", None) if session else None
+    if not isinstance(user_context, dict):
+        return []
+
+    return _normalize_dataset_ids(user_context.get("knowledgeBaseIds"))
+
+
 async def _resolve_agent_knowledge_base_ids(ctx: ToolContext) -> Optional[List[str]]:
     agent_name = str(getattr(ctx, "agent", "") or "").strip()
     if not agent_name:
@@ -164,6 +188,8 @@ async def _resolve_agent_knowledge_base_ids(ctx: ToolContext) -> Optional[List[s
 
 async def _resolve_effective_dataset_scope(ctx: ToolContext) -> tuple[List[str], Dict[str, Any]]:
     knowledge_base_ids = _resolve_user_context_knowledge_base_ids(ctx)
+    if not knowledge_base_ids:
+        knowledge_base_ids = await _resolve_session_knowledge_base_ids(ctx)
     agent_kb_ids = await _resolve_agent_knowledge_base_ids(ctx)
     missing_required_scopes: List[str] = []
 
@@ -212,6 +238,159 @@ def _http_json_request(
     if not isinstance(parsed, dict):
         raise ValueError("Dify API returned a non-object JSON payload")
     return parsed
+
+
+def _as_dict(value: Any) -> Dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _format_score(score: Any) -> str:
+    try:
+        return f"{float(score):.3f}"
+    except (TypeError, ValueError):
+        return "-"
+
+
+def _extract_markdown_images(markdown: str) -> List[Dict[str, str]]:
+    images: List[Dict[str, str]] = []
+    seen: set[str] = set()
+    for match in IMAGE_MARKDOWN_RE.finditer(markdown or ""):
+        alt = (match.group(1) or "image").strip() or "image"
+        url = (match.group(2) or "").strip()
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        images.append({"alt": alt, "url": url})
+    return images
+
+
+def _document_source_block(
+    *,
+    document_name: str,
+    document_id: str,
+    dataset_id: Any,
+    position: Any,
+    score: Any,
+) -> str:
+    return "\n".join(
+        [
+            f"- {document_name}",
+            f"  - Dataset ID: `{dataset_id or '-'}`",
+            f"  - Document ID: `{document_id or '-'}`",
+            f"  - Segment position: `{position if position is not None else '-'}`",
+            f"  - Score: `{_format_score(score)}`",
+        ]
+    )
+
+
+def _record_markdown(record: Dict[str, Any], index: int) -> str:
+    segment = _as_dict(record.get("segment"))
+    document = _as_dict(segment.get("document"))
+    content = _first_non_empty(segment.get("sign_content"), segment.get("content"))
+    document_name = _first_non_empty(document.get("name"), "Untitled document")
+    position = segment.get("position")
+    score = _format_score(record.get("score"))
+    lines = [
+        f"#### {index}. {document_name}",
+        "",
+        f"- Dataset ID: `{record.get('dataset_id') or '-'}`",
+        f"- Document ID: `{segment.get('document_id') or document.get('id') or '-'}`",
+        f"- Segment position: `{position if position is not None else '-'}`",
+        f"- Score: `{score}`",
+        "",
+    ]
+    if content:
+        lines.extend([content, ""])
+    return "\n".join(lines).rstrip()
+
+
+def _build_knowledge_search_event(
+    *,
+    query: str,
+    records: List[Dict[str, Any]],
+    scope_metadata: Dict[str, Any],
+    ctx: ToolContext,
+) -> Dict[str, Any]:
+    normalized_records: List[Dict[str, Any]] = []
+    source_lines = ["### Sources", ""]
+    image_count = 0
+
+    for index, record in enumerate(records, start=1):
+        segment = _as_dict(record.get("segment"))
+        document = _as_dict(segment.get("document"))
+        content_markdown = _first_non_empty(segment.get("sign_content"), segment.get("content"))
+        images = _extract_markdown_images(content_markdown)
+        image_count += len(images)
+
+        document_id = _first_non_empty(segment.get("document_id"), document.get("id"))
+        document_name = _first_non_empty(document.get("name"), "Untitled document")
+        source_block = _document_source_block(
+            document_name=document_name,
+            document_id=document_id,
+            dataset_id=record.get("dataset_id"),
+            position=segment.get("position"),
+            score=record.get("score"),
+        )
+        source_lines.append(f"{index}. {source_block[2:] if source_block.startswith('- ') else source_block}")
+
+        normalized_records.append(
+            {
+                "dataset_id": record.get("dataset_id"),
+                "score": record.get("score"),
+                "document": {
+                    "id": document_id,
+                    "name": document_name,
+                },
+                "segment": {
+                    "id": segment.get("id"),
+                    "position": segment.get("position"),
+                    "markdown": content_markdown,
+                },
+                "images": images,
+            }
+        )
+
+    records_markdown = "\n\n".join(
+        _record_markdown(record, index)
+        for index, record in enumerate(records, start=1)
+    )
+    sources_block = "\n".join(source_lines).rstrip()
+
+    markdown_parts = [
+        "### Knowledge search result",
+        "",
+        f"- Query: `{query.strip()}`",
+        f"- Records: `{len(records)}`",
+        f"- Images: `{image_count}`",
+    ]
+    if records_markdown:
+        markdown_parts.extend(["", records_markdown])
+    if sources_block:
+        markdown_parts.extend(["", sources_block])
+
+    return {
+        "schema": KNOWLEDGE_SEARCH_SCHEMA,
+        "event_type": KNOWLEDGE_SEARCH_EVENT_TYPE,
+        "tool": "dify_kb_search",
+        "sessionID": getattr(ctx, "session_id", None),
+        "messageID": getattr(ctx, "message_id", None),
+        "callID": getattr(ctx, "call_id", None),
+        "query": query.strip(),
+        "count": len(records),
+        "image_count": image_count,
+        "scope": scope_metadata,
+        "records": normalized_records,
+        "markdown": "\n".join(markdown_parts).rstrip(),
+    }
+
+
+async def _publish_knowledge_search_event(ctx: ToolContext, payload: Dict[str, Any]) -> None:
+    if not getattr(ctx, "event_publish_callback", None):
+        return
+    try:
+        await ctx.event_publish_callback(KNOWLEDGE_SEARCH_EVENT_TYPE, payload)
+    except Exception as exc:
+        log.warn("dify_kb_search.event_publish_failed", {"error": str(exc)})
 
 
 async def _request_json(
@@ -404,19 +583,52 @@ async def dify_kb_search(
         return ToolResult(success=False, error=f"Dify retrieval failed: {exc}")
 
     if not records:
+        event_payload = _build_knowledge_search_event(
+            query=query,
+            records=[],
+            scope_metadata=scope_metadata,
+            ctx=ctx,
+        )
+        await _publish_knowledge_search_event(ctx, event_payload)
         return ToolResult(
             success=True,
-            output={"records": [], "message": "No relevant content found."},
-            metadata={"source": "Dify", "record_count": 0, **scope_metadata},
+            output={
+                "records": event_payload["records"],
+                "count": event_payload["count"],
+                "image_count": event_payload["image_count"],
+                "markdown": event_payload["markdown"],
+                "message": "No relevant content found.",
+            },
+            metadata={
+                "source": "Dify",
+                "record_count": 0,
+                "event_type": KNOWLEDGE_SEARCH_EVENT_TYPE,
+                "knowledge_search_result": event_payload,
+            },
             title="Dify knowledge base query",
         )
+
+    event_payload = _build_knowledge_search_event(
+        query=query,
+        records=records,
+        scope_metadata=scope_metadata,
+        ctx=ctx,
+    )
+    await _publish_knowledge_search_event(ctx, event_payload)
 
     return ToolResult(
         success=True,
         output={
             "records": records,
             "count": len(records),
+            "image_count": event_payload["image_count"],
+            "markdown": event_payload["markdown"],
         },
-        metadata={"source": "Dify", "record_count": len(records), **scope_metadata},
+        metadata={
+            "source": "Dify",
+            "record_count": event_payload["count"],
+            "event_type": KNOWLEDGE_SEARCH_EVENT_TYPE,
+            "knowledge_search_result": event_payload,
+        },
         title="Dify knowledge base query",
     )

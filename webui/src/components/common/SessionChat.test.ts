@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { Message } from '@/types';
 
-import { getMessageBubbleClassName, getRegenerateTruncateTarget } from './SessionChat';
+import { getKnowledgeSearchResult, getMessageBubbleClassName, getRegenerateTruncateTarget } from './SessionChat';
 
 function makeMessage(overrides: Partial<Message> & { id: string }): Message {
   return {
@@ -65,5 +65,36 @@ describe('getRegenerateTruncateTarget', () => {
     ], 'assistant-1');
 
     expect(target).toEqual({ messageId: 'assistant-1', includeTarget: true });
+  });
+});
+
+describe('getKnowledgeSearchResult', () => {
+  it('reads the normalized knowledge search event from tool metadata', () => {
+    const event = {
+      schema: 'knowledge_search_result.v1',
+      event_type: 'knowledge.search.result.v1',
+      markdown: '### Sources',
+      records: [{ document: { name: 'Guide.docx' } }],
+    };
+
+    expect(getKnowledgeSearchResult({
+      status: 'completed',
+      metadata: { knowledge_search_result: event },
+    })).toBe(event);
+  });
+
+  it('falls back to markdown fields on Dify output for compatibility', () => {
+    const result = getKnowledgeSearchResult({
+      status: 'completed',
+      metadata: { source: 'Dify' },
+      output: {
+        records: [{ segment: { position: 1 } }],
+        markdown: '### Knowledge search result',
+      },
+    });
+
+    expect(result?.schema).toBe('knowledge_search_result.v1');
+    expect(result?.count).toBe(1);
+    expect(result?.markdown).toContain('Knowledge search');
   });
 });
