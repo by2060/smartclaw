@@ -180,13 +180,13 @@ def validate_api_tool_draft(draft: APIToolDraft, *, check_collisions: bool = Tru
                     inject_as = item.get("inject_as", "header")
                     if inject_as not in _ALLOWED_AUTH_EXT_INJECT_AS:
                         issues.append(DraftValidationIssue(path=f"{ext_path}.inject_as", message="authExt.inject_as 必须是 header、query_param 或 body"))
-                    if inject_as == "header":
-                        header_name = item.get("key")
-                        header_value = item.get("value")
-                        if isinstance(header_name, str) and header_name.lower() == "authorization" and isinstance(header_value, str) and header_value.strip():
-                            has_authorization = True
-                if not has_authorization:
-                    issues.append(DraftValidationIssue(path="provider.authExt", message="smart/iam6 认证必须通过 authExt 注入 Authorization header"))
+                    # if inject_as == "header":
+                    #     header_name = item.get("key")
+                    #     header_value = item.get("value")
+                        # if isinstance(header_name, str) and header_name.lower() == "authorization" and isinstance(header_value, str) and header_value.strip():
+                        #     has_authorization = True
+                # if not has_authorization:
+                #     issues.append(DraftValidationIssue(path="provider.authExt", message="smart/iam6 认证必须通过 authExt 注入 Authorization header"))
         elif auth_type == "bearerToken" and not isinstance(provider.auth, dict):
             issues.append(DraftValidationIssue(path="provider.auth", message="bearerToken 认证必须配置 auth"))
         elif auth_type == "basicAuth" and not isinstance(provider.credential_fields, list):
