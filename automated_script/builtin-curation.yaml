@@ -1,0 +1,109 @@
+version: 1
+
+# 策略说明：
+# - 未命中任何 managed_* / keep_* / drop_* 规则的条目，一律按“自定义新增内容”默认保留。
+# - keep_* / drop_* 会自动视为受管范围，想保留或删除某个内置项时，直接把名称写进对应列表即可。
+# - managed_* 仅在你需要按批量关键字或前缀管理一整组内置项时再使用，日常维护可以不写。
+# - allowlist：受管范围内，只有命中 keep 规则的条目才保留；其余删除。
+# - blocklist：受管范围内，只有命中 drop 规则的条目才删除；其余保留。
+# 同名同时出现在 keep_exact 和 drop_exact：不会报错，最终会保留
+# 如何使用：只需要像 drop_exact 中添加想要删除的内容即可
+
+agents:
+  strategy: blocklist
+  drop_exact:
+    - asset-survey
+    - host-forensics
+    - host-forensics-fast
+    - hrti_threat_intelligence
+    - ndr-analyst
+    - phishing-detector
+    - ti-analyst
+    - vul_threat_intelligence
+
+workflows:
+  strategy: blocklist
+  drop_exact:
+    - loop_host_forensics_fast
+    - tdp_alert_triage
+
+skills:
+  strategy: blocklist
+  # keep_exact:
+  #   - web2cli
+  #   - browser-use
+  #   - detect-malicious-skill
+  #   - agent-builder
+  #   - find-skills
+  #   - onboarding
+  #   - tool-builder
+  #   - workflow-builder
+  drop_exact:
+    - ndr-alert-analysis
+    - onesec-use
+    - onesig-use
+    - qingteng-use
+    - skyeye-sensor-data-fetch
+    - skyeye-use
+    - tdp-use
+
+tools:
+  # 负责.smartclaw/plugins/tools/api 目录下的 API 提供方目录
+  api_providers:
+    strategy: blocklist
+    match_fields:
+      - provider_name
+      - service_id
+      - directory_name
+    drop_exact:   # 删除以下这批指定名称的内置 API 提供方目录名
+      - fofa
+      - greynoise
+      - ngsoc_v4_15_1
+      - ngtip_v5_1_5
+      - onesec_v2_8_2
+      - onesig_v2_5_3_D20260321
+      - qingteng_v3_4_1_66
+      - sangfor_af_v8_0_106
+      - sangfor_sip_v92
+      - sangfor_xdr_v2_2
+      - skyeye_v4_0_14_0_SP2
+      - tdp_v3_3_10
+      - threatbook-cn
+      - threatbook-io
+      - urlscan
+      - virustotal
+
+  # 负责.smartclaw/plugins/tools/python 目录下的 .py 工具文件
+  # keep_exact: [] 和 drop_exact: [] 为空，代表没有任何条目会命中“受管范围”，全部保留
+  python_tools:
+    strategy: blocklist
+    match_fields:
+      - stem
+      - filename
+      - directory_name
+    # keep_exact: []
+    drop_exact: []
+
+  # 对应脚本里的目录是 .smartclaw/plugins/tools/mcp
+  mcp_tools:
+    strategy: blocklist
+    match_fields:
+      - declared_name   # YAML 里的 name
+      - stem            # 文件名去掉扩展名
+      - filename        # 完整文件名
+      - directory_name  # 只有目录型条目才会有；普通 yaml 文件一般用不到
+    drop_exact:       # 只要某个 MCP 工具的 declared_name / stem / filename 精确命中这几个名字之一就删除
+      - nsfocus_mcp
+      - qianxin_mcp
+      - threatbook_mcp
+
+  # 对应目录是 .smartclaw/plugins/tools/generated，一般是“生成出来的工具”或“后续自动产物”
+  # 含义是当前没有任何要删除的 generated tool
+  generated_tools:
+    strategy: blocklist
+    match_fields:
+      - declared_name
+      - stem
+      - filename
+      - directory_name
+    drop_exact: []
