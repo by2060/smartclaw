@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -25,9 +27,19 @@ log = Log.create(service="tool.dify_kb_search")
 
 DEFAULT_TIMEOUT = 20
 DEFAULT_RETRIEVAL_SIZE = 5
+DEFAULT_RETRIEVAL_CONCURRENCY = 1
+DEFAULT_MAX_RETRIEVAL_CONCURRENCY = 30
 KNOWLEDGE_SEARCH_EVENT_TYPE = "knowledge.search.result.v1"
 KNOWLEDGE_SEARCH_SCHEMA = "knowledge_search_result.v1"
 IMAGE_MARKDOWN_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+
+
+def _now_for_log() -> str:
+    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+
+def _elapsed_ms(start_time: float) -> int:
+    return int((time.perf_counter() - start_time) * 1000)
 
 
 def _normalize_base_url(raw_url: Optional[str]) -> str:
@@ -60,7 +72,19 @@ def _load_project_secret_file() -> Dict[str, Any]:
     return raw
 
 
-def _load_runtime_config(top_k: Optional[int] = None) -> tuple[str, str, int]:
+def _resolve_positive_int(value: Any, default: int) -> int:
+    try:
+        resolved = int(value)
+    except (TypeError, ValueError):
+        return default
+    return resolved if resolved > 0 else default
+
+
+def _clamp_int(value: int, *, minimum: int, maximum: int) -> int:
+    return max(minimum, min(value, maximum))
+
+
+def _load_runtime_config(top_k: Optional[int] = None) -> tuple[str, str, int, int]:
     secrets = get_secret_manager()
     project_secret = _load_project_secret_file()
 
@@ -82,16 +106,29 @@ def _load_runtime_config(top_k: Optional[int] = None) -> tuple[str, str, int]:
         str(project_secret.get("dify_retrieval_top_k")) if project_secret.get("dify_retrieval_top_k") is not None else "",
         os.getenv("DIFY_RETRIEVAL_TOP_K"),
     )
-    try:
-        resolved_top_k = int(top_k if top_k is not None else configured_top_k)
-    except (TypeError, ValueError):
-        resolved_top_k = DEFAULT_RETRIEVAL_SIZE
+    resolved_top_k = _resolve_positive_int(
+        top_k if top_k is not None else configured_top_k,
+        DEFAULT_RETRIEVAL_SIZE,
+    )
 
-    if resolved_top_k <= 0:
-        resolved_top_k = DEFAULT_RETRIEVAL_SIZE
+    configured_concurrency = _first_non_empty(
+        secrets.get("dify_retrieval_concurrency"),
+        str(project_secret.get("dify_retrieval_concurrency"))
+        if project_secret.get("dify_retrieval_concurrency") is not None
+        else "",
+        os.getenv("DIFY_RETRIEVAL_CONCURRENCY"),
+    )
+    resolved_concurrency = _resolve_positive_int(
+        configured_concurrency,
+        DEFAULT_RETRIEVAL_CONCURRENCY,
+    )
+    resolved_concurrency = _clamp_int(
+        resolved_concurrency,
+        minimum=1,
+        maximum=DEFAULT_MAX_RETRIEVAL_CONCURRENCY,
+    )
 
-    return api_url, api_key, resolved_top_k
-
+    return api_url, api_key, resolved_top_k, resolved_concurrency
 
 def _headers(api_key: str) -> Dict[str, str]:
     return {
@@ -417,7 +454,8 @@ async def retrieve_from_dify_kb(
     *,
     top_k: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
-    api_url, api_key, resolved_top_k = _load_runtime_config(top_k=top_k)
+    retrieval_start = time.perf_counter()
+    api_url, api_key, resolved_top_k, resolved_concurrency = _load_runtime_config(top_k=top_k)
 
     if not api_url or not api_key:
         raise ValueError(
@@ -433,34 +471,105 @@ async def retrieve_from_dify_kb(
     if not requested_dataset_ids:
         raise ValueError("No Dify dataset IDs were provided.")
 
+    effective_concurrency = min(resolved_concurrency, len(requested_dataset_ids))
+    log.info(
+        "dify_kb_search.retrieval_start",
+        {
+            "start_time": _now_for_log(),
+            "dataset_count": len(requested_dataset_ids),
+            "top_k": resolved_top_k,
+            "concurrency": effective_concurrency,
+            "query_length": len(normalized_query),
+        },
+    )
+
+    semaphore = asyncio.Semaphore(effective_concurrency)
+
+    async def _retrieve_dataset(dataset_id: str) -> tuple[List[Dict[str, Any]], Optional[Dict[str, str]]]:
+        async with semaphore:
+            dataset_start = time.perf_counter()
+            log.info(
+                "dify_kb_search.dataset_retrieval_start",
+                {
+                    "start_time": _now_for_log(),
+                    "dataset_id": dataset_id,
+                    "top_k": resolved_top_k,
+                },
+            )
+            try:
+                response = await _request_json(
+                    "POST",
+                    f"{api_url}/datasets/{dataset_id}/retrieve",
+                    headers=_headers(api_key),
+                    payload={"query": normalized_query, "top_k": resolved_top_k},
+                )
+                records = response.get("records", [])
+                dataset_records: List[Dict[str, Any]] = []
+                if isinstance(records, list):
+                    for record in records:
+                        if isinstance(record, dict):
+                            enriched = dict(record)
+                            enriched.setdefault("dataset_id", dataset_id)
+                            dataset_records.append(enriched)
+                log.info(
+                    "dify_kb_search.dataset_retrieval_done",
+                    {
+                        "end_time": _now_for_log(),
+                        "dataset_id": dataset_id,
+                        "elapsed_ms": _elapsed_ms(dataset_start),
+                        "record_count": len(dataset_records),
+                    },
+                )
+                return dataset_records, None
+            except urllib.error.HTTPError as exc:
+                try:
+                    error_text = exc.read().decode("utf-8", errors="replace")
+                except Exception:
+                    error_text = str(exc)
+                log.warn(
+                    "dify_kb_search.dataset_retrieval_http_error",
+                    {
+                        "end_time": _now_for_log(),
+                        "dataset_id": dataset_id,
+                        "elapsed_ms": _elapsed_ms(dataset_start),
+                        "error": error_text,
+                    },
+                )
+                return [], {"dataset_id": dataset_id, "error": f"HTTP {exc.code}: {error_text[:300]}"}
+            except Exception as exc:
+                log.warn(
+                    "dify_kb_search.dataset_retrieval_error",
+                    {
+                        "end_time": _now_for_log(),
+                        "dataset_id": dataset_id,
+                        "elapsed_ms": _elapsed_ms(dataset_start),
+                        "error": str(exc),
+                    },
+                )
+                return [], {"dataset_id": dataset_id, "error": str(exc)}
+
+    dataset_results = await asyncio.gather(
+        *(_retrieve_dataset(dataset_id) for dataset_id in requested_dataset_ids)
+    )
+
     all_records: List[Dict[str, Any]] = []
     errors: List[Dict[str, str]] = []
+    for dataset_records, error in dataset_results:
+        all_records.extend(dataset_records)
+        if error is not None:
+            errors.append(error)
 
-    for dataset_id in requested_dataset_ids:
-        try:
-            response = await _request_json(
-                "POST",
-                f"{api_url}/datasets/{dataset_id}/retrieve",
-                headers=_headers(api_key),
-                payload={"query": normalized_query, "top_k": resolved_top_k},
-            )
-            records = response.get("records", [])
-            if isinstance(records, list):
-                for record in records:
-                    if isinstance(record, dict):
-                        enriched = dict(record)
-                        enriched.setdefault("dataset_id", dataset_id)
-                        all_records.append(enriched)
-        except urllib.error.HTTPError as exc:
-            try:
-                error_text = exc.read().decode("utf-8", errors="replace")
-            except Exception:
-                error_text = str(exc)
-            log.warn("dify_kb_search.dataset_http_error", {"dataset_id": dataset_id, "error": error_text})
-            errors.append({"dataset_id": dataset_id, "error": f"HTTP {exc.code}: {error_text[:300]}"})
-        except Exception as exc:
-            log.warn("dify_kb_search.dataset_error", {"dataset_id": dataset_id, "error": str(exc)})
-            errors.append({"dataset_id": dataset_id, "error": str(exc)})
+    log.info(
+        "dify_kb_search.retrieval_done",
+        {
+            "end_time": _now_for_log(),
+            "elapsed_ms": _elapsed_ms(retrieval_start),
+            "dataset_count": len(requested_dataset_ids),
+            "successful_record_count": len(all_records),
+            "error_count": len(errors),
+            "concurrency": effective_concurrency,
+        },
+    )
 
     if all_records:
         return all_records
@@ -469,7 +578,6 @@ async def retrieve_from_dify_kb(
         raise RuntimeError(json.dumps(errors, ensure_ascii=False))
 
     return []
-
 
 @ToolRegistry.register_function(
     name="dify_kb_search",
@@ -505,7 +613,20 @@ async def dify_kb_search(
     query: str,
     top_k: int = DEFAULT_RETRIEVAL_SIZE,
 ) -> ToolResult:
-    api_url, api_key, resolved_top_k = _load_runtime_config(top_k=top_k)
+    search_start = time.perf_counter()
+    log.info(
+        "Dify 知识检索工具开始执行",
+        {
+            "开始时间": _now_for_log(),
+            "session_id": getattr(ctx, "session_id", None),
+            "message_id": getattr(ctx, "message_id", None),
+            "call_id": getattr(ctx, "call_id", None),
+            "agent": getattr(ctx, "agent", None),
+            "查询长度": len(query.strip()) if isinstance(query, str) else 0,
+            "top_k": top_k,
+        },
+    )
+    api_url, api_key, resolved_top_k, resolved_concurrency = _load_runtime_config(top_k=top_k)
     del api_key
     resolved_dataset_ids, scope_metadata = await _resolve_effective_dataset_scope(ctx)
 
@@ -553,15 +674,27 @@ async def dify_kb_search(
                 "query": query.strip(),
                 "dataset_count": len(resolved_dataset_ids),
                 "top_k": resolved_top_k,
+                "concurrency": resolved_concurrency,
                 **scope_metadata,
             },
         )
 
     try:
+        retrieval_start = time.perf_counter()
         records = await retrieve_from_dify_kb(
             query=query,
             dataset_ids=resolved_dataset_ids,
             top_k=resolved_top_k,
+        )
+        retrieval_elapsed_ms = _elapsed_ms(retrieval_start)
+        log.info(
+            "Dify 所有知识库检索调用结束",
+            {
+                "结束时间": _now_for_log(),
+                "检索耗时毫秒": retrieval_elapsed_ms,
+                "知识库数量": len(resolved_dataset_ids),
+                "记录数": len(records),
+            },
         )
     except ValueError as exc:
         return ToolResult(success=False, error=str(exc))
@@ -582,6 +715,16 @@ async def dify_kb_search(
         log.error("dify_kb_search.query_failed", {"error": str(exc), "error_type": type(exc).__name__})
         return ToolResult(success=False, error=f"Dify retrieval failed: {exc}")
 
+    processing_start = time.perf_counter()
+    log.info(
+        "Dify 检索结果处理开始",
+        {
+            "开始时间": _now_for_log(),
+            "记录数": len(records),
+            "知识库数量": len(resolved_dataset_ids),
+        },
+    )
+
     if not records:
         event_payload = _build_knowledge_search_event(
             query=query,
@@ -590,6 +733,18 @@ async def dify_kb_search(
             ctx=ctx,
         )
         await _publish_knowledge_search_event(ctx, event_payload)
+        processing_elapsed_ms = _elapsed_ms(processing_start)
+        log.info(
+            "Dify 检索结果处理结束，准备返回",
+            {
+                "结束时间": _now_for_log(),
+                "检索耗时毫秒": retrieval_elapsed_ms,
+                "处理后返回耗时毫秒": processing_elapsed_ms,
+                "总耗时毫秒": _elapsed_ms(search_start),
+                "记录数": 0,
+                "图片数": event_payload["image_count"],
+            },
+        )
         return ToolResult(
             success=True,
             output={
@@ -615,6 +770,18 @@ async def dify_kb_search(
         ctx=ctx,
     )
     await _publish_knowledge_search_event(ctx, event_payload)
+    processing_elapsed_ms = _elapsed_ms(processing_start)
+    log.info(
+        "Dify 检索结果处理结束，准备返回",
+        {
+            "结束时间": _now_for_log(),
+            "检索耗时毫秒": retrieval_elapsed_ms,
+            "处理后返回耗时毫秒": processing_elapsed_ms,
+            "总耗时毫秒": _elapsed_ms(search_start),
+            "记录数": event_payload["count"],
+            "图片数": event_payload["image_count"],
+        },
+    )
 
     return ToolResult(
         success=True,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 from pathlib import Path
 
@@ -90,6 +91,54 @@ def test_dify_kb_builds_compact_markdown_event_payload():
     assert "child_chunks" not in str(payload)
     assert "document_download_url_count" not in str(payload)
 
+
+def test_dify_kb_runtime_config_reads_project_secret_concurrency(monkeypatch):
+    module = _load_dify_module()
+
+    class EmptySecrets:
+        def get(self, key):
+            return ""
+
+    monkeypatch.setattr(module, "get_secret_manager", lambda: EmptySecrets())
+    monkeypatch.setattr(
+        module,
+        "_load_project_secret_file",
+        lambda: {
+            "dify_api_url": "http://dify.test/v1/",
+            "dify_api_key": "token",
+            "dify_retrieval_top_k": "7",
+            "dify_retrieval_concurrency": "3",
+        },
+    )
+
+    assert module._load_runtime_config() == ("http://dify.test/v1", "token", 7, 3)
+
+
+def test_dify_kb_runtime_config_caps_project_secret_concurrency(monkeypatch):
+    module = _load_dify_module()
+
+    class EmptySecrets:
+        def get(self, key):
+            return ""
+
+    monkeypatch.setattr(module, "get_secret_manager", lambda: EmptySecrets())
+    monkeypatch.setattr(
+        module,
+        "_load_project_secret_file",
+        lambda: {
+            "dify_api_url": "http://dify.test/v1/",
+            "dify_api_key": "token",
+            "dify_retrieval_concurrency": "999",
+        },
+    )
+
+    assert module._load_runtime_config() == (
+        "http://dify.test/v1",
+        "token",
+        module.DEFAULT_RETRIEVAL_SIZE,
+        module.DEFAULT_MAX_RETRIEVAL_CONCURRENCY,
+    )
+
 @pytest.mark.asyncio
 async def test_dify_kb_tool_output_records_keep_raw_dify_records(monkeypatch):
     module = _load_dify_module()
@@ -120,7 +169,7 @@ async def test_dify_kb_tool_output_records_keep_raw_dify_records(monkeypatch):
     async def fake_retrieve_from_dify_kb(query, dataset_ids, *, top_k=None):
         return raw_records
 
-    monkeypatch.setattr(module, "_load_runtime_config", lambda top_k=None: ("http://dify.test/v1", "token", 5))
+    monkeypatch.setattr(module, "_load_runtime_config", lambda top_k=None: ("http://dify.test/v1", "token", 5, 1))
     monkeypatch.setattr(module, "_resolve_effective_dataset_scope", fake_scope)
     monkeypatch.setattr(module, "retrieve_from_dify_kb", fake_retrieve_from_dify_kb)
 
@@ -146,6 +195,42 @@ async def test_dify_kb_tool_output_records_keep_raw_dify_records(monkeypatch):
             "images": [{"alt": "image", "url": "http://example.test/signed.png?sign=abc"}],
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_dify_kb_retrieval_respects_configured_concurrency(monkeypatch):
+    module = _load_dify_module()
+    active = 0
+    max_active = 0
+    lock = asyncio.Lock()
+
+    monkeypatch.setattr(
+        module,
+        "_load_runtime_config",
+        lambda top_k=None: ("http://dify.test/v1", "token", 5, 2),
+    )
+
+    async def fake_request_json(method, url, *, headers, payload=None, timeout=module.DEFAULT_TIMEOUT):
+        nonlocal active, max_active
+        dataset_id = url.split("/datasets/", 1)[1].split("/", 1)[0]
+        async with lock:
+            active += 1
+            max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        async with lock:
+            active -= 1
+        return {"records": [{"score": 1, "segment": {"content": dataset_id}}]}
+
+    monkeypatch.setattr(module, "_request_json", fake_request_json)
+
+    records = await module.retrieve_from_dify_kb(
+        "gateway process screenshot",
+        ["kb_a", "kb_b", "kb_c", "kb_d", "kb_e"],
+    )
+
+    assert max_active == 2
+    assert [record["dataset_id"] for record in records] == ["kb_a", "kb_b", "kb_c", "kb_d", "kb_e"]
+
 
 @pytest.mark.asyncio
 async def test_dify_kb_scope_falls_back_to_session_user_context(monkeypatch):
