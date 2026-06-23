@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import importlib.util
-from pathlib import Path
+import importlib
 
 import pytest
 
@@ -11,12 +10,7 @@ from flocks.tool.registry import ToolContext
 
 
 def _load_dify_module():
-    path = Path.cwd() / ".flocks" / "plugins" / "tools" / "python" / "dify_kb_search.py"
-    spec = importlib.util.spec_from_file_location("test_project_dify_kb_search", path)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return importlib.import_module("flocks.tool.system.dify_kb_search")
 
 
 def test_dify_kb_builds_compact_markdown_event_payload():

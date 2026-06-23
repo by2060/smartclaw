@@ -1,3 +1,5 @@
+"""Built-in Dify knowledge base retrieval tool."""
+
 from __future__ import annotations
 
 import asyncio

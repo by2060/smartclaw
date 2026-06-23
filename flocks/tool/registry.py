@@ -1246,7 +1246,7 @@ class ToolRegistry:
             # security/ — SSH forensics + threat intelligence (optional: asyncssh)
             ("flocks.tool.security", ["ssh_host_cmd", "ssh_run_script"]),
             # system/ — background tasks, questions, model config, memory, skill, batch, session management, slash commands
-            ("flocks.tool.system", ["background_output", "background_cancel", "question", "model_config", "memory", "skill", "batch", "session_manage", "slash_command", "tool_search"]),
+            ("flocks.tool.system", ["background_output", "background_cancel", "question", "model_config", "memory", "skill", "batch", "session_manage", "slash_command", "tool_search", "dify_kb_search"]),
             # skill/ — skill management (search, install, status, deps, remove)
             ("flocks.tool.skill", ["flocks_skills"]),
             # channel/ — IM platform messaging
