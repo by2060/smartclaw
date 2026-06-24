@@ -103,7 +103,7 @@ Usage notes:
   - When issuing multiple commands:
     - If the commands are independent and can run in parallel, make multiple Bash tool calls in a single message.
     - If the commands depend on each other, use a single Bash call with '&&' to chain them together.
-    - Use ';' only when you need to run commands sequentially but don't care if earlier commands fail
+    - Use ';' only when you need to run commands sequentially but don't care if earlier commands fail.
   - AVOID using `cd <directory> && <command>`. Use the `workdir` parameter to change directories instead."""
 
 
@@ -1210,12 +1210,15 @@ async def _stream_output(
     except asyncio.TimeoutError:
         timed_out = True
         read_task.cancel()
-        await kill_process_tree(proc)
 
     # Check for abort
-    if ctx.aborted:
-        aborted = True
+    finally:
+        # 无论正常退出、超时、还是 ctx.aborted 触发的异常        
+        # 统一强制杀掉进程组内的所有残留进程（如用 & 启动的后台任务）
         await kill_process_tree(proc)
+    
+    if ctx.aborted:        
+        aborted = True
 
     # Wait for process to finish
     try:
