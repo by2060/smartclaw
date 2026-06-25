@@ -136,6 +136,14 @@ _PREVIEW_STAGE_VALUES = {
     "draft_preview",
 }
 
+_ARTIFACT_GATE_WARNING_ONLY_KINDS = {
+    "multi_incoming_no_join",
+    "expensive_node_multi_trigger",
+    "edge_selection_missing_select_key",
+    "edge_selection_multiple_default_edges",
+    "edge_selection_missing_label",
+}
+
 
 def _is_preview_workflow_json(workflow_json: dict[str, Any]) -> bool:
     metadata = workflow_json.get("metadata")
@@ -188,10 +196,30 @@ def _relax_preview_lint_issues(
     return relaxed
 
 
+def _relax_artifact_gate_lint_issues(
+    issues: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    relaxed: list[dict[str, Any]] = []
+    for item in issues:
+        if item.get("severity") == "error" and item.get("kind") in _ARTIFACT_GATE_WARNING_ONLY_KINDS:
+            downgraded = dict(item)
+            downgraded["severity"] = "warning"
+            downgraded["artifact_gate_relaxed"] = True
+            downgraded["message"] = (
+                f"{downgraded.get('message', '')} "
+                "Saved as a warning by the workflow artifact gate; fix before relying on production execution."
+            ).strip()
+            relaxed.append(downgraded)
+        else:
+            relaxed.append(item)
+    return relaxed
+
+
 def validate_workflow_json(
     workflow_json: dict[str, Any],
     *,
     relax_preview_lint: bool = False,
+    relax_artifact_gate_lint: bool = False,
 ) -> WorkflowValidationResult:
     try:
         workflow = Workflow.from_dict(workflow_json)
@@ -206,6 +234,8 @@ def validate_workflow_json(
     lint_results = lint_workflow(workflow, known_workflow_ids=_known_workflow_ids())
     if relax_preview_lint and _is_preview_workflow_json(workflow_json):
         lint_results = _relax_preview_lint_issues(workflow, lint_results)
+    if relax_artifact_gate_lint:
+        lint_results = _relax_artifact_gate_lint_issues(lint_results)
     errors = [item for item in lint_results if item.get("severity") == "error"]
     warnings = [item for item in lint_results if item.get("severity") != "error"]
     return WorkflowValidationResult(valid=not errors, errors=errors, warnings=warnings)
@@ -294,7 +324,11 @@ def _schema_issues_from_exception(workflow_json: dict[str, Any], exc: Exception)
 
 
 def lint_workflow_artifact(workflow_dir_path: Path, workflow_json: dict[str, Any]) -> WorkflowValidationResult:
-    result = validate_workflow_json(workflow_json, relax_preview_lint=True)
+    result = validate_workflow_json(
+        workflow_json,
+        relax_preview_lint=True,
+        relax_artifact_gate_lint=True,
+    )
     if not (workflow_dir_path / "workflow.md").is_file():
         result.warnings.append({
             "kind": "workflow_markdown_missing",

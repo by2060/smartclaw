@@ -1077,6 +1077,39 @@ def _collect_api_provider_secret_ids(provider_yaml: Dict[str, Any], config_value
     return sorted(secret_ids)
 
 
+def _snapshot_text_file(path) -> Optional[str]:
+    try:
+        if path is not None and path.is_file():
+            return path.read_text(encoding="utf-8")
+    except Exception as e:
+        log.warning("tool.yaml.snapshot_failed", {"path": str(path), "error": str(e)})
+    return None
+
+
+def _restore_text_file(path, previous_content: Optional[str], *, name: str) -> None:
+    try:
+        if previous_content is None:
+            if path is not None and path.is_file():
+                path.unlink()
+            if path is not None:
+                try:
+                    path.parent.rmdir()
+                except OSError:
+                    pass
+            return
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(previous_content, encoding="utf-8")
+    except Exception as e:
+        log.warning("tool.yaml.rollback_failed", {"name": name, "path": str(path), "error": str(e)})
+
+
+def _remove_plugin_tool_tracking(name: str) -> None:
+    ToolRegistry.unregister(name)
+    while name in ToolRegistry._plugin_tool_names:
+        ToolRegistry._plugin_tool_names.remove(name)
+
+
 async def _create_and_register_yaml_tool(
     data: Dict[str, Any],
     *,
@@ -1086,11 +1119,22 @@ async def _create_and_register_yaml_tool(
 ):
     from flocks.tool.tool_loader import (
         TOOL_TYPE_API,
+        find_api_provider_tool,
+        find_yaml_tool,
         upsert_yaml_tool,
         yaml_to_tool,
     )
 
     ToolRegistry.init()
+
+    tool_name = str(data.get("name") or "")
+    existing_path = None
+    if tool_name:
+        if provider:
+            existing_path = find_api_provider_tool(provider, tool_name)
+        if existing_path is None:
+            existing_path = find_yaml_tool(tool_name)
+    previous_content = _snapshot_text_file(existing_path)
 
     try:
         yaml_path = upsert_yaml_tool(data, provider=provider, tool_type=TOOL_TYPE_API, overwrite=overwrite)
@@ -1111,9 +1155,18 @@ async def _create_and_register_yaml_tool(
             ToolRegistry._plugin_tool_names.append(tool.info.name)
     except Exception as e:
         log.error("tool.create.register_error", {"error": str(e), "name": data.get("name")})
+        _restore_text_file(yaml_path, previous_content, name=tool_name or str(data.get("name") or "unknown"))
+        if tool_name:
+            _remove_plugin_tool_tracking(tool_name)
+        status_code = status.HTTP_422_UNPROCESSABLE_ENTITY if isinstance(e, ValueError) else 500
+        detail = (
+            f"Tool config is invalid: {e}"
+            if status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+            else f"Tool file rolled back after registration failure: {e}"
+        )
         raise HTTPException(
-            status_code=500,
-            detail=f"Tool file created but failed to register: {e}",
+            status_code=status_code,
+            detail=detail,
         )
 
     if provider and enabled:
@@ -1213,6 +1266,7 @@ async def confirm_api_tool_draft_route(
     from flocks.tool.tool_loader import (
         create_api_provider_yaml,
         delete_api_provider_tool,
+        find_api_provider_dir,
         find_api_provider_tool,
         find_yaml_tool,
         list_api_provider_tools,
@@ -1241,6 +1295,10 @@ async def confirm_api_tool_draft_route(
                     detail=f"Tool '{tool_draft.name}' already exists outside provider '{draft.provider.id}'",
                 )
 
+    existing_provider_dir = find_api_provider_dir(draft.provider.id)
+    existing_provider_path = existing_provider_dir / "_provider.yaml" if existing_provider_dir is not None else None
+    previous_provider_content = _snapshot_text_file(existing_provider_path)
+
     provider_yaml = compile_provider_yaml(draft.provider)
     try:
         provider_path = create_api_provider_yaml(
@@ -1256,26 +1314,44 @@ async def confirm_api_tool_draft_route(
 
     tool_paths: List[str] = []
     responses: List[ToolInfoResponse] = []
+    written_tool_snapshots: List[tuple[str, Any, Optional[str]]] = []
     draft_tool_names = {tool.name for tool in draft.tools}
-    for tool_draft in draft.tools:
-        tool_data = compile_tool_yaml(tool_draft)
-        tool, yaml_path = await _create_and_register_yaml_tool(
-            tool_data,
-            provider=draft.provider.id,
-            enabled=tool_draft.enabled,
-            overwrite=upsert,
-        )
-        tool_paths.append(str(yaml_path))
-        responses.append(_build_tool_response(tool.info))
+    try:
+        for tool_draft in draft.tools:
+            existing_tool_path = find_api_provider_tool(draft.provider.id, tool_draft.name)
+            if existing_tool_path is None:
+                existing_tool_path = find_yaml_tool(tool_draft.name)
+            previous_tool_content = _snapshot_text_file(existing_tool_path)
 
-    deleted_missing = False
-    if delete_missing_tools:
-        for existing_tool_path in list_api_provider_tools(draft.provider.id):
-            tool_name = existing_tool_path.stem
-            if tool_name not in draft_tool_names:
-                deleted_missing = delete_api_provider_tool(draft.provider.id, tool_name) or deleted_missing
-        if deleted_missing:
+            tool_data = compile_tool_yaml(tool_draft)
+            tool, yaml_path = await _create_and_register_yaml_tool(
+                tool_data,
+                provider=draft.provider.id,
+                enabled=tool_draft.enabled,
+                overwrite=upsert,
+            )
+            written_tool_snapshots.append((tool_draft.name, yaml_path, previous_tool_content))
+            tool_paths.append(str(yaml_path))
+            responses.append(_build_tool_response(tool.info))
+
+        deleted_missing = False
+        if delete_missing_tools:
+            for existing_tool_path in list_api_provider_tools(draft.provider.id):
+                tool_name = existing_tool_path.stem
+                if tool_name not in draft_tool_names:
+                    deleted_missing = delete_api_provider_tool(draft.provider.id, tool_name) or deleted_missing
+            if deleted_missing:
+                ToolRegistry.refresh_plugin_tools()
+    except Exception:
+        for tool_name, yaml_path, previous_content in reversed(written_tool_snapshots):
+            _restore_text_file(yaml_path, previous_content, name=tool_name)
+            _remove_plugin_tool_tracking(tool_name)
+        _restore_text_file(provider_path, previous_provider_content, name=draft.provider.id)
+        try:
             ToolRegistry.refresh_plugin_tools()
+        except Exception as e:
+            log.warning("tool.draft.rollback_refresh_failed", {"provider": draft.provider.id, "error": str(e)})
+        raise
 
     return ConfirmAPIToolDraftResponse(
         provider_path=str(provider_path),

@@ -611,6 +611,58 @@ class TestAPIToolDraftRoutes:
             ToolRegistry._plugin_tool_names.remove(tool_name)
 
     @pytest.mark.asyncio
+    async def test_confirm_rejects_invalid_error_mapping_without_writing_files(
+        self,
+        client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ):
+        from flocks.project.instance import Instance
+
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+        monkeypatch.setattr(Instance, "get_directory", classmethod(lambda cls: str(project_dir)))
+
+        tool_name = "draft_confirm_bad_status_mapping"
+        provider_id = "draft_confirm_bad_status_provider"
+        ToolRegistry._tools.pop(tool_name, None)
+        if tool_name in ToolRegistry._plugin_tool_names:
+            ToolRegistry._plugin_tool_names.remove(tool_name)
+
+        response = await client.post(
+            "/api/tools/drafts/confirm",
+            json={
+                "draft": {
+                    "provider": {
+                        "id": provider_id,
+                        "name": "Bad Status Provider",
+                        "description": "Provider with invalid response mapping",
+                        "defaults": {"base_url": "https://api.example.com"},
+                    },
+                    "tools": [
+                        {
+                            "name": tool_name,
+                            "description": "Invalid response mapping",
+                            "inputSchema": {"type": "object", "properties": {}},
+                            "handler": {
+                                "type": "http",
+                                "method": "GET",
+                                "url": "{base_url}/users",
+                                "response": {"error_mapping": {"IllegalMac": "bad mac"}},
+                            },
+                        }
+                    ],
+                },
+            },
+        )
+
+        assert response.status_code == 422, response.text
+        provider_dir = project_dir / ".flocks" / "plugins" / "tools" / "api" / provider_id
+        assert not (provider_dir / "_provider.yaml").exists()
+        assert not (provider_dir / f"{tool_name}.yaml").exists()
+        assert ToolRegistry.get(tool_name) is None
+
+    @pytest.mark.asyncio
     async def test_confirm_upsert_overwrites_provider_and_tool(
         self,
         client: AsyncClient,

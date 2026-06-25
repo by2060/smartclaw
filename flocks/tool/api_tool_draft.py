@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field, model_validator
 
 _ALLOWED_AUTH_TYPES = {"smart", "iam6", "bearerToken", "basicAuth", "custom"}
 _ALLOWED_AUTH_EXT_INJECT_AS = {"header", "query_param", "body"}
+# _MIN_HTTP_STATUS = 100
+# _MAX_HTTP_STATUS = 599
 
 
 class DraftValidationIssue(BaseModel):
@@ -144,6 +146,44 @@ def normalize_api_tool_draft(draft: APIToolDraft) -> APIToolDraft:
     return draft
 
 
+def _validate_http_response_config(
+    response_cfg: Any,
+    *,
+    path: str,
+    issues: list[DraftValidationIssue],
+) -> None:
+    if response_cfg is None:
+        return
+    if not isinstance(response_cfg, dict):
+        issues.append(DraftValidationIssue(path=path, message="handler.response 必须是对象"))
+        return
+
+    error_mapping = response_cfg.get("error_mapping")
+    if error_mapping is None:
+        return
+    if not isinstance(error_mapping, dict):
+        issues.append(DraftValidationIssue(path=f"{path}.error_mapping", message="error_mapping 必须是对象"))
+        return
+
+    for raw_status in error_mapping.keys():
+        status_path = f"{path}.error_mapping.{raw_status}"
+        try:
+            if isinstance(raw_status, bool):
+                raise ValueError
+            status_code = int(raw_status.strip() if isinstance(raw_status, str) else raw_status)
+        except (TypeError, ValueError):
+            issues.append(DraftValidationIssue(
+                path=status_path,
+                message="HTTP 状态码必须是数字，例如 400、401、500",
+            ))
+            continue
+        # if status_code < _MIN_HTTP_STATUS or status_code > _MAX_HTTP_STATUS:
+        #     issues.append(DraftValidationIssue(
+        #         path=status_path,
+        #         message="HTTP 状态码必须在 100-599 范围内",
+        #     ))
+
+
 def validate_api_tool_draft(draft: APIToolDraft, *, check_collisions: bool = True) -> list[DraftValidationIssue]:
     from flocks.tool.tool_loader import find_yaml_tool
 
@@ -245,6 +285,12 @@ def validate_api_tool_draft(draft: APIToolDraft, *, check_collisions: bool = Tru
             issues.append(DraftValidationIssue(path=f"{prefix}.handler.url", message="handler.url 不能为空"))
         elif not (url.startswith("http://") or url.startswith("https://") or url.startswith("{base_url}")):
             issues.append(DraftValidationIssue(path=f"{prefix}.handler.url", message="handler.url 必须以 http://、https:// 或 {base_url} 开头"))
+
+        _validate_http_response_config(
+            handler.get("response"),
+            path=f"{prefix}.handler.response",
+            issues=issues,
+        )
 
         if method in {"DELETE", "PATCH", "PUT"}:
             issues.append(DraftValidationIssue(

@@ -113,7 +113,7 @@ def run_sync(coro: Coroutine[Any, Any, Any]) -> Any:
 
     future = asyncio.run_coroutine_threadsafe(coro, loop)
     try:
-        default_timeout = 300.0
+        default_timeout = 600.0
         return future.result(timeout=default_timeout)
     except concurrent.futures.TimeoutError as exc:
         future.cancel()
