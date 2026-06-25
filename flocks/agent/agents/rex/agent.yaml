@@ -54,6 +54,6 @@ tools:
   #  always-load 工具包含 question, memory_search, memory_get, memory_write
   # Web	webfetch, websearch
 kb:
-   - all
+  - all
 
 # prompt is left empty – injected dynamically by prompt_builder.py

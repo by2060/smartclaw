@@ -227,9 +227,12 @@ async def _resolve_agent_knowledge_base_ids(ctx: ToolContext) -> Optional[List[s
 
 async def _resolve_effective_dataset_scope(ctx: ToolContext) -> tuple[List[str], Dict[str, Any]]:
     knowledge_base_ids = _resolve_user_context_knowledge_base_ids(ctx)
+    log.info(f"当前会话context中的的知识库ids:{knowledge_base_ids}")
     if not knowledge_base_ids:
         knowledge_base_ids = await _resolve_session_knowledge_base_ids(ctx)
+    log.info(f"当前会话持久化的的知识库ids:{knowledge_base_ids}")
     agent_kb_ids = await _resolve_agent_knowledge_base_ids(ctx)
+    log.info(f"当前智能体的知识库ids:{agent_kb_ids}")
     missing_required_scopes: List[str] = []
 
     if not knowledge_base_ids:
@@ -242,13 +245,14 @@ async def _resolve_effective_dataset_scope(ctx: ToolContext) -> tuple[List[str],
     else:
         agent_kb_set = set(agent_kb_ids or [])
         effective_dataset_ids = [dataset_id for dataset_id in knowledge_base_ids if dataset_id in agent_kb_set]
-
+    log.info(f"要检索的知识库的ids:{effective_dataset_ids}")
     scope_metadata = {
         "knowledge_base_count": len(knowledge_base_ids),
         "agent_kb_count": len(agent_kb_ids or []),
         "effective_dataset_count": len(effective_dataset_ids),
         "missing_required_scopes": missing_required_scopes,
     }
+    log.info(f"scope_metadata:{scope_metadata}")
     return effective_dataset_ids, scope_metadata
 
 
