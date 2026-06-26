@@ -32,6 +32,7 @@ from flocks.tool.file.sandbox_paths import (
     is_session_output_path,
     is_upload_read_only,
     resolve_sandbox_path,
+    display_path,                      # doc_parser输出目录是按会话隔离的，显示路径需要使用display_path函数
 )
 from flocks.workspace.manager import WorkspaceManager
 
@@ -881,8 +882,8 @@ async def doc_parser(
     return ToolResult(
         success=True,
         output={
-            "input_path": str(input_file),
-            "output_path": str(output_file),
+            "input_path": display_path(str(input_file)),
+            "output_path": display_path(str(output_file)),
             "parser": parser_name,
             "characters": len(markdown),
         },
