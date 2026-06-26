@@ -45,14 +45,13 @@ tools:
   - get_time
   # dify知识库检索
   - dify_kb_search
-  # MCP管理
-  - flocks_mcp
   # ------end------------
   # 模型配置	list_providers, add_provider, add_model
   # 安全运维  ssh_host_cmd, ssh_run_script
   # 通道/企微	channel_message, wecom_mcp
   #  always-load 工具包含 question, memory_search, memory_get, memory_write
   # Web	webfetch, websearch
+  # MCP管理 flocks_mcp
 kb:
   - all
 

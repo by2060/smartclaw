@@ -210,20 +210,10 @@ class Agent:
             for name in category_configs.keys()
         ]
 
-        # Discover available workflows (best-effort; failure must not block agent load)
+        # Workflow catalogs are authorization-scoped. Do not scan or inject
+        # workflows during global agent loading unless an explicit workflow
+        # visibility grant is added for the target agent/session.
         available_workflows: List[AvailableWorkflow] = []
-        try:
-            from flocks.workflow.center import scan_skill_workflows
-            workflow_entries = await scan_skill_workflows()
-            for entry in workflow_entries:
-                available_workflows.append(AvailableWorkflow(
-                    name=entry.get("name") or "",
-                    description=entry.get("description") or "",
-                    path=entry.get("workflowPath") or "",
-                    source=entry.get("sourceType") or "project",
-                ))
-        except Exception as _wf_err:
-            log.debug("agent.registry.workflow_scan_skipped", {"error": str(_wf_err)})
 
         user_perms = from_config(cfg.permission or {})
         cli_run_mode = (
@@ -515,20 +505,10 @@ class Agent:
             for name in category_configs.keys()
         ]
 
+        # Session prompts receive workflow catalogs only through an explicit
+        # authorization-aware path. The default Rex session has no workflow
+        # listing grant, so avoid scanning workflow roots here.
         available_workflows: List[AvailableWorkflow] = []
-        try:
-            from flocks.workflow.center import scan_skill_workflows
-
-            workflow_entries = await scan_skill_workflows()
-            for entry in workflow_entries:
-                available_workflows.append(AvailableWorkflow(
-                    name=entry.get("name") or "",
-                    description=entry.get("description") or "",
-                    path=entry.get("workflowPath") or "",
-                    source=entry.get("sourceType") or "project",
-                ))
-        except Exception as _wf_err:
-            log.debug("agent.registry.workflow_scan_skipped", {"error": str(_wf_err)})
 
         return {
             "agents": agents,

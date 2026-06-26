@@ -23,7 +23,15 @@ export interface ToolFixture {
 }
 
 export const toolAPI = {
-  list: (params?: { source?: ToolSource; category?: string }) =>
+  list: (params?: {
+    source?: ToolSource;
+    category?: string;
+    agent?: string;
+    session_id?: string;
+    sessionID?: string;
+    session_category?: string;
+    sessionCategory?: string;
+  }) =>
     client.get<Tool[]>('/api/tools', { params }),
 
   get: (name: string) =>

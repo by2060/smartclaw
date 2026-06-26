@@ -467,6 +467,11 @@ def _get_effective_tool_enabled(tool_info: ToolInfo) -> bool:
 async def list_tools(
     category: Optional[str] = None,
     source: Optional[str] = None,
+    agent: Optional[str] = None,
+    session_id: Optional[str] = Query(None),
+    sessionID: Optional[str] = Query(None),
+    session_category: Optional[str] = Query(None),
+    sessionCategory: Optional[str] = Query(None),
 ):
     """
     List all available tools
@@ -482,18 +487,49 @@ async def list_tools(
     started_at = time.perf_counter()
     ToolRegistry.init()
     
+    effective_session_id = str(session_id or sessionID or "").strip() or None
+    effective_session_category = str(session_category or sessionCategory or "").strip().lower()
+    tool_category = category
+    if str(category or "").strip().lower() == "workflow":
+        effective_session_category = "workflow"
+        tool_category = None
+
     # Parse category filter
     cat_filter = None
-    if category:
+    if tool_category:
         try:
-            cat_filter = ToolCategory(category)
+            cat_filter = ToolCategory(tool_category)
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid category: {category}"
+                detail=f"Invalid category: {tool_category}"
             )
     
     tools = ToolRegistry.list_tools(category=cat_filter)
+    effective_agent = str(agent or "rex").strip() or "rex"
+    use_full_catalog = effective_session_category == "workflow"
+    if not use_full_catalog and effective_session_id:
+        try:
+            from flocks.session.session import Session
+
+            session = await Session.get_by_id(effective_session_id)
+            use_full_catalog = (
+                str(getattr(session, "category", "") or "").strip().lower() == "workflow"
+            )
+        except Exception as exc:
+            log.warn("tools.list.session_lookup_failed", {
+                "session_id": effective_session_id,
+                "error": str(exc),
+            })
+
+    if not use_full_catalog:
+        from flocks.agent.controls import agent_allows_tool
+
+        tools = [
+            tool
+            for tool in tools
+            if await agent_allows_tool(effective_agent, tool.name)
+        ]
     result = [_build_tool_response(t) for t in tools]
     
     # Apply source filter if specified
@@ -504,6 +540,10 @@ async def list_tools(
         "count": len(result),
         "category": category,
         "source": source,
+        "agent": agent,
+        "session_id": effective_session_id,
+        "session_category": effective_session_category or None,
+        "workflow_full_catalog": use_full_catalog,
     })
     return result
 

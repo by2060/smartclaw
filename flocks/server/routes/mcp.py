@@ -637,15 +637,19 @@ async def remove_mcp_auth(name: str):
     description="Get all available tools from connected MCP servers.",
     operation_id="mcp.tools"
 )
-async def get_mcp_tools():
-    """Get all available MCP tools (returns tool names)"""
+async def get_mcp_tools(agent: Optional[str] = None):
+    """Get MCP tool names visible to the requested agent (Rex by default)."""
     try:
+        from flocks.agent.controls import agent_allows_tool
         from flocks.mcp import McpToolRegistry
-        
+
+        effective_agent = str(agent or "rex").strip() or "rex"
         tool_names = []
         for server_name in McpToolRegistry.get_all_servers():
-            tool_names.extend(McpToolRegistry.get_server_tools(server_name))
-        
+            for tool_name in McpToolRegistry.get_server_tools(server_name):
+                if await agent_allows_tool(effective_agent, tool_name):
+                    tool_names.append(tool_name)
+
         return sorted(tool_names)
     except Exception as e:
         log.error("mcp.tools.error", {"error": str(e)})
@@ -658,21 +662,30 @@ async def get_mcp_tools():
     summary="Get server tools",
     description="Get tools from a specific MCP server."
 )
-async def get_server_tools(name: str):
-    """Get tools from a specific server"""
+async def get_server_tools(name: str, agent: Optional[str] = None):
+    """Get tools from a specific server visible to the requested agent."""
     try:
+        from flocks.agent.controls import agent_allows_tool
+        from flocks.mcp import McpToolRegistry
+
         info = await MCP.get_server_info(name)
         if not info:
             raise HTTPException(status_code=404, detail=f"MCP server not found: {name}")
-        return info.tools
+
+        effective_agent = str(agent or "rex").strip() or "rex"
+        allowed_original_names = set()
+        for tool_name in McpToolRegistry.get_server_tools(name):
+            if await agent_allows_tool(effective_agent, tool_name):
+                source = McpToolRegistry.get_source(tool_name)
+                if source:
+                    allowed_original_names.add(source.mcp_tool)
+
+        return [tool for tool in info.tools if tool.name in allowed_original_names]
     except HTTPException:
         raise
     except Exception as e:
-        log.error("mcp.server.tools.error", {"name": name, "error": str(e)})
+        log.error("mcp.server_tools.error", {"name": name, "error": str(e)})
         raise HTTPException(status_code=500, detail=str(e))
-
-
-# Resources endpoints
 
 @router.get(
     "/resources",

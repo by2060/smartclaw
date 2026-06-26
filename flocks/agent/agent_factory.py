@@ -162,6 +162,7 @@ def load_agent(agent_dir: Path, native: bool = False) -> Optional[AgentInfo]:
         # 权限控制新增
         skills=raw.get("skills") if "skills" in raw else None,
         sub_agents=raw.get("sub_agents") if "sub_agents" in raw else None,
+        workflows=raw.get("workflows") if "workflows" in raw else None,
         kb=_read_agent_kb(raw),
         options=raw.get("options", {}),
         steps=raw.get("steps"),
@@ -417,6 +418,7 @@ def yaml_to_agent_info(raw: dict, yaml_path: Path) -> AgentInfo:
         # skill和sub_agents权限控制新增
         skills=raw.get("skills") if "skills" in raw else None,
         sub_agents=raw.get("sub_agents") if "sub_agents" in raw else None,
+        workflows=raw.get("workflows") if "workflows" in raw else None,
         kb=_read_agent_kb(raw),
         model=model,
         prompt=prompt,

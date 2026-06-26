@@ -24,7 +24,7 @@ _COMMANDS = ["tools", "skills", "workflows", "help", "tasks", "queue", "compact"
 _COMMAND_DESCRIPTIONS = {
     "tools":     "List all available tools grouped by category",
     "skills":    "List all available skills with descriptions",
-    "workflows": "List all available workflows with descriptions and file paths",
+    "workflows": "List workflows authorized for the current agent",
     "help":      "Show available commands",
     "tasks":     "Show task center overview",
     "queue":     "Show task queue status",
@@ -92,15 +92,14 @@ def build_tools_catalog_summary(
 async def _list_tools_allowed_for_agent(agent_name: str | None) -> list:
     ToolRegistry.init()
     tools = ToolRegistry.list_tools()
-    if not agent_name:
-        return tools
+    effective_agent = str(agent_name or "rex").strip() or "rex"
 
     from flocks.agent.controls import agent_allows_tool
 
     return [
         tool
         for tool in tools
-        if await agent_allows_tool(agent_name, tool.name)
+        if await agent_allows_tool(effective_agent, tool.name)
     ]
 
 
@@ -188,6 +187,12 @@ async def run_slash_command_tool(ctx: ToolContext, command: str) -> ToolResult:
         return ToolResult(success=True, output="\n".join(lines))
 
     if command == "workflows":
+        from flocks.agent.controls import agent_allows_workflow_listing
+
+        effective_agent = str(ctx.agent or "rex").strip() or "rex"
+        if not await agent_allows_workflow_listing(effective_agent):
+            return ToolResult(success=True, output="No workflows are authorized for the current agent.")
+
         from flocks.workflow.center import format_workflow_entries, scan_skill_workflows
         try:
             entries = await scan_skill_workflows()
@@ -202,7 +207,6 @@ async def run_slash_command_tool(ctx: ToolContext, command: str) -> ToolResult:
             + '\n\nUsage: run_workflow(workflow="<path>", inputs={...})'
         )
         return ToolResult(success=True, output=output)
-
     ui_only = {
         "tasks":   "Use /tasks in the UI to view task center",
         "queue":   "Use /queue in the UI to view task queue",

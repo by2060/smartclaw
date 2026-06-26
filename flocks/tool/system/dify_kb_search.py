@@ -10,6 +10,7 @@ import re
 import time
 import urllib.error
 import urllib.request
+import urllib.parse
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -31,9 +32,17 @@ DEFAULT_TIMEOUT = 20
 DEFAULT_RETRIEVAL_SIZE = 5
 DEFAULT_RETRIEVAL_CONCURRENCY = 1
 DEFAULT_MAX_RETRIEVAL_CONCURRENCY = 30
+DEFAULT_DOCUMENT_LOOKUP_LIMIT = 20
+DOCUMENT_NAME_METADATA_FIELD = "document_name"
 KNOWLEDGE_SEARCH_EVENT_TYPE = "knowledge.search.result.v1"
 KNOWLEDGE_SEARCH_SCHEMA = "knowledge_search_result.v1"
 IMAGE_MARKDOWN_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+QUOTED_DOCUMENT_HINT_RE = re.compile(r"[\u300a\u300c\u300e\u201c\"'`](.{2,160}?)[\u300b\u300d\u300f\u201d\"'`]")
+FILENAME_DOCUMENT_HINT_RE = re.compile(
+    r"[\w\u4e00-\u9fff._()\uff08\uff09\-\[\]\u3010\u3011]{1,160}"
+    r"\.(?:pdf|docx?|xlsx?|pptx?|md|txt|csv|json|html?)",
+    re.IGNORECASE,
+)
 
 
 def _now_for_log() -> str:
@@ -287,6 +296,206 @@ def _as_dict(value: Any) -> Dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _clean_document_name_hint(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    text = re.sub(r"\s+", " ", value).strip()
+    return text.strip(" \t\r\n\"'`.,;:!?()[]{}<>")
+
+
+def _normalize_document_name(value: Any) -> str:
+    return _clean_document_name_hint(value).lower()
+
+
+def _document_name_variants(document_name: str) -> set[str]:
+    normalized = _normalize_document_name(document_name)
+    if not normalized:
+        return set()
+    stem = re.sub(r"\.[^.\\/]+$", "", normalized).strip()
+    return {variant for variant in (normalized, stem) if variant}
+
+
+def _extract_document_name_hints(query: str) -> List[str]:
+    if not isinstance(query, str) or not query.strip():
+        return []
+
+    hints: List[str] = []
+    seen: set[str] = set()
+    candidates = [match.group(1) for match in QUOTED_DOCUMENT_HINT_RE.finditer(query)]
+    candidates.extend(match.group(0) for match in FILENAME_DOCUMENT_HINT_RE.finditer(query))
+
+    for candidate in candidates:
+        hint = _clean_document_name_hint(candidate)
+        normalized = _normalize_document_name(hint)
+        if not hint or normalized in seen:
+            continue
+        seen.add(normalized)
+        hints.append(hint)
+    return hints
+
+
+def _document_name_matches_hint(document_name: str, hint: str) -> bool:
+    normalized_hint = _normalize_document_name(hint)
+    return bool(normalized_hint and normalized_hint in _document_name_variants(document_name))
+
+
+def _extract_dataset_documents(response: Dict[str, Any]) -> List[Dict[str, str]]:
+    raw_documents = response.get("data")
+    if not isinstance(raw_documents, list):
+        raw_documents = response.get("documents")
+    if not isinstance(raw_documents, list):
+        return []
+
+    documents: List[Dict[str, str]] = []
+    for item in raw_documents:
+        if not isinstance(item, dict):
+            continue
+        metadata = _as_dict(item.get("metadata")) or _as_dict(item.get("doc_metadata"))
+        document_name = _first_non_empty(
+            item.get("name"),
+            item.get("document_name"),
+            metadata.get(DOCUMENT_NAME_METADATA_FIELD),
+        )
+        if not document_name:
+            continue
+        documents.append(
+            {
+                "id": _first_non_empty(item.get("id"), item.get("document_id")),
+                "name": document_name,
+            }
+        )
+    return documents
+
+
+def _record_document_name(record: Dict[str, Any]) -> str:
+    segment = _as_dict(record.get("segment"))
+    document = _as_dict(segment.get("document"))
+    metadata = _as_dict(document.get("metadata")) or _as_dict(document.get("doc_metadata"))
+    return _first_non_empty(
+        document.get("name"),
+        metadata.get(DOCUMENT_NAME_METADATA_FIELD),
+    )
+
+
+def _filter_records_by_document_names(
+    records: List[Dict[str, Any]],
+    document_names: List[str],
+) -> List[Dict[str, Any]]:
+    if not document_names:
+        return records
+    allowed_variants: set[str] = set()
+    for document_name in document_names:
+        allowed_variants.update(_document_name_variants(document_name))
+    if not allowed_variants:
+        return records
+    return [
+        record
+        for record in records
+        if _document_name_variants(_record_document_name(record)) & allowed_variants
+    ]
+
+
+def _build_retrieve_payload(
+    query: str,
+    top_k: int,
+    document_names: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {"query": query, "top_k": top_k}
+    if document_names:
+        payload["metadata_filtering_conditions"] = {
+            "logical_operator": "or",
+            "conditions": [
+                {
+                    "name": DOCUMENT_NAME_METADATA_FIELD,
+                    "comparison_operator": "is",
+                    "value": document_name,
+                }
+                for document_name in document_names
+            ],
+        }
+    return payload
+
+
+async def _list_dataset_documents(
+    api_url: str,
+    api_key: str,
+    dataset_id: str,
+    keyword: str,
+) -> List[Dict[str, str]]:
+    params = urllib.parse.urlencode(
+        {
+            "keyword": keyword,
+            "page": 1,
+            "limit": DEFAULT_DOCUMENT_LOOKUP_LIMIT,
+        }
+    )
+    encoded_dataset_id = urllib.parse.quote(dataset_id, safe="")
+    response = await _request_json(
+        "GET",
+        f"{api_url}/datasets/{encoded_dataset_id}/documents?{params}",
+        headers=_headers(api_key),
+    )
+    return _extract_dataset_documents(response)
+
+
+async def _resolve_document_name_filters(
+    query: str,
+    dataset_ids: List[str],
+    *,
+    api_url: str,
+    api_key: str,
+    document_name_hints: Optional[List[str]] = None,
+) -> tuple[Dict[str, List[str]], Dict[str, Any]]:
+    hints = document_name_hints if document_name_hints is not None else _extract_document_name_hints(query)
+    metadata: Dict[str, Any] = {
+        "document_name_filter": {
+            "hint_count": len(hints),
+            "matched_dataset_count": 0,
+            "matched_document_count": 0,
+            "matched_documents_by_dataset": {},
+            "lookup_errors": [],
+        }
+    }
+    if not hints or not api_url or not api_key or not dataset_ids:
+        return {}, metadata
+
+    matched_by_dataset: Dict[str, List[str]] = {}
+    lookup_errors: List[Dict[str, str]] = []
+
+    for dataset_id in dataset_ids:
+        dataset_matches: List[str] = []
+        seen_names: set[str] = set()
+        for hint in hints:
+            try:
+                documents = await _list_dataset_documents(api_url, api_key, dataset_id, hint)
+            except Exception as exc:
+                log.warn(
+                    "dify_kb_search.document_lookup_failed",
+                    {"dataset_id": dataset_id, "hint": hint, "error": str(exc)},
+                )
+                lookup_errors.append({"dataset_id": dataset_id, "hint": hint, "error": str(exc)})
+                continue
+
+            for document in documents:
+                document_name = document.get("name") or ""
+                if not _document_name_matches_hint(document_name, hint):
+                    continue
+                normalized_name = _normalize_document_name(document_name)
+                if normalized_name in seen_names:
+                    continue
+                seen_names.add(normalized_name)
+                dataset_matches.append(document_name)
+
+        if dataset_matches:
+            matched_by_dataset[dataset_id] = dataset_matches
+
+    filter_metadata = metadata["document_name_filter"]
+    filter_metadata["matched_dataset_count"] = len(matched_by_dataset)
+    filter_metadata["matched_document_count"] = sum(len(names) for names in matched_by_dataset.values())
+    filter_metadata["matched_documents_by_dataset"] = matched_by_dataset
+    filter_metadata["lookup_errors"] = lookup_errors
+    return matched_by_dataset, metadata
+
 def _format_score(score: Any) -> str:
     try:
         return f"{float(score):.3f}"
@@ -459,6 +668,7 @@ async def retrieve_from_dify_kb(
     dataset_ids: List[str],
     *,
     top_k: Optional[int] = None,
+    document_names_by_dataset: Optional[Dict[str, List[str]]] = None,
 ) -> List[Dict[str, Any]]:
     retrieval_start = time.perf_counter()
     api_url, api_key, resolved_top_k, resolved_concurrency = _load_runtime_config(top_k=top_k)
@@ -477,6 +687,7 @@ async def retrieve_from_dify_kb(
     if not requested_dataset_ids:
         raise ValueError("No Dify dataset IDs were provided.")
 
+    document_names_by_dataset = document_names_by_dataset or {}
     effective_concurrency = min(resolved_concurrency, len(requested_dataset_ids))
     log.info(
         "dify_kb_search.retrieval_start",
@@ -486,37 +697,44 @@ async def retrieve_from_dify_kb(
             "top_k": resolved_top_k,
             "concurrency": effective_concurrency,
             "query_length": len(normalized_query),
+            "document_filter_dataset_count": len(document_names_by_dataset),
         },
     )
 
     semaphore = asyncio.Semaphore(effective_concurrency)
 
+    def _normalize_records(dataset_id: str, records: Any, document_names: List[str]) -> List[Dict[str, Any]]:
+        dataset_records: List[Dict[str, Any]] = []
+        if isinstance(records, list):
+            for record in records:
+                if isinstance(record, dict):
+                    enriched = dict(record)
+                    enriched.setdefault("dataset_id", dataset_id)
+                    dataset_records.append(enriched)
+        return _filter_records_by_document_names(dataset_records, document_names)
+
     async def _retrieve_dataset(dataset_id: str) -> tuple[List[Dict[str, Any]], Optional[Dict[str, str]]]:
         async with semaphore:
             dataset_start = time.perf_counter()
+            document_names = document_names_by_dataset.get(dataset_id, [])
             log.info(
                 "dify_kb_search.dataset_retrieval_start",
                 {
                     "start_time": _now_for_log(),
                     "dataset_id": dataset_id,
                     "top_k": resolved_top_k,
+                    "document_filter_count": len(document_names),
                 },
             )
+            payload = _build_retrieve_payload(normalized_query, resolved_top_k, document_names)
             try:
                 response = await _request_json(
                     "POST",
                     f"{api_url}/datasets/{dataset_id}/retrieve",
                     headers=_headers(api_key),
-                    payload={"query": normalized_query, "top_k": resolved_top_k},
+                    payload=payload,
                 )
-                records = response.get("records", [])
-                dataset_records: List[Dict[str, Any]] = []
-                if isinstance(records, list):
-                    for record in records:
-                        if isinstance(record, dict):
-                            enriched = dict(record)
-                            enriched.setdefault("dataset_id", dataset_id)
-                            dataset_records.append(enriched)
+                dataset_records = _normalize_records(dataset_id, response.get("records", []), document_names)
                 log.info(
                     "dify_kb_search.dataset_retrieval_done",
                     {
@@ -524,6 +742,7 @@ async def retrieve_from_dify_kb(
                         "dataset_id": dataset_id,
                         "elapsed_ms": _elapsed_ms(dataset_start),
                         "record_count": len(dataset_records),
+                        "document_filter_count": len(document_names),
                     },
                 )
                 return dataset_records, None
@@ -532,6 +751,39 @@ async def retrieve_from_dify_kb(
                     error_text = exc.read().decode("utf-8", errors="replace")
                 except Exception:
                     error_text = str(exc)
+
+                if document_names:
+                    log.warn(
+                        "dify_kb_search.dataset_retrieval_filter_http_error",
+                        {
+                            "end_time": _now_for_log(),
+                            "dataset_id": dataset_id,
+                            "elapsed_ms": _elapsed_ms(dataset_start),
+                            "error": error_text,
+                            "fallback": "unfiltered_request_then_local_document_filter",
+                        },
+                    )
+                    try:
+                        response = await _request_json(
+                            "POST",
+                            f"{api_url}/datasets/{dataset_id}/retrieve",
+                            headers=_headers(api_key),
+                            payload=_build_retrieve_payload(normalized_query, resolved_top_k),
+                        )
+                        dataset_records = _normalize_records(dataset_id, response.get("records", []), document_names)
+                        return dataset_records, None
+                    except Exception as fallback_exc:
+                        log.warn(
+                            "dify_kb_search.dataset_retrieval_filter_fallback_failed",
+                            {
+                                "end_time": _now_for_log(),
+                                "dataset_id": dataset_id,
+                                "elapsed_ms": _elapsed_ms(dataset_start),
+                                "error": str(fallback_exc),
+                            },
+                        )
+                        return [], {"dataset_id": dataset_id, "error": str(fallback_exc)}
+
                 log.warn(
                     "dify_kb_search.dataset_retrieval_http_error",
                     {
@@ -574,6 +826,7 @@ async def retrieve_from_dify_kb(
             "successful_record_count": len(all_records),
             "error_count": len(errors),
             "concurrency": effective_concurrency,
+            "document_filter_dataset_count": len(document_names_by_dataset),
         },
     )
 
@@ -633,7 +886,7 @@ async def dify_kb_search(
         },
     )
     api_url, api_key, resolved_top_k, resolved_concurrency = _load_runtime_config(top_k=top_k)
-    del api_key
+    document_name_hints = _extract_document_name_hints(query) if isinstance(query, str) else []
     resolved_dataset_ids, scope_metadata = await _resolve_effective_dataset_scope(ctx)
 
     if not query or not query.strip():
@@ -681,16 +934,31 @@ async def dify_kb_search(
                 "dataset_count": len(resolved_dataset_ids),
                 "top_k": resolved_top_k,
                 "concurrency": resolved_concurrency,
+                "document_name_hint_count": len(document_name_hints),
                 **scope_metadata,
             },
         )
 
+    document_names_by_dataset, document_filter_metadata = await _resolve_document_name_filters(
+        query,
+        resolved_dataset_ids,
+        api_url=api_url,
+        api_key=api_key,
+        document_name_hints=document_name_hints,
+    )
+    del api_key
+    scope_metadata = {**scope_metadata, **document_filter_metadata}
+    retrieval_dataset_ids = list(document_names_by_dataset) if document_names_by_dataset else resolved_dataset_ids
+
     try:
         retrieval_start = time.perf_counter()
+        retrieve_kwargs: Dict[str, Any] = {"top_k": resolved_top_k}
+        if document_names_by_dataset:
+            retrieve_kwargs["document_names_by_dataset"] = document_names_by_dataset
         records = await retrieve_from_dify_kb(
             query=query,
-            dataset_ids=resolved_dataset_ids,
-            top_k=resolved_top_k,
+            dataset_ids=retrieval_dataset_ids,
+            **retrieve_kwargs,
         )
         retrieval_elapsed_ms = _elapsed_ms(retrieval_start)
         log.info(
@@ -698,7 +966,7 @@ async def dify_kb_search(
             {
                 "结束时间": _now_for_log(),
                 "检索耗时毫秒": retrieval_elapsed_ms,
-                "知识库数量": len(resolved_dataset_ids),
+                "知识库数量": len(retrieval_dataset_ids),
                 "记录数": len(records),
             },
         )

@@ -255,3 +255,104 @@ async def test_dify_kb_scope_falls_back_to_session_user_context(monkeypatch):
     assert metadata["knowledge_base_count"] == 3
     assert metadata["agent_kb_count"] == 2
     assert metadata["effective_dataset_count"] == 1
+
+def test_dify_kb_extracts_document_name_hints_from_scoped_query():
+    module = _load_dify_module()
+
+    assert module._extract_document_name_hints("use \u300aGuide.docx\u300b to answer") == ["Guide.docx"]
+    assert module._extract_document_name_hints("use Guide.docx to answer") == ["Guide.docx"]
+
+
+@pytest.mark.asyncio
+async def test_dify_kb_document_filter_is_resolved_inside_effective_scope(monkeypatch):
+    module = _load_dify_module()
+    looked_up = []
+    retrieval_calls = []
+    raw_records = [
+        {
+            "dataset_id": "kb_allowed",
+            "score": 0.9,
+            "segment": {
+                "id": "seg_a",
+                "position": 1,
+                "document_id": "doc_a",
+                "content": "allowed content",
+                "document": {"id": "doc_a", "name": "Guide.docx"},
+            },
+        }
+    ]
+
+    async def fake_scope(ctx):
+        return ["kb_allowed"], {"effective_dataset_count": 1, "missing_required_scopes": []}
+
+    async def fake_list_dataset_documents(api_url, api_key, dataset_id, keyword):
+        looked_up.append((dataset_id, keyword))
+        assert dataset_id == "kb_allowed"
+        return [{"id": "doc_a", "name": "Guide.docx"}]
+
+    async def fake_retrieve_from_dify_kb(query, dataset_ids, *, top_k=None, document_names_by_dataset=None):
+        retrieval_calls.append(
+            {
+                "dataset_ids": dataset_ids,
+                "document_names_by_dataset": document_names_by_dataset,
+            }
+        )
+        return raw_records
+
+    monkeypatch.setattr(module, "_load_runtime_config", lambda top_k=None: ("http://dify.test/v1", "token", 5, 1))
+    monkeypatch.setattr(module, "_resolve_effective_dataset_scope", fake_scope)
+    monkeypatch.setattr(module, "_list_dataset_documents", fake_list_dataset_documents)
+    monkeypatch.setattr(module, "retrieve_from_dify_kb", fake_retrieve_from_dify_kb)
+
+    ctx = ToolContext(session_id="http-tool", message_id="msg_kb", agent="worker", call_id="call_kb")
+    result = await module.dify_kb_search(ctx, query="use \u300aGuide.docx\u300b to answer")
+
+    assert result.success is True
+    assert looked_up == [("kb_allowed", "Guide.docx")]
+    assert retrieval_calls == [
+        {
+            "dataset_ids": ["kb_allowed"],
+            "document_names_by_dataset": {"kb_allowed": ["Guide.docx"]},
+        }
+    ]
+    filter_metadata = result.metadata["knowledge_search_result"]["scope"]["document_name_filter"]
+    assert filter_metadata["matched_documents_by_dataset"] == {"kb_allowed": ["Guide.docx"]}
+
+
+@pytest.mark.asyncio
+async def test_dify_kb_document_filter_falls_back_when_no_scoped_document_matches(monkeypatch):
+    module = _load_dify_module()
+    retrieval_calls = []
+
+    async def fake_scope(ctx):
+        return ["kb_a", "kb_b"], {"effective_dataset_count": 2, "missing_required_scopes": []}
+
+    async def fake_list_dataset_documents(api_url, api_key, dataset_id, keyword):
+        return []
+
+    async def fake_retrieve_from_dify_kb(query, dataset_ids, *, top_k=None, document_names_by_dataset=None):
+        retrieval_calls.append(
+            {
+                "dataset_ids": dataset_ids,
+                "document_names_by_dataset": document_names_by_dataset,
+            }
+        )
+        return []
+
+    monkeypatch.setattr(module, "_load_runtime_config", lambda top_k=None: ("http://dify.test/v1", "token", 5, 1))
+    monkeypatch.setattr(module, "_resolve_effective_dataset_scope", fake_scope)
+    monkeypatch.setattr(module, "_list_dataset_documents", fake_list_dataset_documents)
+    monkeypatch.setattr(module, "retrieve_from_dify_kb", fake_retrieve_from_dify_kb)
+
+    ctx = ToolContext(session_id="http-tool", message_id="msg_kb", agent="worker", call_id="call_kb")
+    result = await module.dify_kb_search(ctx, query="use \u300aMissing.docx\u300b to answer")
+
+    assert result.success is True
+    assert retrieval_calls == [
+        {
+            "dataset_ids": ["kb_a", "kb_b"],
+            "document_names_by_dataset": None,
+        }
+    ]
+    filter_metadata = result.metadata["knowledge_search_result"]["scope"]["document_name_filter"]
+    assert filter_metadata["matched_document_count"] == 0

@@ -177,8 +177,8 @@ class Command:
             ),
             CommandDef(
                 name="workflows",
-                description="List available workflows",
-                template="List all available workflows with their names, descriptions, and file paths.",
+                description="List workflows authorized for current agent",
+                template="List workflows authorized for the current agent with their names, descriptions, and file paths.",
                 agent="rex",
                 execution_kind="direct",
                 allow_attachments=False,

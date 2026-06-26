@@ -116,75 +116,17 @@ _DESCRIPTION_CACHE_TTL: float = 60.0  # seconds
 
 
 async def _build_description() -> str:
-    """Build dynamic description with available workflows list (TTL-cached, 60 s)."""
-    global _DESCRIPTION_CACHE, _DESCRIPTION_CACHE_AT
-    now = time.monotonic()
-    if _DESCRIPTION_CACHE is not None and now - _DESCRIPTION_CACHE_AT < _DESCRIPTION_CACHE_TTL:
-        return _DESCRIPTION_CACHE
+    """Return the static run_workflow description.
 
-    try:
-        from flocks.workflow.center import scan_skill_workflows
-        entries = await scan_skill_workflows()
-        if not entries:
-            result = _BASE_DESCRIPTION
-        else:
-            parts = [_BASE_DESCRIPTION, "", "<available_workflows>"]
-            for entry in entries:
-                name = entry.get("name") or "(unnamed)"
-                desc = entry.get("description") or ""
-                path = entry.get("workflowPath") or ""
-                source = entry.get("sourceType") or "project"
-                parts.append("  <workflow>")
-                parts.append(f"    <name>{name}</name>")
-                if desc:
-                    parts.append(f"    <description>{desc}</description>")
-                parts.append(f"    <path>{path}</path>")
-                parts.append(f"    <scope>{source}</scope>")
-                parts.append("  </workflow>")
-            parts.append("</available_workflows>")
-            result = "\n".join(parts)
-    except Exception:
-        result = _BASE_DESCRIPTION
-
-    _DESCRIPTION_CACHE = result
-    _DESCRIPTION_CACHE_AT = now
-    return result
+    Workflow catalog visibility is authorization-scoped; this tool schema must
+    not enumerate workflow files by scanning global/project workflow roots.
+    """
+    return _BASE_DESCRIPTION
 
 
 async def _build_description_cn() -> str:
-    """Build dynamic Chinese description with available workflows list (TTL-cached, 60 s)."""
-    global _DESCRIPTION_CN_CACHE, _DESCRIPTION_CN_CACHE_AT
-    now = time.monotonic()
-    if _DESCRIPTION_CN_CACHE is not None and now - _DESCRIPTION_CN_CACHE_AT < _DESCRIPTION_CACHE_TTL:
-        return _DESCRIPTION_CN_CACHE
-
-    try:
-        from flocks.workflow.center import scan_skill_workflows
-        entries = await scan_skill_workflows()
-        if not entries:
-            result = _BASE_DESCRIPTION_CN
-        else:
-            parts = [_BASE_DESCRIPTION_CN, "", "<available_workflows>"]
-            for entry in entries:
-                name = entry.get("name") or "(unnamed)"
-                desc = entry.get("description_cn") or entry.get("description") or ""
-                path = entry.get("workflowPath") or ""
-                source = entry.get("sourceType") or "project"
-                parts.append("  <workflow>")
-                parts.append(f"    <name>{name}</name>")
-                if desc:
-                    parts.append(f"    <description>{desc}</description>")
-                parts.append(f"    <path>{path}</path>")
-                parts.append(f"    <scope>{source}</scope>")
-                parts.append("  </workflow>")
-            parts.append("</available_workflows>")
-            result = "\n".join(parts)
-    except Exception:
-        result = _BASE_DESCRIPTION_CN
-
-    _DESCRIPTION_CN_CACHE = result
-    _DESCRIPTION_CN_CACHE_AT = now
-    return result
+    """Return the static Chinese run_workflow description."""
+    return _BASE_DESCRIPTION_CN
 
 
 def _format_workflow_result(result: Any) -> str:

@@ -267,6 +267,31 @@ async def agent_allowed_tools(agent_name: Optional[str]) -> list[str]:
     return list(getattr(agent, "tools", None) or [])
 
 
+async def agent_allows_workflow_listing(agent_name: Optional[str]) -> bool:
+    """Return whether an agent may enumerate workflow names/descriptions."""
+    from flocks.agent.registry import Agent
+
+    effective_agent = str(agent_name or "rex").strip() or "rex"
+    agent = await Agent.get(effective_agent)
+    if not agent:
+        return False
+
+    declared = _normalize_names(getattr(agent, "workflows", None) or [])
+    allowed_tokens = {
+        "*",
+        "all",
+        "list",
+        "view",
+        "read",
+        "workflow:list",
+        "workflow:view",
+        "workflow:read",
+        "workflows:list",
+        "workflows:view",
+    }
+    return bool(declared & allowed_tokens)
+
+
 async def agent_allows_skill(agent_name: Optional[str], skill_name: Optional[str]) -> bool:
     """Return whether agent may load the requested skill.
 

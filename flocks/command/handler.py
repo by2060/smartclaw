@@ -59,7 +59,7 @@ async def handle_slash_command(
             "- /clear clears the screen",
             "- /tools [list|refresh|info <name>|create <requirement>]",
             "- /skills [list|refresh]",
-            "- /workflows — list all available workflows",
+            "- /workflows - list workflows authorized for the current agent",
             "- /mcp [list|status|tools|refresh <server>]",
         ])
         await send_text("\n".join(lines))
@@ -76,14 +76,13 @@ async def handle_slash_command(
         async def _allowed_tools():
             ToolRegistry.init()
             tools = ToolRegistry.list_tools()
-            if not agent_name:
-                return tools
+            effective_agent = str(agent_name or "rex").strip() or "rex"
             from flocks.agent.controls import agent_allows_tool
 
             return [
                 tool
                 for tool in tools
-                if await agent_allows_tool(agent_name, tool.name)
+                if await agent_allows_tool(effective_agent, tool.name)
             ]
 
         if not args or args == "list":
@@ -120,12 +119,12 @@ async def handle_slash_command(
             if not tool:
                 await send_text(f'Tool not found: "{name}"')
                 return True
-            if agent_name:
-                from flocks.agent.controls import agent_allows_tool
+            effective_agent = str(agent_name or "rex").strip() or "rex"
+            from flocks.agent.controls import agent_allows_tool
 
-                if not await agent_allows_tool(agent_name, name):
-                    await send_text(f'Agent "{agent_name}" is not allowed to use tool "{name}".')
-                    return True
+            if not await agent_allows_tool(effective_agent, name):
+                await send_text(f'Agent "{effective_agent}" is not allowed to use tool "{name}".')
+                return True
 
             info = tool.info
             lines = [
@@ -219,6 +218,13 @@ async def handle_slash_command(
         return True
 
     if name == "workflows":
+        from flocks.agent.controls import agent_allows_workflow_listing
+
+        effective_agent = str(agent_name or "rex").strip() or "rex"
+        if not await agent_allows_workflow_listing(effective_agent):
+            await send_text("No workflows are authorized for the current agent.")
+            return True
+
         from flocks.workflow.center import format_workflow_entries, scan_skill_workflows
         try:
             entries = await scan_skill_workflows()
@@ -298,23 +304,37 @@ async def handle_slash_command(
         
         if args == "tools":
             try:
+                from flocks.agent.controls import agent_allows_tool
                 from flocks.mcp import McpToolRegistry
-                
+
+                effective_agent = str(agent_name or "rex").strip() or "rex"
                 all_servers = McpToolRegistry.get_all_servers()
                 if not all_servers:
                     await send_text("No MCP tools available. Connect to an MCP server first.")
                     return True
-                
+
                 lines = ["MCP Tools:", ""]
+                visible_count = 0
                 for server_name in all_servers:
-                    tools = McpToolRegistry.get_server_tools(server_name)
+                    tools = [
+                        tool_name
+                        for tool_name in McpToolRegistry.get_server_tools(server_name)
+                        if await agent_allows_tool(effective_agent, tool_name)
+                    ]
+                    if not tools:
+                        continue
+                    visible_count += len(tools)
                     lines.append(f"From {server_name}: ({len(tools)} tools)")
                     for tool_name in tools:
                         source = McpToolRegistry.get_source(tool_name)
                         if source:
                             lines.append(f"  - {tool_name} (original: {source.mcp_tool})")
                     lines.append("")
-                
+
+                if visible_count == 0:
+                    await send_text("No MCP tools are authorized for the current agent.")
+                    return True
+
                 lines.append("Tip: use /tools info <name> to see tool details")
                 await send_text("\n".join(lines))
                 return True
