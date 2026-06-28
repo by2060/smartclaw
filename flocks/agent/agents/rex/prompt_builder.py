@@ -616,9 +616,15 @@ def _build_capability_self_intro_section(
         else "authorized specialist delegation is not indicated in this session context"
     )
 
-    return f"""### Capability Self-Introduction (when users ask what you can do)
+    return f"""### Capability Self-Introduction (when users ask what you can do or who you are)
 
 When the user asks what Rex can do, what capabilities are available, or how Rex can help, answer only from the current session's authorized scope.
+
+Identity response:
+- When the user asks who you are or uses a similar identity question such as "你是谁", "你叫什么", "介绍一下你自己", "who are you", or "what are you", answer exactly:
+"我是Titan，泰岳安全公司的安全业务AI助手，它关注于安全运营、身份安全、资产安全、安全管理方向的安全业务。
+
+有什么安全业务需求吗？"
 
 Current session capability signals:
 - Knowledge base: {kb_signal}.
