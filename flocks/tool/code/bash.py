@@ -1052,8 +1052,10 @@ async def _execute_sandboxed(
     - 路径映射 host → container
     - 构建隔离环境变量
     """
-    from flocks.sandbox.docker import build_docker_exec_args, build_sandbox_env
+    import uuid
+    from flocks.sandbox.docker import build_docker_exec_args, build_sandbox_env, kill_sandbox_exec
 
+    exec_id = uuid.uuid4().hex[:12]
     command = _rewrite_project_plugin_host_paths_for_sandbox(command, sandbox)
 
     log.info(
@@ -1104,6 +1106,7 @@ async def _execute_sandboxed(
         workdir=container_workdir,
         env=env,
         tty=False,
+        exec_id=exec_id,
     )
 
     # 使用 docker exec 执行
@@ -1133,6 +1136,13 @@ async def _execute_sandboxed(
         description=description,
         extra_metadata={"sandbox": True, "container": sandbox.container_name},
     )
+
+    # 超时或用户中止时，补发容器内 kill，确保容器内进程被终止
+    # 原因：docker exec 不带 -t 时，kill 宿主机 docker 进程只关闭 stdin pipe，
+    #       容器内进程不会收到信号，需要额外通过 docker exec 进入容器发送 SIGKILL
+    if result.metadata.get("timed_out") or result.metadata.get("aborted"):
+        await kill_sandbox_exec(sandbox.container_name, exec_id)
+
     migrations = _migrate_misrouted_project_workspace_outputs(ctx, sandbox.workspace_dir)
     migrations.extend(_migrate_nested_session_outputs(ctx))
     return _attach_output_migrations(result, migrations)

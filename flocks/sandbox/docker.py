@@ -403,12 +403,16 @@ def build_docker_exec_args(
     workdir: Optional[str] = None,
     env: Optional[Dict[str, str]] = None,
     tty: bool = False,
+    exec_id: Optional[str] = None,
 ) -> List[str]:
     """
     构建 `docker exec` 参数。
 
     对齐 OpenClaw buildDockerExecArgs (bash-tools.shared.ts)。
     使用 login shell 并处理 PATH 注入。
+
+    exec_id: 若提供，则将容器内 shell 的 PID 写入 /tmp/.flocks_exec_<exec_id>，
+             超时时可通过 kill_sandbox_exec() 读取该文件终止容器内进程。
     """
     args = ["exec", "-i"]
     if tty:
@@ -432,8 +436,48 @@ def build_docker_exec_args(
             "unset FLOCKS_PREPEND_PATH; "
         )
 
-    args.extend([container_name, "sh", "-lc", f"{path_export}{command}"])
+    if exec_id:
+        pid_file = f"/tmp/.flocks_exec_{exec_id}"
+        # set -m 使 sh 创建独立进程组，子进程加入同一进程组；
+        # 记录 $$ (sh 自身 PID，即进程组 PGID)，kill_sandbox_exec 通过负 PID 杀整组
+        inner_command = f"set -m; echo $$ > {pid_file}; {path_export}{command}; rm -f {pid_file}"
+    else:
+        inner_command = f"{path_export}{command}"
+
+    args.extend([container_name, "sh", "-lc", inner_command])
     return args
+
+
+async def kill_sandbox_exec(container_name: str, exec_id: str) -> None:
+    """通过 docker exec 终止容器内由 exec_id 标识的进程组。
+
+    策略（三重保险）：
+    1. kill -TERM/-KILL -$pid  — 杀整个进程组（需 set -m 开启 job control）
+    2. kill -TERM/-KILL $pid   — 直接杀 sh wrapper 本身
+    3. pkill -P $pid           — 杀 sh 的直接子进程（兜底）
+    容器已停止或 pid 文件不存在时静默忽略。
+    """
+    pid_file = f"/tmp/.flocks_exec_{exec_id}"
+    kill_script = (
+        f"if [ -f {pid_file} ]; then "
+        f"  pid=$(cat {pid_file}); "
+        f"  kill -TERM -$pid 2>/dev/null; kill -TERM $pid 2>/dev/null; "
+        f"  pkill -TERM -P $pid 2>/dev/null; "
+        f"  sleep 0.3; "
+        f"  kill -KILL -$pid 2>/dev/null; kill -KILL $pid 2>/dev/null; "
+        f"  pkill -KILL -P $pid 2>/dev/null; "
+        f"  rm -f {pid_file}; "
+        f"fi"
+    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "exec", container_name, "sh", "-c", kill_script,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await asyncio.wait_for(proc.wait(), timeout=5.0)
+    except Exception:
+        pass
 
 
 def build_sandbox_env(
