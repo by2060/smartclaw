@@ -27,6 +27,7 @@ export const toolAPI = {
     source?: ToolSource;
     category?: string;
     agent?: string;
+    scope?: string;
     session_id?: string;
     sessionID?: string;
     session_category?: string;

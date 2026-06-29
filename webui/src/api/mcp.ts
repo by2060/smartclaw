@@ -30,8 +30,8 @@ export const mcpAPI = {
   refresh: (server: string) =>
     client.post<number>(`/api/mcp/${server}/refresh`),
   
-  getTools: (server: string) =>
-    client.get(`/api/mcp/${server}/tools`),
+  getTools: (server: string, params?: { agent?: string; scope?: string }) =>
+    client.get(`/api/mcp/${server}/tools`, { params }),
   
   getResources: (server: string) =>
     client.get(`/api/mcp/${server}/resources`),

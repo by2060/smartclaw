@@ -468,6 +468,7 @@ async def list_tools(
     category: Optional[str] = None,
     source: Optional[str] = None,
     agent: Optional[str] = None,
+    scope: Optional[str] = Query(None),
     session_id: Optional[str] = Query(None),
     sessionID: Optional[str] = Query(None),
     session_category: Optional[str] = Query(None),
@@ -487,6 +488,7 @@ async def list_tools(
     started_at = time.perf_counter()
     ToolRegistry.init()
     
+    effective_scope = str(scope or "").strip().lower()
     effective_session_id = str(session_id or sessionID or "").strip() or None
     effective_session_category = str(session_category or sessionCategory or "").strip().lower()
     tool_category = category
@@ -507,7 +509,11 @@ async def list_tools(
     
     tools = ToolRegistry.list_tools(category=cat_filter)
     effective_agent = str(agent or "rex").strip() or "rex"
-    use_full_catalog = effective_session_category == "workflow"
+    use_full_catalog = (
+        effective_session_category == "workflow"
+        or effective_scope in {"catalog", "global", "all"}
+        or (not agent and effective_scope != "agent")
+    )
     if not use_full_catalog and effective_session_id:
         try:
             from flocks.session.session import Session
@@ -541,6 +547,7 @@ async def list_tools(
         "category": category,
         "source": source,
         "agent": agent,
+        "scope": scope,
         "session_id": effective_session_id,
         "session_category": effective_session_category or None,
         "workflow_full_catalog": use_full_catalog,
