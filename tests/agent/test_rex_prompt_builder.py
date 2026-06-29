@@ -147,6 +147,20 @@ class TestRexPromptBuilder:
         assert "threat intelligence and IOC analysis" not in prompt
         assert "alert and log triage" not in prompt
 
+    def test_identity_question_uses_titan_business_assistant_reply(self):
+        prompt = build_dynamic_rex_prompt(
+            available_agents=[],
+            available_tools=[],
+            available_skills=[],
+            available_categories=[],
+            available_workflows=[],
+        )
+
+        assert "When the user asks who you are" in prompt
+        assert '"你是谁"' in prompt
+        assert "我是Titan，泰岳安全公司的安全业务AI助手，它关注于安全运营、身份安全、资产安全、安全管理方向的安全业务。" in prompt
+        assert "有什么安全业务需求吗？" in prompt
+
     def test_session_capability_intro_summarizes_kb_without_ids(self):
         prompt = _session_prompt(
             user_context={

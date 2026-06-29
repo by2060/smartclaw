@@ -9,7 +9,7 @@ MCP state is instance-scoped for project isolation.
 
 import asyncio
 from typing import Dict, Optional, List, Any
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -637,17 +637,21 @@ async def remove_mcp_auth(name: str):
     description="Get all available tools from connected MCP servers.",
     operation_id="mcp.tools"
 )
-async def get_mcp_tools(agent: Optional[str] = None):
-    """Get MCP tool names visible to the requested agent (Rex by default)."""
+async def get_mcp_tools(agent: Optional[str] = None, scope: Optional[str] = Query(None)):
+    """Get MCP tool names. Defaults to catalog view; use scope=agent or agent=... to filter."""
     try:
-        from flocks.agent.controls import agent_allows_tool
         from flocks.mcp import McpToolRegistry
 
+        effective_scope = str(scope or "").strip().lower()
+        filter_by_agent = bool(agent) or effective_scope == "agent"
         effective_agent = str(agent or "rex").strip() or "rex"
+        if filter_by_agent:
+            from flocks.agent.controls import agent_allows_tool
+
         tool_names = []
         for server_name in McpToolRegistry.get_all_servers():
             for tool_name in McpToolRegistry.get_server_tools(server_name):
-                if await agent_allows_tool(effective_agent, tool_name):
+                if not filter_by_agent or await agent_allows_tool(effective_agent, tool_name):
                     tool_names.append(tool_name)
 
         return sorted(tool_names)
@@ -662,15 +666,21 @@ async def get_mcp_tools(agent: Optional[str] = None):
     summary="Get server tools",
     description="Get tools from a specific MCP server."
 )
-async def get_server_tools(name: str, agent: Optional[str] = None):
-    """Get tools from a specific server visible to the requested agent."""
+async def get_server_tools(name: str, agent: Optional[str] = None, scope: Optional[str] = Query(None)):
+    """Get server tools. Defaults to catalog view; use scope=agent or agent=... to filter."""
     try:
-        from flocks.agent.controls import agent_allows_tool
         from flocks.mcp import McpToolRegistry
 
         info = await MCP.get_server_info(name)
         if not info:
             raise HTTPException(status_code=404, detail=f"MCP server not found: {name}")
+
+        effective_scope = str(scope or "").strip().lower()
+        filter_by_agent = bool(agent) or effective_scope == "agent"
+        if not filter_by_agent:
+            return info.tools
+
+        from flocks.agent.controls import agent_allows_tool
 
         effective_agent = str(agent or "rex").strip() or "rex"
         allowed_original_names = set()
