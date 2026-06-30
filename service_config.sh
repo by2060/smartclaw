@@ -15,3 +15,20 @@ BACKEND_HOST="0.0.0.0"
 PROXY_TARGET_HOST="127.0.0.1"
 # HTTPS 证书
 CERT_DIR="./.certs"
+
+# 在当前 Conda 虚拟环境的 bin 目录下，自动生成一个名为 smartclaw 的启动命令
+ensure_smartclaw_cli_wrapper() {
+  if [ -z "$CONDA_PREFIX" ]; then
+    echo "当前Conda虚拟环境的根目录（绝对路径）为空; 环境未激活."
+    exit 1
+  fi
+
+  local smartclaw_python
+  smartclaw_python="$(python -c 'import sys; print(sys.executable)')" || exit 1
+  mkdir -p "$CONDA_PREFIX/bin"
+  cat > "$CONDA_PREFIX/bin/smartclaw" <<EOF
+#!/usr/bin/env bash
+exec "$smartclaw_python" -m smartclaw.cli.main "\$@"
+EOF
+  chmod +x "$CONDA_PREFIX/bin/smartclaw"
+}

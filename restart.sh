@@ -165,6 +165,8 @@ sleep 3
 # 激活 conda 环境
 eval "$(conda shell.bash hook)"
 conda activate "$CONDA_ENV_NAME"
+# 确保当前 Conda 环境提供 smartclaw 命令，方便直接使用 smartclaw 命令
+ensure_smartclaw_cli_wrapper
 
 # 启动后端服务
 if [ "$ENABLE_HTTPS" = "true" ]; then
@@ -172,12 +174,13 @@ if [ "$ENABLE_HTTPS" = "true" ]; then
   mkdir -p ./logs && nohup python -m uvicorn smartclaw.server.app:app \
     --host "$BACKEND_HOST" \
     --port "$BACKEND_PORT" \
+    --no-server-header \
     --ssl-certfile "$HTTPS_CERT_FILE" \
     --ssl-keyfile "$HTTPS_KEY_FILE" \
     >> ./logs/backend.log 2>&1 &
   disown $! 2>/dev/null || true
 else
-  mkdir -p ./logs && nohup python -m uvicorn smartclaw.server.app:app --host "$BACKEND_HOST" --port "$BACKEND_PORT" >> ./logs/backend.log 2>&1 &
+  mkdir -p ./logs && nohup python -m uvicorn smartclaw.server.app:app --host "$BACKEND_HOST" --port "$BACKEND_PORT" --no-server-header >> ./logs/backend.log 2>&1 &
   disown $! 2>/dev/null || true
 fi
 echo "正在启动后端服务..."

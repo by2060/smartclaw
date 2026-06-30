@@ -23,7 +23,9 @@
 ```
 5. 删除项目多余目录或文件：
    `python automated_script/prune_project.py --apply`
-6. 此步可选，根据需要选择是否执行：
+6. 查看项目中是否存在Flocks、flocks、Rex、rex字样：
+   `python automated_script/check_flocks_keyword.py`
+7. 此步可选，根据需要选择是否执行：
    代码编译（编译后默认项目名为[delivery_build]，可自行修改所需项目名）：
    `python automated_script/build_delivery_artifact.py --apply`
 

@@ -71,13 +71,23 @@ class SPARequestHandler(SimpleHTTPRequestHandler):
 
     protocol_version = "HTTP/1.1"
 
+    # >>> SECURITY FIX: 重写 send_response 方法以彻底移除 'Server' 响应头，防止版本信息泄露 <<<
+    def send_response(self, code: int, message: str | None = None) -> None:
+        """Custom send_response to omit the 'Server' header entirely."""
+        self.log_request(code)
+        self.send_response_only(code, message)
+        # 仅保留 Date 头部，去除默认的 Server 头部输出
+        self.send_header("Date", self.date_time_string())
+
+    # >>> END SECURITY FIX <<<
+
     def __init__(
-        self,
-        *args,
-        directory: str | None = None,
-        proxy_target: SplitResult | None = None,
-        proxy_ca_file: str | None = None,
-        **kwargs,
+            self,
+            *args,
+            directory: str | None = None,
+            proxy_target: SplitResult | None = None,
+            proxy_ca_file: str | None = None,
+            **kwargs,
     ):
         self.root = Path(directory or ".").resolve()
         self.proxy_target = proxy_target
@@ -151,8 +161,12 @@ class SPARequestHandler(SimpleHTTPRequestHandler):
             header_names: set[str] = set()
             for header_name, header_value in response.getheaders():
                 normalized_name = header_name.lower()
-                if normalized_name in HOP_BY_HOP_HEADERS:
+
+                # >>> SECURITY FIX: 在将后端响应头转发给客户端时，拦截并丢弃后端可能带有的 'Server' 头部 <<<
+                if normalized_name in HOP_BY_HOP_HEADERS or normalized_name == "server":
                     continue
+                # >>> END SECURITY FIX <<<
+
                 header_names.add(normalized_name)
                 self.send_header(header_name, header_value)
             if is_event_stream:

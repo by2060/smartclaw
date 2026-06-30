@@ -40,23 +40,39 @@ REX_JUNIOR_HYPHEN_TITLE = "Rex-Junior"
 REX_JUNIOR_CAMEL = "RexJunior"
 REX_JUNIOR_LOWER_CAMEL = "rexJunior"
 
-SENTRY_LOWER = "sentry"
-SENTRY_TITLE = "Sentry"
+# SENTRY_LOWER = "sentry"
+# SENTRY_TITLE = "Sentry"
+# SENTRY_UPPER = SENTRY_LOWER.upper()
+# SENTRY_INITIAL = SENTRY_TITLE[0]
+# SENTRY_INITIAL_LOWER = SENTRY_LOWER[0]
+# SENTRY_JUNIOR_LOWER = f"{SENTRY_LOWER}_junior"
+# SENTRY_JUNIOR_UPPER = SENTRY_JUNIOR_LOWER.upper()
+# SENTRY_JUNIOR_TITLE = "Sentry_Junior"
+# SENTRY_JUNIOR_HYPHEN_LOWER = f"{SENTRY_LOWER}-junior"
+# SENTRY_JUNIOR_HYPHEN_UPPER = SENTRY_JUNIOR_HYPHEN_LOWER.upper()
+# SENTRY_JUNIOR_HYPHEN_TITLE = "Sentry-Junior"
+# SENTRY_JUNIOR_CAMEL = "SentryJunior"
+# SENTRY_JUNIOR_LOWER_CAMEL = "sentryJunior"
+
+# 修改助手名字
+SENTRY_LOWER = "titan"
+SENTRY_TITLE = "Titan"
 SENTRY_UPPER = SENTRY_LOWER.upper()
 SENTRY_INITIAL = SENTRY_TITLE[0]
 SENTRY_INITIAL_LOWER = SENTRY_LOWER[0]
 SENTRY_JUNIOR_LOWER = f"{SENTRY_LOWER}_junior"
 SENTRY_JUNIOR_UPPER = SENTRY_JUNIOR_LOWER.upper()
-SENTRY_JUNIOR_TITLE = "Sentry_Junior"
+SENTRY_JUNIOR_TITLE = "Titan_Junior"
 SENTRY_JUNIOR_HYPHEN_LOWER = f"{SENTRY_LOWER}-junior"
 SENTRY_JUNIOR_HYPHEN_UPPER = SENTRY_JUNIOR_HYPHEN_LOWER.upper()
-SENTRY_JUNIOR_HYPHEN_TITLE = "Sentry-Junior"
-SENTRY_JUNIOR_CAMEL = "SentryJunior"
-SENTRY_JUNIOR_LOWER_CAMEL = "sentryJunior"
+SENTRY_JUNIOR_HYPHEN_TITLE = "Titan-Junior"
+SENTRY_JUNIOR_CAMEL = "TitanJunior"
+SENTRY_JUNIOR_LOWER_CAMEL = "titanJunior"
 
 SKIP_DIR_NAMES = {
     ".git",
     ".venv",
+    "automated_script",
     "node_modules",
     "dist",
     "build",
@@ -115,15 +131,16 @@ TEXT_SUFFIXES = {
     ".editorconfig",
     ".lock",
     ".sample",
+    ".example",
 }
 
 PROTECT_PATTERNS = [
-    re.compile(r"https?://[^\s'\"<>`]+"),
-    re.compile(r"ghcr\.io/[^\s'\"<>`]+"),
-    re.compile(r"ghcr\.nju\.edu\.cn/[^\s'\"<>`]+"),
-    re.compile(r"\bsha(?:1|224|256|384|512)-[A-Za-z0-9+/=._-]+"),
-    re.compile(r"\bsha(?:1|224|256|384|512):[A-Fa-f0-9]+\b"),
-    re.compile(r"(?i)\bt-rex\b"),
+    # re.compile(r"https?://[^\s'\"<>`]+"),
+    # re.compile(r"ghcr\.io/[^\s'\"<>`]+"),
+    # re.compile(r"ghcr\.nju\.edu\.cn/[^\s'\"<>`]+"),
+    # re.compile(r"\bsha(?:1|224|256|384|512)-[A-Za-z0-9+/=._-]+"),
+    # re.compile(r"\bsha(?:1|224|256|384|512):[A-Fa-f0-9]+\b"),
+    # re.compile(r"(?i)\bt-rex\b"),
 ]
 
 CONTENT_REPLACEMENTS: list[tuple[re.Pattern[str], str]] = [
