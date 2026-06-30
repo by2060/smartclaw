@@ -438,9 +438,8 @@ def build_docker_exec_args(
 
     if exec_id:
         pid_file = f"/tmp/.flocks_exec_{exec_id}"
-        # set -m 使 sh 创建独立进程组，子进程加入同一进程组；
         # 记录 $$ (sh 自身 PID，即进程组 PGID)，kill_sandbox_exec 通过负 PID 杀整组
-        inner_command = f"set -m; echo $$ > {pid_file}; {path_export}{command}; rm -f {pid_file}"
+        inner_command = f"echo $$ > {pid_file}; {path_export}{command}; rm -f {pid_file}"
     else:
         inner_command = f"{path_export}{command}"
 
