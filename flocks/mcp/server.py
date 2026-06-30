@@ -246,11 +246,46 @@ class McpServerManager:
                 "server": name,
                 "error": str(e)
             })
+            await self._discard_runtime_state_unlocked(name)
             self._status[name] = McpStatusInfo(
                 status=McpStatus.FAILED,
                 error=str(e)
             )
             raise  # Propagate exception for gather to capture
+
+    async def _discard_runtime_state_unlocked(
+        self,
+        name: str,
+        *,
+        purge_config: bool = False,
+    ) -> int:
+        """Drop in-memory client, tool, cache, and status state for a server.
+
+        Callers must already hold ``self._lock`` or otherwise own the server's
+        lifecycle path.
+        """
+        if name in self._clients:
+            client = self._clients.pop(name)
+            try:
+                await client.disconnect()
+            except Exception as e:
+                log.debug("mcp.runtime_state.disconnect_error", {
+                    "server": name,
+                    "error": str(e),
+                })
+
+        tool_names = McpToolRegistry.untrack_server(name)
+        from flocks.tool import ToolRegistry
+        for tool_name in tool_names:
+            ToolRegistry.unregister(tool_name)
+
+        self._status.pop(name, None)
+        self._tools_cache.pop(name, None)
+        self._resources_cache.pop(name, None)
+        if purge_config:
+            self._configs.pop(name, None)
+
+        return len(tool_names)
     
     async def _register_tools(
         self, 
@@ -356,6 +391,21 @@ class McpServerManager:
         """
         async with self._lock:
             try:
+                existing_client = self._clients.get(name)
+                existing_status = self._status.get(name)
+                if existing_client is not None:
+                    if (
+                        existing_client.is_connected
+                        and existing_status is not None
+                        and existing_status.status == McpStatus.CONNECTED
+                        and self._configs.get(name) == config
+                    ):
+                        log.info("mcp.connect.already_connected", {"server": name})
+                        return True
+
+                    log.info("mcp.connect.replacing_runtime_state", {"server": name})
+                    await self._discard_runtime_state_unlocked(name)
+
                 self._configs[name] = config  # save for potential retry
                 await self._connect_and_register(name, config)
                 return True
@@ -378,24 +428,15 @@ class McpServerManager:
         """
         async with self._lock:
             if name not in self._clients:
-                return False
+                if name not in self._status:
+                    return False
+                await self._discard_runtime_state_unlocked(name)
+                self._status[name] = McpStatusInfo(status=McpStatus.DISCONNECTED)
+                log.info("mcp.disconnected", {"server": name})
+                return True
 
             try:
-                # Unregister tools
-                tool_names = McpToolRegistry.untrack_server(name)
-                from flocks.tool import ToolRegistry
-                for tool_name in tool_names:
-                    ToolRegistry.unregister(tool_name)
-
-                # Disconnect client
-                client = self._clients.pop(name)
-                await client.disconnect()
-
-                # Clear cache
-                self._tools_cache.pop(name, None)
-                self._resources_cache.pop(name, None)
-
-                # Update status
+                await self._discard_runtime_state_unlocked(name)
                 self._status[name] = McpStatusInfo(status=McpStatus.DISCONNECTED)
 
                 log.info("mcp.disconnected", {"server": name})
@@ -422,27 +463,12 @@ class McpServerManager:
         """
         async with self._lock:
             try:
-                # Disconnect client if connected
-                if name in self._clients:
-                    client = self._clients.pop(name)
-                    try:
-                        await client.disconnect()
-                    except Exception as e:
-                        log.debug("mcp.remove.disconnect_error", {"server": name, "error": str(e)})
+                tools_removed = await self._discard_runtime_state_unlocked(
+                    name,
+                    purge_config=True,
+                )
 
-                # Unregister all tools for this server (works even when not connected)
-                tool_names = McpToolRegistry.untrack_server(name)
-                from flocks.tool import ToolRegistry
-                for tool_name in tool_names:
-                    ToolRegistry.unregister(tool_name)
-
-                # Purge ALL in-memory state so it never appears again
-                self._status.pop(name, None)
-                self._tools_cache.pop(name, None)
-                self._resources_cache.pop(name, None)
-                self._configs.pop(name, None)  # remove from retry candidates
-
-                log.info("mcp.removed", {"server": name, "tools_removed": len(tool_names)})
+                log.info("mcp.removed", {"server": name, "tools_removed": tools_removed})
                 return True
 
             except Exception as e:

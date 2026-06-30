@@ -802,6 +802,77 @@ class TestMcpRoutes:
         assert attempted_connects == ["qianxin-mcp"]
 
     @pytest.mark.asyncio
+    async def test_test_credentials_then_connect_is_idempotent(
+        self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        import flocks.mcp as mcp_pkg
+        from flocks.mcp import server as mcp_server
+        from flocks.mcp.server import McpServerManager
+
+        class FakeClient:
+            instances: list["FakeClient"] = []
+
+            def __init__(self, *args, **kwargs):
+                self.connected = False
+                FakeClient.instances.append(self)
+
+            async def connect(self):
+                if any(other.connected for other in FakeClient.instances if other is not self):
+                    raise RuntimeError("duplicate connection rejected")
+                self.connected = True
+
+            async def disconnect(self):
+                self.connected = False
+
+            async def list_tools(self):
+                return []
+
+            async def list_resources(self):
+                return []
+
+            @property
+            def is_connected(self) -> bool:
+                return self.connected
+
+        server_config = {
+            "type": "remote",
+            "url": "https://example.com/mcp",
+            "transport": "sse",
+        }
+
+        async def fake_config_get(cls):
+            return type(
+                "ConfigStub",
+                (),
+                {"mcp": {"qianxin-mcp": dict(server_config)}},
+            )()
+
+        manager = McpServerManager()
+        monkeypatch.setattr(mcp_server, "McpClient", FakeClient)
+        monkeypatch.setattr(mcp_pkg, "_manager_instance", manager)
+        monkeypatch.setattr(
+            mcp_routes.Config,
+            "get",
+            classmethod(fake_config_get),
+        )
+
+        assert await manager.connect("qianxin-mcp", dict(server_config)) is True
+        manager._initialized = True
+
+        disconnect_resp = await client.post("/api/mcp/qianxin-mcp/disconnect")
+        assert disconnect_resp.status_code == 200, disconnect_resp.text
+        assert disconnect_resp.json() is True
+
+        test_resp = await client.post("/api/mcp/qianxin-mcp/test-credentials")
+        assert test_resp.status_code == 200, test_resp.text
+        assert test_resp.json()["success"] is True
+
+        connect_resp = await client.post("/api/mcp/qianxin-mcp/connect")
+        assert connect_resp.status_code == 200, connect_resp.text
+        assert connect_resp.json() is True
+        assert len(FakeClient.instances) == 2
+
+    @pytest.mark.asyncio
     async def test_connect_mcp_server_times_out_with_explicit_error(
         self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
     ):
