@@ -1240,6 +1240,108 @@ class TestHttpHandler:
         assert result.success is True
         assert result.output == [1, 2]
 
+    @pytest.mark.asyncio
+    async def test_file_response_with_content_disposition_is_saved(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ):
+        class ChunkedContent:
+            def __init__(self, chunks):
+                self.chunks = chunks
+
+            async def iter_chunked(self, _size):
+                for chunk in self.chunks:
+                    yield chunk
+
+        output_dir = tmp_path / "outputs"
+        monkeypatch.setenv("FLOCKS_OUTPUTS_DIR", str(output_dir))
+
+        cfg = {
+            "type": "http",
+            "method": "GET",
+            "url": "https://api.example.com/download",
+            "timeout": 10,
+        }
+        handler = _build_http_handler(cfg)
+
+        body = b"PDF-DATA"
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.headers = {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": 'attachment; filename="../../report.pdf"',
+        }
+        mock_resp.content = ChunkedContent([body[:3], body[3:]])
+        mock_resp.json = AsyncMock()
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = AsyncMock()
+        mock_session.request = MagicMock(return_value=mock_resp)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        ctx = ToolContext(session_id="child", message_id="msg", extra={"output_session_id": "root"})
+
+        with patch("aiohttp.ClientSession", return_value=mock_session):
+            result = await handler(ctx)
+
+        assert result.success is True
+        assert result.output["type"] == "file"
+        assert result.output["filename"] == "report.pdf"
+        assert result.output["content_type"] == "application/pdf"
+        assert result.output["size"] == len(body)
+        saved_path = Path(result.output["saved_path"])
+        assert saved_path.parent == output_dir
+        assert saved_path.read_bytes() == body
+        assert result.metadata["file"] == result.output
+        mock_resp.json.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_octet_stream_response_is_saved_from_headers(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ):
+        output_dir = tmp_path / "outputs"
+        monkeypatch.setenv("FLOCKS_OUTPUTS_DIR", str(output_dir))
+
+        cfg = {
+            "type": "http",
+            "method": "GET",
+            "url": "https://api.example.com/export",
+            "timeout": 10,
+        }
+        handler = _build_http_handler(cfg)
+
+        body = b"\x00\x01payload"
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.headers = {"Content-Type": "application/octet-stream"}
+        mock_resp.read = AsyncMock(return_value=body)
+        mock_resp.json = AsyncMock()
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = AsyncMock()
+        mock_session.request = MagicMock(return_value=mock_resp)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        ctx = ToolContext(session_id="http-tool", message_id="msg")
+
+        with patch("aiohttp.ClientSession", return_value=mock_session):
+            result = await handler(ctx)
+
+        assert result.success is True
+        assert result.output["type"] == "file"
+        assert result.output["filename"] == "export.bin"
+        saved_path = Path(result.output["saved_path"])
+        assert saved_path.parent == output_dir
+        assert saved_path.read_bytes() == body
+        mock_resp.json.assert_not_called()
+
 
 class TestExecutionHandler:
     @pytest.mark.asyncio

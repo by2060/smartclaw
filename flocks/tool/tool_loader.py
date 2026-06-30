@@ -14,6 +14,7 @@ in :mod:`flocks.plugin.loader`.
 from __future__ import annotations
 
 import ast
+import datetime as _dt
 import importlib.util
 import inspect
 import os
@@ -49,6 +50,54 @@ _SM4_PATTERN = re.compile(r"\{sm4:([^}]+)\}")
 _PARAM_PATTERN = re.compile(r"\{([^}]+)\}")
 _EXACT_PARAM_PATTERN = re.compile(r"^\{([^}]+)\}$")
 _MISSING = object()
+_FS_SAFE_RE = re.compile(r"[^A-Za-z0-9._\-]+")
+_FILENAME_STAR_RE = re.compile(r"filename\*\s*=\s*(?:UTF-8''|\"UTF-8'')?([^;\"]+)", re.IGNORECASE)
+_FILENAME_RE = re.compile(r"filename\s*=\s*\"?([^\";]+)\"?", re.IGNORECASE)
+
+_BINARY_CONTENT_TYPES = {
+    "application/octet-stream",
+    "application/pdf",
+    "application/zip",
+    "application/x-zip-compressed",
+    "application/gzip",
+    "application/x-gzip",
+    "application/x-tar",
+    "application/x-7z-compressed",
+    "application/vnd.tcpdump.pcap",
+    "application/pcap",
+    "application/x-pcap",
+    "application/msword",
+    "application/vnd.ms-excel",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+}
+_BINARY_CONTENT_TYPE_PREFIXES = (
+    "image/",
+    "audio/",
+    "video/",
+    "font/",
+)
+_CONTENT_TYPE_EXTENSIONS = {
+    "application/octet-stream": ".bin",
+    "application/pdf": ".pdf",
+    "application/zip": ".zip",
+    "application/x-zip-compressed": ".zip",
+    "application/gzip": ".gz",
+    "application/x-gzip": ".gz",
+    "application/x-tar": ".tar",
+    "application/x-7z-compressed": ".7z",
+    "application/vnd.tcpdump.pcap": ".pcap",
+    "application/pcap": ".pcap",
+    "application/x-pcap": ".pcap",
+    "application/msword": ".doc",
+    "application/vnd.ms-excel": ".xls",
+    "application/vnd.ms-powerpoint": ".ppt",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+}
 
 # ---------------------------------------------------------------------------
 # Tool type constants — each type maps to a subdirectory under _TOOLS_SUBDIR
@@ -537,6 +586,174 @@ def _build_handler(raw_handler: dict, yaml_path: Path) -> ToolHandler:
         raise ValueError(f"Unknown handler type: {handler_type}")
 
 
+def _response_header(resp: Any, name: str) -> str:
+    headers = getattr(resp, "headers", None) or {}
+    for key in (name, name.lower(), name.upper()):
+        try:
+            value = headers.get(key)
+        except AttributeError:
+            return ""
+        if inspect.isawaitable(value):
+            close = getattr(value, "close", None)
+            if callable(close):
+                close()
+            return ""
+        if value:
+            return str(value)
+    return ""
+
+
+def _normalized_content_type(resp: Any) -> str:
+    content_type = _response_header(resp, "Content-Type").strip().lower()
+    return content_type.split(";", 1)[0].strip()
+
+
+def _is_json_content_type(content_type: str) -> bool:
+    return content_type == "application/json" or content_type.endswith("+json")
+
+
+def _is_text_content_type(content_type: str) -> bool:
+    return (
+        content_type.startswith("text/")
+        or content_type in {"application/xml", "application/xhtml+xml", "application/javascript"}
+        or content_type.endswith("+xml")
+    )
+
+
+def _is_file_response_by_headers(resp: Any) -> bool:
+    disposition = _response_header(resp, "Content-Disposition").lower()
+    if "attachment" in disposition or "filename=" in disposition or "filename*" in disposition:
+        return True
+
+    content_type = _normalized_content_type(resp)
+    if not content_type or _is_json_content_type(content_type) or _is_text_content_type(content_type):
+        return False
+    if content_type in _BINARY_CONTENT_TYPES:
+        return True
+    return any(content_type.startswith(prefix) for prefix in _BINARY_CONTENT_TYPE_PREFIXES)
+
+
+def _sanitize_download_filename(filename: str) -> str:
+    from pathlib import PurePosixPath
+
+    base = PurePosixPath(str(filename).replace("\\", "/")).name
+    safe = _FS_SAFE_RE.sub("_", base).strip("._-")
+    return safe or "download"
+
+
+def _filename_from_content_disposition(disposition: str) -> Optional[str]:
+    if not disposition:
+        return None
+    match = _FILENAME_STAR_RE.search(disposition)
+    if match:
+        return urllib.parse.unquote(match.group(1).strip().strip('"'))
+    match = _FILENAME_RE.search(disposition)
+    if match:
+        return urllib.parse.unquote(match.group(1).strip().strip('"'))
+    return None
+
+
+def _extension_for_content_type(content_type: str) -> str:
+    if content_type in _CONTENT_TYPE_EXTENSIONS:
+        return _CONTENT_TYPE_EXTENSIONS[content_type]
+    if content_type.startswith("image/"):
+        subtype = content_type.split("/", 1)[1].split("+", 1)[0]
+        return f".{subtype}" if subtype else ""
+    return ""
+
+
+def _filename_from_response(resp: Any, url: str) -> str:
+    disposition = _response_header(resp, "Content-Disposition")
+    from_disposition = _filename_from_content_disposition(disposition)
+    if from_disposition:
+        return _sanitize_download_filename(from_disposition)
+
+    parsed = urllib.parse.urlparse(url)
+    path_name = Path(urllib.parse.unquote(parsed.path or "")).name
+    if path_name:
+        safe = _sanitize_download_filename(path_name)
+        if not Path(safe).suffix:
+            safe = f"{safe}{_extension_for_content_type(_normalized_content_type(resp))}"
+        return safe
+
+    ext = _extension_for_content_type(_normalized_content_type(resp))
+    return f"download{ext}"
+
+
+def _effective_output_session_id(ctx: ToolContext) -> str:
+    for key in ("output_session_id", "main_session_key"):
+        value = ctx.extra.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    if isinstance(ctx.session_id, str) and ctx.session_id.strip():
+        return ctx.session_id.strip()
+    return "default-session"
+
+
+def _api_tool_output_dir(ctx: ToolContext) -> Path:
+    from flocks.workspace.manager import WorkspaceManager
+
+    return WorkspaceManager.get_instance().get_outputs_dir(
+        _effective_output_session_id(ctx),
+        day=_dt.date.today(),
+    )
+
+
+def _unique_output_path(directory: Path, filename: str) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    safe_name = _sanitize_download_filename(filename)
+    target = directory / safe_name
+    if not target.exists():
+        return target
+    stem = target.stem or "download"
+    suffix = target.suffix
+    timestamp = _dt.datetime.now().strftime("%Y%m%dT%H%M%S")
+    candidate = directory / f"{stem}_{timestamp}{suffix}"
+    counter = 1
+    while candidate.exists():
+        candidate = directory / f"{stem}_{timestamp}_{counter}{suffix}"
+        counter += 1
+    return candidate
+
+
+async def _write_response_file(resp: Any, target: Path) -> int:
+    size = 0
+    content = getattr(resp, "content", None)
+    iter_chunked = getattr(content, "iter_chunked", None)
+    with target.open("wb") as fh:
+        if callable(iter_chunked):
+            chunks = iter_chunked(1024 * 1024)
+            if hasattr(chunks, "__aiter__"):
+                async for chunk in chunks:
+                    if not chunk:
+                        continue
+                    fh.write(chunk)
+                    size += len(chunk)
+                return size
+            if inspect.isawaitable(chunks):
+                close = getattr(chunks, "close", None)
+                if callable(close):
+                    close()
+        data = await resp.read()
+        fh.write(data)
+        size = len(data)
+    return size
+
+
+async def _save_file_response(resp: Any, url: str, ctx: ToolContext) -> dict[str, Any]:
+    filename = _filename_from_response(resp, url)
+    output_dir = _api_tool_output_dir(ctx)
+    target = _unique_output_path(output_dir, filename)
+    size = await _write_response_file(resp, target)
+    return {
+        "type": "file",
+        "saved_path": str(target),
+        "filename": target.name,
+        "content_type": _response_header(resp, "Content-Type"),
+        "size": size,
+    }
+
+
 def _build_http_handler(cfg: dict) -> ToolHandler:
     """Build an async HTTP request handler from declarative config."""
     method = cfg.get("method", "GET").upper()
@@ -653,6 +870,14 @@ def _build_http_handler(cfg: dict) -> ToolHandler:
                         return ToolResult(
                             success=False,
                             error=f"HTTP {resp.status}: {text[:500]}",
+                        )
+
+                    if _is_file_response_by_headers(resp):
+                        file_output = await _save_file_response(resp, url, ctx)
+                        return ToolResult(
+                            success=True,
+                            output=file_output,
+                            metadata={"file": file_output},
                         )
 
                     data = await resp.json(content_type=None)

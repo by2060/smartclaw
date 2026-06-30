@@ -203,7 +203,7 @@ API 不相关材料包括但不限于：
         "sensitive": true,
         "required": true,
         "input_type": "password",
-        "config_key": "api_key",
+        "config_key": "apiKey",
         "secret_id": "provider_api_key",
         "config_value": ""
       }}
@@ -383,7 +383,7 @@ credential_fields 应与 provider.auth.secret 对齐：
   "sensitive": true,
   "required": true,
   "input_type": "password",
-  "config_key": "api_key",
+  "config_key": "apiKey",
   "secret_id": "provider_api_key",
   "config_value": ""
 }}
@@ -397,6 +397,7 @@ smart 认证使用 provider.authExt 注入 Authorization。
 明文语义固定为 {{user:currentToken}}。
 真实落盘值应是该明文模板的 SM4 hex 密文。
 草稿中没有密文时用占位说明，不要输出真实 token。
+authExt 条目必须使用 key/value 字段，不要使用 header_name/header_value。
 
 示例：
 
@@ -406,8 +407,8 @@ smart 认证使用 provider.authExt 注入 Authorization。
   "authExt": [
     {{
       "inject_as": "header",
-      "header_name": "Authorization",
-      "header_value": "<SM4_HEX_OF_{{user:currentToken}}>"
+      "key": "Authorization",
+      "value": "<SM4_HEX_OF_{{user:currentToken}}>"
     }}
   ],
   "customAuth": {{}}
@@ -422,6 +423,7 @@ iam6 认证使用 provider.authExt 注入 Authorization。
 明文语义固定为 {{user:iamToken}}。
 真实落盘值应是该明文模板的 SM4 hex 密文。
 草稿中没有密文时用占位说明，不要输出真实 token。
+authExt 条目必须使用 key/value 字段，不要使用 header_name/header_value。
 
 示例：
 
@@ -431,8 +433,8 @@ iam6 认证使用 provider.authExt 注入 Authorization。
   "authExt": [
     {{
       "inject_as": "header",
-      "header_name": "Authorization",
-      "header_value": "<SM4_HEX_OF_{{user:iamToken}}>"
+      "key": "Authorization",
+      "value": "<SM4_HEX_OF_{{user:iamToken}}>"
     }}
   ],
   "customAuth": {{}}
@@ -500,7 +502,7 @@ custom 用于无法用 smart、iam6、bearerToken、basicAuth 表达的特殊认
 5. 公共根地址放 provider.defaults.base_url。
 6. 不要在每个 tool 中重复完整 URL。
 7. 如果信息不足以确定 base_url，可从文档、cURL、HTTP 示例或用户文本中提取公共根地址。
-8. 如果仍无法确定 base_url，使用最可能的公共根地址，但不要留空。
+8. 如果仍无法确定 base_url，使用 https://api.example.com 作为明显占位值，不要根据厂商名猜测真实域名，也不要留空。
 9. GET 参数优先放 query_params。
 10. POST、PUT、PATCH 的 JSON 请求体放 handler.body。
 11. handler.headers 只放接口明确需要、且非认证统一注入的 header。
@@ -551,7 +553,7 @@ custom 用于无法用 smart、iam6、bearerToken、basicAuth 表达的特殊认
 6. 输出是否是合法 JSON 对象。
 7. 是否只输出 JSON 对象本身。
 8. 是否没有 Markdown、代码块、YAML、解释文字或注释。
-9. 顶层是否只包含 provider 和 tools。
+9. 顶层是否只包含 is_api_related、provider 和 tools。
 10. provider.id 是否为合法 snake_case。
 11. provider.service_id 是否等于 provider.id。
 12. tool.name 是否为合法 snake_case。
