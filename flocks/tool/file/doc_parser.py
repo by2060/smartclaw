@@ -882,8 +882,8 @@ async def doc_parser(
     return ToolResult(
         success=True,
         output={
-            "input_path": display_path(str(input_file)),
-            "output_path": display_path(str(output_file)),
+            "input_path": display_path(str(input_file), ctx),
+            "output_path": display_path(str(output_file), ctx),
             "parser": parser_name,
             "characters": len(markdown),
         },
