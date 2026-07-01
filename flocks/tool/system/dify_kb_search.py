@@ -29,7 +29,7 @@ from flocks.utils.log import Log
 log = Log.create(service="tool.dify_kb_search")
 
 DEFAULT_TIMEOUT = 20
-DEFAULT_RETRIEVAL_SIZE = 5
+DEFAULT_RETRIEVAL_SIZE = 20
 DEFAULT_RETRIEVAL_CONCURRENCY = 1
 DEFAULT_MAX_RETRIEVAL_CONCURRENCY = 30
 DEFAULT_DOCUMENT_LOOKUP_LIMIT = 20
@@ -120,6 +120,11 @@ def _load_runtime_config(top_k: Optional[int] = None) -> tuple[str, str, int, in
     resolved_top_k = _resolve_positive_int(
         top_k if top_k is not None else configured_top_k,
         DEFAULT_RETRIEVAL_SIZE,
+    )
+    resolved_top_k = _clamp_int(
+        resolved_top_k,
+        minimum=1,
+        maximum=DEFAULT_RETRIEVAL_SIZE,
     )
 
     configured_concurrency = _first_non_empty(
@@ -861,16 +866,19 @@ async def retrieve_from_dify_kb(
         ToolParameter(
             name="top_k",
             type=ParameterType.INTEGER,
-            description="Maximum number of records to retrieve from each dataset. Defaults to DIFY_RETRIEVAL_SIZE or 5.",
+            description=(
+                "Maximum number of records to retrieve from each dataset. "
+                "Defaults to dify_retrieval_top_k when configured, capped at 20."
+            ),
             required=False,
-            default=DEFAULT_RETRIEVAL_SIZE,
+            default=None,
         ),
     ],
 )
 async def dify_kb_search(
     ctx: ToolContext,
     query: str,
-    top_k: int = DEFAULT_RETRIEVAL_SIZE,
+    top_k: Optional[int] = None,
 ) -> ToolResult:
     search_start = time.perf_counter()
     log.info(
