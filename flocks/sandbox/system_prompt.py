@@ -53,7 +53,7 @@ async def build_sandbox_system_prompt(
         "- uploaded chat files are available read-only under /workspace/uploads/chat/<session_id>/.",
         "- generated reports and final outputs should be written under $FLOCKS_OUTPUTS_DIR.",
         "- workflow intermediate artifacts should be written under $FLOCKS_ARTIFACTS_DIR.",
-        "- generated Flocks plugins must be written under /workspace/.flocks/plugins/.",
+        "- generated Flocks plugins must be written under /agent/.flocks/plugins/.",
         "- bash runs in sandbox container by default.",
     ]
     if sandbox_ctx.workspace_access == "ro":

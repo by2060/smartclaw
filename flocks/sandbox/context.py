@@ -141,9 +141,11 @@ async def resolve_sandbox_context(
         else resolve_sandbox_workspace_dir(workspace_root, scope_key)
     )
 
+    workspace_manager = WorkspaceManager.get_instance()
+    
     # 决定实际工作目录
     effective_workspace_dir = (
-        agent_workspace_dir
+        str(workspace_manager.get_user_workspace_dir())
         if cfg.workspace_access == "rw"
         else sandbox_workspace_dir
     )
@@ -237,6 +239,7 @@ async def resolve_sandbox_context(
             "container": container_name,
             "workspace_access": cfg.workspace_access,
             "scope": cfg.scope,
+            "workspace_dir": effective_workspace_dir,
         },
     )
 
@@ -295,8 +298,10 @@ async def ensure_sandbox_workspace_for_session(
         else resolve_sandbox_workspace_dir(workspace_root, scope_key)
     )
 
+    workspace_manager = WorkspaceManager.get_instance()
+
     effective_workspace_dir = (
-        agent_workspace_dir
+        str(workspace_manager.get_user_workspace_dir())
         if cfg.workspace_access == "rw"
         else sandbox_workspace_dir
     )
