@@ -10,6 +10,7 @@ Covers:
 - SessionRunner construction and abort behavior (from existing tests)
 """
 
+import json
 import pytest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch, AsyncMock
@@ -1195,3 +1196,89 @@ async def test_to_chat_messages_expands_workflow_node_ref_marker(monkeypatch):
     assert "node_id: query_fofa" in chat_messages[0].content
     assert "node_type: python" in chat_messages[0].content
     assert "只修改这个节点的代码并保留其他节点不变" in chat_messages[0].content
+
+def test_dify_tool_result_is_augmented_for_llm_image_preservation():
+    output = "Install media location\n![image](http://example.test/image.png)\nNote text"
+
+    augmented = SessionRunner._augment_dify_tool_result_for_llm("dify_kb_search", output)
+
+    assert output in augmented
+    assert "treat image Markdown links" in augmented
+    assert "not as optional attachments" in augmented
+    assert "illustrated block" in augmented
+    assert "MUST preserve EVERY image Markdown link" in augmented
+    assert "as close as possible to its original position" in augmented
+    assert "download-page image" in augmented
+    assert "Do not duplicate the same retrieved content" in augmented
+    assert SessionRunner._augment_dify_tool_result_for_llm("bash", output) == output
+
+
+def test_dify_tool_result_uses_records_context_for_llm_when_output_is_json():
+    content = "Install media location\n![image](http://example.test/image.png)\nNote text"
+    output = json.dumps(
+        {
+            "records": [
+                {
+                    "segment": {
+                        "content": content,
+                    }
+                }
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+    augmented = SessionRunner._augment_dify_tool_result_for_llm("dify_kb_search", output)
+
+    assert content in augmented
+    assert '"records"' not in augmented
+    assert augmented.count("Install media location") == 1
+    assert "Do not duplicate the same retrieved content" in augmented
+
+
+def test_dify_tool_answer_context_prefers_records_over_derived_markdown():
+    record_content = "Install media location\n![image](http://example.test/image.png)\nNote text"
+    derived_markdown = "### Knowledge search result\n\n" + record_content + "\n\n### Sources\n\n1. Guide.docx"
+    output = json.dumps(
+        {
+            "records": [
+                {
+                    "segment": {
+                        "content": record_content,
+                    }
+                }
+            ],
+            "markdown": derived_markdown,
+        },
+        ensure_ascii=False,
+    )
+
+    answer_context = SessionRunner._dify_tool_answer_context("dify_kb_search", output)
+
+    assert record_content in answer_context
+    assert "### Knowledge search result" not in answer_context
+    assert "### Sources" not in answer_context
+    assert answer_context.count("Install media location") == 1
+
+
+def test_dify_tool_answer_context_prefers_signed_content_images():
+    output = json.dumps(
+        {
+            "records": [
+                {
+                    "segment": {
+                        "sign_content": "signed image\n![image](http://example.test/signed.png?sign=abc)",
+                        "content": "plain image\n![image](http://example.test/plain.png)",
+                    },
+                }
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+    answer_context = SessionRunner._dify_tool_answer_context("dify_kb_search", output)
+
+    assert "signed image" in answer_context
+    assert "signed.png?sign=abc" in answer_context
+    assert "plain.png" not in answer_context
+

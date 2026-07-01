@@ -172,6 +172,8 @@ async def test_dify_kb_tool_output_records_keep_raw_dify_records(monkeypatch):
 
     assert result.success is True
     assert result.output["records"] is raw_records
+    assert "markdown" not in result.output
+    assert "signed ![image](http://example.test/signed.png?sign=abc)" in result.metadata["knowledge_search_result"]["markdown"]
     assert result.output["records"][0]["child_chunks"] == [{"id": "child_a", "score": 0.9}]
     assert result.output["records"][0]["segment"]["document"]["doc_metadata"] == {"auth_tag": "team"}
 

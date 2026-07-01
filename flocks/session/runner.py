@@ -1908,6 +1908,75 @@ class SessionRunner:
         
         return error_dict
     
+    @staticmethod
+    def _dify_record_text(record: Any, index: int) -> str:
+        if not isinstance(record, dict):
+            return ""
+        segment = record.get("segment") if isinstance(record.get("segment"), dict) else {}
+        document = segment.get("document") if isinstance(segment.get("document"), dict) else {}
+        if not document and isinstance(record.get("document"), dict):
+            document = record["document"]
+        content = ""
+        for key in ("sign_content", "content", "markdown"):
+            value = segment.get(key)
+            if isinstance(value, str) and value.strip():
+                content = value.strip()
+                break
+        if not content:
+            return ""
+        document_name = document.get("name") if isinstance(document.get("name"), str) else ""
+        if document_name:
+            return f"### Record {index}: {document_name}\n\n{content}"
+        return f"### Record {index}\n\n{content}"
+
+    @staticmethod
+    def _dify_tool_answer_context(tool_name: str, tool_output: str) -> str:
+        if tool_name != "dify_kb_search" or not tool_output:
+            return tool_output
+        try:
+            parsed_output = json.loads(tool_output)
+        except (TypeError, ValueError):
+            return tool_output
+        if not isinstance(parsed_output, dict):
+            return tool_output
+        records = parsed_output.get("records")
+        if isinstance(records, list):
+            record_texts = [
+                text
+                for index, record in enumerate(records, start=1)
+                for text in [SessionRunner._dify_record_text(record, index)]
+                if text
+            ]
+            if record_texts:
+                return "\n\n".join(record_texts)
+        if isinstance(parsed_output.get("markdown"), str):
+            markdown = parsed_output["markdown"].strip()
+            if markdown:
+                return markdown
+        return tool_output
+
+    @staticmethod
+    def _augment_dify_tool_result_for_llm(tool_name: str, tool_output: str) -> str:
+        if tool_name != "dify_kb_search" or not tool_output:
+            return tool_output
+        answer_context = SessionRunner._dify_tool_answer_context(tool_name, tool_output)
+        instruction = (
+            "When answering with this Dify knowledge-base result, treat image Markdown links such as "
+            "![image](url) or [image](url) as required inline content, not optional attachments. A retrieved "
+            "Record or section that contains image links is an illustrated block. If the final answer uses, "
+            "summarizes, rewrites, translates, or quotes ANY non-image text from an illustrated block, the "
+            "final answer MUST preserve EVERY image Markdown link from that same block. Place each preserved "
+            "image in the corresponding answer section, next to the related text/table and as close as possible "
+            "to its original position between the surrounding lines. Do not drop an image just because it is a "
+            "screenshot, preview, download-page image, or appears between a link and a note. Do not move images "
+            "into an appendix, separate image section, sources section, or the end of the answer unless the user "
+            "explicitly asks. Before finalizing, compare each used retrieved block with the final answer and make "
+            "sure every image Markdown link from that block is present exactly once. Do not duplicate the same "
+            "retrieved content: either summarize/adapt it once with the image links kept in place, or quote the "
+            "relevant original passage once, but do not do both."
+        )
+        return f"{answer_context}\n\n[Instruction for final answer]\n{instruction}"
+
     def _get_context_window_tokens(self) -> int:
         """Resolve the context window size for the current model."""
         try:
@@ -2104,6 +2173,7 @@ class SessionRunner:
                                     except (TypeError, ValueError):
                                         tool_output_str = str(tool_output)
 
+                                tool_output_str = self._dify_tool_answer_context(tool_name, tool_output_str)
                                 from flocks.tool.truncation import truncate_tool_result_dynamic, HARD_MAX_TOOL_RESULT_CHARS
                                 already_truncated = (
                                     isinstance(getattr(part.state, 'metadata', None), dict)
@@ -2124,6 +2194,7 @@ class SessionRunner:
                                         "truncated_len": len(tool_output_str),
                                     })
                             
+                            tool_output_str = self._augment_dify_tool_result_for_llm(tool_name, tool_output_str)
                             # Build structured tool call for assistant message
                             args_str = json.dumps(tool_input, ensure_ascii=False) if not isinstance(tool_input, str) else tool_input
                             structured_tool_calls.append({

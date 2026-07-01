@@ -1025,7 +1025,6 @@ async def dify_kb_search(
                 "records": event_payload["records"],
                 "count": event_payload["count"],
                 "image_count": event_payload["image_count"],
-                "markdown": event_payload["markdown"],
                 "message": "No relevant content found.",
             },
             metadata={
@@ -1063,7 +1062,6 @@ async def dify_kb_search(
             "records": records,
             "count": len(records),
             "image_count": event_payload["image_count"],
-            "markdown": event_payload["markdown"],
         },
         metadata={
             "source": "Dify",
