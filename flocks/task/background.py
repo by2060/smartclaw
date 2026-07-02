@@ -88,7 +88,7 @@ class BackgroundManager:
         return self._tasks.get(task_id)
 
     async def launch(self, input_data: LaunchInput) -> BackgroundTask:
-        task_id = f"bg_{Identifier.ascending('task')[:8]}"
+        task_id = f"bg_{Identifier.ascending('task')}"
         task = BackgroundTask(
             id=task_id,
             status="pending",
@@ -108,7 +108,7 @@ class BackgroundManager:
         return task
 
     async def resume(self, input_data: ResumeInput) -> BackgroundTask:
-        task_id = f"bg_{Identifier.ascending('task')[:8]}"
+        task_id = f"bg_{Identifier.ascending('task')}"
         task = BackgroundTask(
             id=task_id,
             status="pending",
@@ -140,7 +140,7 @@ class BackgroundManager:
         This is used by TaskExecutor which creates the session upfront so that
         the task record can hold sessionID at the moment it becomes RUNNING.
         """
-        task_id = f"bg_{Identifier.ascending('task')[:8]}"
+        task_id = f"bg_{Identifier.ascending('task')}"
         task = BackgroundTask(
             id=task_id,
             status="pending",
