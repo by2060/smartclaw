@@ -826,6 +826,7 @@ class McpClient:
             "error": error,
         })
         await McpAuth.remove(self.name)
+        await McpOAuth2ClientCredentials.remove_registration(self.name)
         await self.disconnect()
         await self.connect()
         return True

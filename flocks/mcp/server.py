@@ -7,7 +7,9 @@ Manages MCP server lifecycle: connection, disconnection, status tracking, tool r
 import asyncio
 import time
 from typing import Dict, Optional, Any, List
+from flocks.mcp.auth import McpAuth
 from flocks.mcp.client import McpClient
+from flocks.mcp.oauth2 import McpOAuth2ClientCredentials
 from flocks.mcp.types import (
     McpStatus, 
     McpStatusInfo, 
@@ -284,6 +286,8 @@ class McpServerManager:
         self._resources_cache.pop(name, None)
         if purge_config:
             self._configs.pop(name, None)
+            await McpAuth.remove(name)
+            await McpOAuth2ClientCredentials.remove_registration(name)
 
         return len(tool_names)
     

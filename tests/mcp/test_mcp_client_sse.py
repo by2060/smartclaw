@@ -391,7 +391,46 @@ class TestMcpClientRemoteFallback:
         assert events["call_tool_task"] is events["session_enter_task"]
 
     @pytest.mark.asyncio
-    async def test_remote_injects_oauth2_client_credentials_header(self):
+    async def test_reconnect_after_oauth_401_clears_dynamic_registration(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        mcp_client_module.McpAuth.clear()
+        await mcp_client_module.McpOAuth2ClientCredentials.clear()
+        client = McpClient(
+            name="oauth-mcp",
+            server_type="remote",
+            url="https://mcp.example.com/mcp",
+            auth_config={
+                "type": "oauth2_client_credentials",
+                "token_url": "https://auth.example.com/token",
+                "registration_url": "https://auth.example.com/register",
+            },
+            timeout=10.0,
+        )
+        await mcp_client_module.McpAuth.set(
+            "oauth-mcp",
+            {"_auth_type": "oauth2_client_credentials", "access_token": "old-token"},
+            expires_in=3600,
+        )
+        mcp_client_module.McpOAuth2ClientCredentials._registrations["oauth-mcp"] = {
+            "client_id": "old-client",
+            "client_secret": "old-secret",
+        }
+        disconnect = AsyncMock()
+        connect = AsyncMock()
+        monkeypatch.setattr(client, "disconnect", disconnect)
+        monkeypatch.setattr(client, "connect", connect)
+
+        assert await client._reconnect_after_auth_failure(RuntimeError("HTTP 401")) is True
+
+        assert await mcp_client_module.McpAuth.get("oauth-mcp") is None
+        assert "oauth-mcp" not in mcp_client_module.McpOAuth2ClientCredentials._registrations
+        disconnect.assert_awaited_once()
+        connect.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_remote_injects_oauth2_client_credentials_header(self, monkeypatch: pytest.MonkeyPatch):
         """Remote connection should resolve OAuth2 token before connecting."""
         client = McpClient(
             name="oauth-mcp",
@@ -407,8 +446,20 @@ class TestMcpClientRemoteFallback:
             },
             timeout=10.0,
         )
-
-        client._do_connect_streamable_http = AsyncMock()
+        captures: list[tuple[str, str, dict | None]] = []
+        monkeypatch.setattr(mcp_client_module, "ClientSession", _make_session_class())
+        _bind_method(
+            monkeypatch,
+            client,
+            "_create_streamable_http_streams",
+            _make_remote_transport_factory("http", captures=captures),
+        )
+        _bind_method(
+            monkeypatch,
+            client,
+            "_create_sse_streams",
+            _make_remote_transport_factory("sse", captures=captures),
+        )
 
         with patch(
             "flocks.mcp.client.McpOAuth2ClientCredentials.get_access_token",
@@ -416,20 +467,25 @@ class TestMcpClientRemoteFallback:
         ):
             await client.connect()
 
-        client._do_connect_streamable_http.assert_called_once_with(
-            "https://mcp.example.com/mcp",
-            {
+        await client.disconnect()
+
+        assert captures == [
+            (
+                "http",
+                "https://mcp.example.com/mcp",
+                {
                 "Accept": "text/event-stream",
                 "Authorization": "Bearer token-123",
-            },
-        )
+                },
+            )
+        ]
 
 
 class TestMcpClientCallTool:
     """Test MCP tool call request construction."""
 
     @pytest.mark.asyncio
-    async def test_call_tool_sends_meta_as_request_meta(self):
+    async def test_call_tool_sends_meta_as_request_meta(self, monkeypatch: pytest.MonkeyPatch):
         """Meta should be sent as MCP request _meta, not tool arguments."""
         client = McpClient(
             name="test-server",
@@ -437,34 +493,56 @@ class TestMcpClientCallTool:
             url="https://mcp.example.com/mcp",
             timeout=10.0,
         )
-        client._connected = True
 
         mock_result = MagicMock()
         mock_result.isError = False
+        captured = {}
 
         class FakeSession:
-            def __init__(self):
-                self.sent = None
-                self.validated = []
+            def __init__(self, read_stream, write_stream):
+                self.read_stream = read_stream
+                self.write_stream = write_stream
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def initialize(self):
+                return SimpleNamespace(protocolVersion="2026-05-12", serverInfo={"name": "demo"})
 
             async def send_request(self, request, result_type, **kwargs):
-                self.sent = (request, result_type, kwargs)
+                captured["sent"] = (request, result_type, kwargs)
                 return mock_result
 
             async def _validate_tool_result(self, name, result):
-                self.validated.append((name, result))
+                captured.setdefault("validated", []).append((name, result))
 
-        fake_session = FakeSession()
-        client.session = fake_session
+        monkeypatch.setattr(mcp_client_module, "ClientSession", FakeSession)
+        _bind_method(
+            monkeypatch,
+            client,
+            "_create_streamable_http_streams",
+            _make_remote_transport_factory("http"),
+        )
+        _bind_method(
+            monkeypatch,
+            client,
+            "_create_sse_streams",
+            _make_remote_transport_factory("sse"),
+        )
 
+        await client.connect()
         result = await client.call_tool(
             "test_tool",
             {"param": "value"},
             meta={"currentUserName": "alice", "currentToken": "token-123"},
         )
+        await client.disconnect()
 
         assert result is mock_result
-        request, result_type, kwargs = fake_session.sent
+        request, result_type, kwargs = captured["sent"]
         assert result_type is mcp_types.CallToolResult
         assert kwargs == {}
         params = request.root.params.model_dump(by_alias=True)
@@ -472,7 +550,7 @@ class TestMcpClientCallTool:
         assert params["arguments"] == {"param": "value"}
         assert params["_meta"]["currentUserName"] == "alice"
         assert params["_meta"]["currentToken"] == "token-123"
-        assert fake_session.validated == [("test_tool", mock_result)]
+        assert captured["validated"] == [("test_tool", mock_result)]
 
 
 class TestExtractRootCause:

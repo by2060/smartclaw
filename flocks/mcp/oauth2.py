@@ -46,9 +46,22 @@ class McpOAuth2ClientCredentials:
             if access_token and not await McpAuth.is_token_expired(server_name):
                 return str(access_token)
 
-        client_id, client_secret = await cls._resolve_client_credentials(server_name, auth_config, timeout)
-        token = await cls._request_token(server_name, auth_config, client_id, client_secret, timeout)
-        return token
+        client_id, client_secret, source = await cls._resolve_client_credentials(
+            server_name, auth_config, timeout
+        )
+        try:
+            return await cls._request_token(server_name, auth_config, client_id, client_secret, timeout)
+        except RuntimeError as exc:
+            if source != "cache" or not _is_token_auth_failure(exc):
+                raise
+            await cls.remove_registration(server_name)
+            await McpAuth.remove(server_name)
+            client_id, client_secret, _ = await cls._resolve_client_credentials(
+                server_name, auth_config, timeout
+            )
+            return await cls._request_token(
+                server_name, auth_config, client_id, client_secret, timeout
+            )
 
     @classmethod
     async def build_headers(
@@ -71,20 +84,25 @@ class McpOAuth2ClientCredentials:
         cls._registrations.clear()
 
     @classmethod
+    async def remove_registration(cls, server_name: str) -> None:
+        if cls._registrations.pop(server_name, None) is not None:
+            log.info("mcp.oauth2.registration_removed", {"server": server_name})
+
+    @classmethod
     async def _resolve_client_credentials(
         cls,
         server_name: str,
         auth_config: Dict[str, Any],
         timeout: float,
-    ) -> tuple[str, str]:
-        cached = cls._registrations.get(server_name)
-        if cached:
-            return cached["client_id"], cached["client_secret"]
-
+    ) -> tuple[str, str, str]:
         client_id = _resolve_config_value(auth_config, "client_id", "clientId")
         client_secret = _resolve_config_value(auth_config, "client_secret", "clientSecret")
         if client_id and client_secret:
-            return client_id, client_secret
+            return client_id, client_secret, "config"
+
+        cached = cls._registrations.get(server_name)
+        if cached:
+            return cached["client_id"], cached["client_secret"], "cache"
 
         registration_url = _resolve_config_value(auth_config, "registration_url", "registrationUrl")
         if not registration_url:
@@ -92,7 +110,7 @@ class McpOAuth2ClientCredentials:
 
         registration = await cls._register_client(server_name, auth_config, registration_url, timeout)
         cls._registrations[server_name] = registration
-        return registration["client_id"], registration["client_secret"]
+        return registration["client_id"], registration["client_secret"], "registration"
 
     @classmethod
     async def _register_client(
@@ -218,6 +236,14 @@ def _as_int(value: Any) -> Optional[int]:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _is_token_auth_failure(exc: RuntimeError) -> bool:
+    message = str(exc)
+    return (
+        "MCP OAuth2 token request failed with HTTP 401" in message
+        or "MCP OAuth2 token request failed with HTTP 403" in message
+    )
 
 
 __all__ = ["McpOAuth2ClientCredentials"]

@@ -160,3 +160,66 @@ class TestMcpOAuth2ClientCredentials:
         )
         assert cached_token == "token-123"
         assert len(calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_stale_dynamic_registration_is_replaced_after_token_401(self, monkeypatch):
+        calls = []
+        registrations = iter([
+            {"client_id": "old-client", "client_secret": "old-secret"},
+            {"client_id": "new-client", "client_secret": "new-secret"},
+        ])
+        token_attempt = 0
+
+        class FakeResponse:
+            def __init__(self, status_code, payload):
+                self.status_code = status_code
+                self._payload = payload
+
+            def json(self):
+                return self._payload
+
+        class FakeAsyncClient:
+            def __init__(self, timeout):
+                self.timeout = timeout
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+            async def post(self, url, **kwargs):
+                nonlocal token_attempt
+                calls.append((url, kwargs))
+                if url.endswith("/register"):
+                    return FakeResponse(200, next(registrations))
+
+                token_attempt += 1
+                if token_attempt == 1:
+                    return FakeResponse(200, {"access_token": "old-token", "expires_in": 60})
+                if token_attempt == 2:
+                    return FakeResponse(401, {"error": "invalid_client"})
+                return FakeResponse(200, {"access_token": "new-token", "expires_in": 60})
+
+        monkeypatch.setattr("flocks.mcp.oauth2.httpx.AsyncClient", FakeAsyncClient)
+
+        auth_config = {
+            "type": "oauth2_client_credentials",
+            "registration_url": "http://auth.example.com/oauth2/register",
+            "token_url": "http://auth.example.com/oauth2/token",
+            "audience": "mcp-server",
+        }
+
+        token = await McpOAuth2ClientCredentials.get_access_token("ais-mcp", auth_config)
+        assert token == "old-token"
+
+        entry = await McpAuth.get("ais-mcp")
+        assert entry is not None
+        entry.expires_at = time.time() - 1
+
+        token = await McpOAuth2ClientCredentials.get_access_token("ais-mcp", auth_config)
+
+        assert token == "new-token"
+        assert [url for url, _ in calls].count("http://auth.example.com/oauth2/register") == 2
+        assert [url for url, _ in calls].count("http://auth.example.com/oauth2/token") == 3
+        assert McpOAuth2ClientCredentials._registrations["ais-mcp"]["client_id"] == "new-client"
