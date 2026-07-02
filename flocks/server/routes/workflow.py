@@ -81,6 +81,16 @@ class ActiveWorkflowExecution:
 _active_workflow_executions: Dict[str, ActiveWorkflowExecution] = {}
 
 
+async def _agent_can_view_workflows(agent: Optional[str]) -> bool:
+    """Apply agent workflow visibility only for explicitly scoped requests."""
+    if agent is None or not str(agent).strip():
+        return True
+
+    from flocks.agent.controls import agent_allows_workflow_listing
+
+    return await agent_allows_workflow_listing(str(agent).strip())
+
+
 # =============================================================================
 # Request/Response Models
 # =============================================================================
@@ -633,7 +643,7 @@ async def list_workflows(
     category: Optional[str] = Query(None, description="Filter by category"),
     status: Optional[str] = Query(None, description="Filter by status"),
     exclude_id: Optional[str] = Query(None, alias="excludeId", description="Exclude workflow by ID (e.g. exclude self when selecting sub-workflows)"),
-    agent: Optional[str] = Query(None, description="Agent whose workflow visibility should be applied; defaults to Rex"),
+    agent: Optional[str] = Query(None, description="Optional agent whose workflow visibility should be applied"),
 ):
     """
     Get workflow list
@@ -642,11 +652,8 @@ async def list_workflows(
     first call to move any Storage-only workflows to the project workflow root.
     """
     try:
-        from flocks.agent.controls import agent_allows_workflow_listing
-
-        effective_agent = str(agent or "rex").strip() or "rex"
-        if not await agent_allows_workflow_listing(effective_agent):
-            log.info("workflow.list.unauthorized", {"agent": effective_agent})
+        if not await _agent_can_view_workflows(agent):
+            log.info("workflow.list.unauthorized", {"agent": agent})
             return []
 
         await _migrate_storage_to_filesystem()
@@ -726,7 +733,7 @@ async def create_workflow(req: WorkflowCreateRequest):
 @router.get("/workflow/{workflow_id}", response_model=WorkflowResponse)
 async def get_workflow(
     workflow_id: str,
-    agent: Optional[str] = Query(None, description="Agent whose workflow visibility should be applied; defaults to Rex"),
+    agent: Optional[str] = Query(None, description="Optional agent whose workflow visibility should be applied"),
 ):
     """
     Get workflow details
@@ -735,11 +742,8 @@ async def get_workflow(
     are always reflected immediately without any sync step.
     """
     try:
-        from flocks.agent.controls import agent_allows_workflow_listing
-
-        effective_agent = str(agent or "rex").strip() or "rex"
-        if not await agent_allows_workflow_listing(effective_agent):
-            log.info("workflow.get.unauthorized", {"agent": effective_agent, "id": workflow_id})
+        if not await _agent_can_view_workflows(agent):
+            log.info("workflow.get.unauthorized", {"agent": agent, "id": workflow_id})
             raise HTTPException(status_code=403, detail="Workflow access is not authorized for the current agent")
 
         data = _read_workflow_from_fs(workflow_id)
@@ -1009,14 +1013,11 @@ async def validate_workflow(workflow_id: str):
 # =============================================================================
 
 @router.post("/workflow-center/scan-workflows")
-async def workflow_center_scan_workflows(agent: Optional[str] = Query(None, description="Agent whose workflow visibility should be applied; defaults to Rex")):
+async def workflow_center_scan_workflows(agent: Optional[str] = Query(None, description="Optional agent whose workflow visibility should be applied")):
     """Scan workflow roots and register discovered workflows when authorized."""
     try:
-        from flocks.agent.controls import agent_allows_workflow_listing
-
-        effective_agent = str(agent or "rex").strip() or "rex"
-        if not await agent_allows_workflow_listing(effective_agent):
-            log.info("workflow.center.scan.unauthorized", {"agent": effective_agent})
+        if not await _agent_can_view_workflows(agent):
+            log.info("workflow.center.scan.unauthorized", {"agent": agent})
             return {"count": 0, "items": []}
 
         items = await scan_skill_workflows()
@@ -1033,14 +1034,11 @@ async def workflow_center_scan_skill_alias():
 
 
 @router.get("/workflow-center")
-async def workflow_center_list(agent: Optional[str] = Query(None, description="Agent whose workflow visibility should be applied; defaults to Rex")):
+async def workflow_center_list(agent: Optional[str] = Query(None, description="Optional agent whose workflow visibility should be applied")):
     """List workflow center registry entries."""
     try:
-        from flocks.agent.controls import agent_allows_workflow_listing
-
-        effective_agent = str(agent or "rex").strip() or "rex"
-        if not await agent_allows_workflow_listing(effective_agent):
-            log.info("workflow.center.list.unauthorized", {"agent": effective_agent})
+        if not await _agent_can_view_workflows(agent):
+            log.info("workflow.center.list.unauthorized", {"agent": agent})
             return {"count": 0, "items": []}
 
         items = await list_registry_entries()
@@ -1202,18 +1200,15 @@ async def get_execution_details(workflow_id: str, exec_id: str):
 # =============================================================================
 
 @router.get("/workflow/stats", response_model=WorkflowStatsResponse)
-async def get_aggregate_stats(agent: Optional[str] = Query(None, description="Agent whose workflow visibility should be applied; defaults to Rex")):
+async def get_aggregate_stats(agent: Optional[str] = Query(None, description="Optional agent whose workflow visibility should be applied")):
     """
     Get aggregate workflow statistics
     
     Returns statistics across all workflows.
     """
     try:
-        from flocks.agent.controls import agent_allows_workflow_listing
-
-        effective_agent = str(agent or "rex").strip() or "rex"
-        if not await agent_allows_workflow_listing(effective_agent):
-            log.info("workflow.stats.unauthorized", {"agent": effective_agent})
+        if not await _agent_can_view_workflows(agent):
+            log.info("workflow.stats.unauthorized", {"agent": agent})
             raise HTTPException(status_code=403, detail="Workflow access is not authorized for the current agent")
 
         aggregate = {
