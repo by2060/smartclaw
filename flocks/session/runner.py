@@ -1519,6 +1519,9 @@ class SessionRunner:
         if human_memory_answer_rule:
             prompts.append(human_memory_answer_rule)
 
+        from flocks.session.prompt_strings import PROMPT_CAPABILITY_SELF_CHECK
+        prompts.append(PROMPT_CAPABILITY_SELF_CHECK)
+
         # Sandbox runtime context for better tool/path awareness
         sandbox_prompt = await self._build_sandbox_prompt(agent)
         if sandbox_prompt:

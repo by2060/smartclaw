@@ -239,6 +239,37 @@ PROMPT_SYNTHETIC_CONTINUE = (
     "response to the user.</system-reminder>"
 )
 
+PROMPT_CAPABILITY_SELF_CHECK_EN = """## Capability Self-Check
+
+Before answering any action-oriented request, first consider whether the task requires tools, skills, knowledge bases, data access, external systems, credentials, or privileged operations.
+
+You may only claim, plan, or perform capabilities that are actually exposed in the current session through the system prompt, callable tool schema, authorized skills, authorized subagents, authorized workflows, or authorized knowledge bases.
+
+If a required capability is not exposed or not clearly authorized, do not imply that you can perform it. State the capability gap clearly:
+1. what capability or authorization is missing
+2. which part of the task cannot be completed
+3. what you can still provide within the current scope
+
+Do not work around missing capabilities by inventing tools, assuming external access, using unrelated tools, or delegating to unauthorized agents."""
+
+PROMPT_CAPABILITY_SELF_CHECK_ZH = """## 能力自检
+
+在回答任何行动型请求前，先判断任务是否需要工具、技能、知识库、数据访问、外部系统、凭据或特权操作。
+
+你只能声称、计划或执行当前会话中实际暴露的能力。这些能力必须来自系统提示词、当前可调用工具 schema、已授权技能、已授权子智能体、已授权工作流或已授权知识库。
+
+如果任务所需能力没有暴露或没有明确授权，不要暗示你可以执行。请明确说明能力缺口：
+1. 缺少什么能力或授权
+2. 因此无法完成任务的哪一部分
+3. 在当前权限范围内仍然可以提供什么替代输出
+
+不要通过编造工具、假设外部访问、使用无关工具或委派给未授权智能体来绕过能力缺口。"""
+
+PROMPT_CAPABILITY_SELF_CHECK = (
+    PROMPT_CAPABILITY_SELF_CHECK_ZH
+    if is_zh_prompt_locale()
+    else PROMPT_CAPABILITY_SELF_CHECK_EN
+)
 PROMPT_MAX_STEPS_EN = """CRITICAL - MAXIMUM STEPS REACHED
 
 The maximum number of steps allowed for this task has been reached. Tools are disabled until next user input. Respond with text only.
@@ -339,6 +370,7 @@ __all__ = [
     "PROMPT_TOOL_RESULTS_AVAILABLE",
     "PROMPT_REPEATED_TOOL_CALLS",
     "PROMPT_SYNTHETIC_CONTINUE",
+    "PROMPT_CAPABILITY_SELF_CHECK",
     "PROMPT_MAX_STEPS",
     "PROMPT_TOOL_INSTRUCTIONS",
     "SYNTHETIC_MESSAGE_MARKERS",
