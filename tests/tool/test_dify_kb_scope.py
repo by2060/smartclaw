@@ -108,6 +108,31 @@ def test_dify_kb_runtime_config_reads_project_secret_concurrency(monkeypatch):
     assert module._load_runtime_config() == ("http://dify.test/v1", "token", 7, 3)
 
 
+def test_dify_kb_runtime_config_caps_project_secret_top_k(monkeypatch):
+    module = _load_dify_module()
+
+    class EmptySecrets:
+        def get(self, key):
+            return ""
+
+    monkeypatch.setattr(module, "get_secret_manager", lambda: EmptySecrets())
+    monkeypatch.setattr(
+        module,
+        "_load_project_secret_file",
+        lambda: {
+            "dify_api_url": "http://dify.test/v1/",
+            "dify_api_key": "token",
+            "dify_retrieval_top_k": "30",
+        },
+    )
+
+    assert module._load_runtime_config() == (
+        "http://dify.test/v1",
+        "token",
+        module.DEFAULT_RETRIEVAL_SIZE,
+        module.DEFAULT_RETRIEVAL_CONCURRENCY,
+    )
+
 def test_dify_kb_runtime_config_caps_project_secret_concurrency(monkeypatch):
     module = _load_dify_module()
 
@@ -172,6 +197,8 @@ async def test_dify_kb_tool_output_records_keep_raw_dify_records(monkeypatch):
 
     assert result.success is True
     assert result.output["records"] is raw_records
+    assert "markdown" not in result.output
+    assert "signed ![image](http://example.test/signed.png?sign=abc)" in result.metadata["knowledge_search_result"]["markdown"]
     assert result.output["records"][0]["child_chunks"] == [{"id": "child_a", "score": 0.9}]
     assert result.output["records"][0]["segment"]["document"]["doc_metadata"] == {"auth_tag": "team"}
 

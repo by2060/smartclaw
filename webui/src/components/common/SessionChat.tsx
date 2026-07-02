@@ -17,7 +17,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo, memo } from 'react';
-import { Send, Loader2, ChevronDown, Square, Copy, User, Plus, FileText, AlertCircle, X, RefreshCw, Pencil, Save, ImageIcon, Database, Link2, Download, ExternalLink } from 'lucide-react';
+import { Send, Loader2, ChevronDown, Square, Copy, User, Plus, FileText, AlertCircle, X, RefreshCw, Pencil, Save, ImageIcon } from 'lucide-react';
 import { StreamingMarkdown } from './StreamingMarkdown';
 import { useTranslation } from 'react-i18next';
 import LoadingSpinner from './LoadingSpinner';
@@ -2002,13 +2002,6 @@ function ChatMessageBubbleInner({
   const editableRawText = latestEditablePart?.text || '';
   const isEditing = !!targetPartId && editingMessageId === targetMessageId;
   const isActionPending = actionMessageId === targetMessageId;
-  const messageKnowledgeEvents = !isUser
-    ? parts
-        .filter((part) => part.type === 'tool' && part.state)
-        .map((part) => getKnowledgeSearchResult(part.state as Partial<ToolState>))
-        .filter((event): event is KnowledgeSearchEvent => !!event)
-    : [];
-
   const bubbleClass = getMessageBubbleClassName({ compact, isUser, isEditing });
   const actionBarClass = `absolute bottom-0 z-10 flex items-center gap-1.5 transition-all duration-150 ${
     isUser ? 'right-3 translate-x-0.5 translate-y-1/2' : 'left-3 -translate-x-0.5 translate-y-1/2'
@@ -2188,16 +2181,6 @@ function ChatMessageBubbleInner({
           })()
         )}
 
-        {!isEditing && messageKnowledgeEvents.length > 0 && (
-          <div className="mt-3 space-y-2 border-t border-gray-100 pt-3">
-            {messageKnowledgeEvents.map((event, index) => (
-              <KnowledgeAnswerReferencesPanel
-                key={`${event.event_type || event.schema || 'knowledge'}-${index}`}
-                event={event}
-              />
-            ))}
-          </div>
-        )}
 
         {/* Streaming indicator */}
         {isActive && !isUser && parts.length > 0 && (() => {
@@ -2332,8 +2315,6 @@ export function ChatToolPart({ part, pendingQuestion, onAnswer, onReject }: Chat
 
   const state: Partial<ToolState> = part.state || {};
   const status = state.status || 'pending';
-  const knowledgeSearchResult = getKnowledgeSearchResult(state);
-
   // Some tools block on an internal `question` call (for example safety
   // confirmation inside `ssh_host_cmd`), so render the question UI whenever
   // this running tool part has a pending question attached to it.
@@ -2395,12 +2376,9 @@ export function ChatToolPart({ part, pendingQuestion, onAnswer, onReject }: Chat
           </details>
         )}
 
-        {knowledgeSearchResult && (
-          <EnhancedKnowledgeSearchResultPanel event={knowledgeSearchResult} />
-        )}
 
         {status === 'completed' && state.output !== undefined && (
-          <details className="bg-white/50 rounded p-1.5" open={!knowledgeSearchResult}>
+          <details className="bg-white/50 rounded p-1.5" open>
             <summary className="cursor-pointer font-medium text-gray-600 text-[11px]">📤 {t('chat.tool.outputResult')}</summary>
             <pre className="mt-1 p-1.5 bg-gray-800 text-green-300 rounded text-[11px] overflow-x-auto max-h-48 overflow-y-auto font-mono">
               {formatOutput(state.output)}
@@ -2436,27 +2414,6 @@ interface KnowledgeSearchEventRecord {
     position?: number | string;
   };
   score?: number;
-  images?: KnowledgeSearchImage[];
-}
-
-interface KnowledgeSearchImage {
-  alt?: string;
-  url?: string;
-  preview_url?: string;
-  download_url?: string;
-  markdown?: string;
-  download_markdown?: string;
-}
-
-interface KnowledgeSearchAttachment {
-  type?: string;
-  name?: string;
-  url?: string;
-  preview_url?: string;
-  download_url?: string;
-  document_name?: string;
-  document_id?: string;
-  segment_position?: number | string;
 }
 
 interface KnowledgeSearchEvent {
@@ -2469,7 +2426,6 @@ interface KnowledgeSearchEvent {
   sources_markdown?: string;
   images_markdown?: string;
   records?: KnowledgeSearchEventRecord[];
-  attachments?: KnowledgeSearchAttachment[];
 }
 
 export function getKnowledgeSearchResult(state: Partial<ToolState>): KnowledgeSearchEvent | null {
@@ -2497,156 +2453,6 @@ export function getKnowledgeSearchResult(state: Partial<ToolState>): KnowledgeSe
   }
 
   return null;
-}
-
-function EnhancedKnowledgeSearchResultPanel({ event }: { event: KnowledgeSearchEvent }) {
-  const records = Array.isArray(event.records) ? event.records : [];
-  const attachments = Array.isArray(event.attachments) ? event.attachments : [];
-  const imageAttachments = attachments.filter((attachment) => attachment.type === 'image' && (attachment.preview_url || attachment.url));
-  const recordImages = records.flatMap((record) =>
-    (Array.isArray(record.images) ? record.images : []).map((image) => ({
-      type: 'image',
-      name: image.alt || 'image',
-      url: image.url,
-      preview_url: image.preview_url || image.url,
-      download_url: image.download_url || image.url,
-      document_name: record.document?.name,
-      document_id: record.document?.id,
-      segment_position: record.segment?.position,
-    } as KnowledgeSearchAttachment)),
-  );
-  const images = imageAttachments.length > 0 ? imageAttachments : recordImages;
-  const markdown = event.markdown || event.sources_markdown || event.images_markdown || '';
-  const count = typeof event.count === 'number' ? event.count : records.length;
-  const imageCount = typeof event.image_count === 'number' ? event.image_count : images.length;
-  const shownRecords = records.slice(0, 6);
-  const shownImages = images.slice(0, 8);
-
-  return (
-    <div className="rounded-md border border-emerald-200 bg-emerald-50/70 p-2 text-[11px] text-emerald-950">
-      <div className="mb-1.5 flex flex-wrap items-center gap-2">
-        <span className="inline-flex items-center gap-1 font-semibold">
-          <Database className="h-3.5 w-3.5" />
-          Knowledge search event
-        </span>
-        <code className="rounded bg-white/80 px-1 py-0.5 text-[10px] text-emerald-800">
-          {event.schema || event.event_type || 'knowledge_search_result.v1'}
-        </code>
-        <span className="text-emerald-700">{count} records</span>
-        <span className="text-emerald-700">{imageCount} images</span>
-      </div>
-
-      {event.query && (
-        <div className="mb-1.5 text-emerald-800">
-          Query: <code className="rounded bg-white/70 px-1 py-0.5">{event.query}</code>
-        </div>
-      )}
-
-      {records.length > 0 && (
-        <div className="mb-2">
-          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Sources</div>
-          <div className="space-y-1">
-            {shownRecords.map((record, index) => {
-              const documentName = record.document?.name || 'Untitled document';
-              const downloadUrl = record.document?.download_url || undefined;
-              return (
-                <div key={`${record.document?.id || 'doc'}-${record.segment?.id || index}`} className="flex items-start gap-1.5 rounded bg-white/60 px-2 py-1">
-                  <Link2 className="mt-0.5 h-3 w-3 flex-shrink-0 text-emerald-700" />
-                  <div className="min-w-0">
-                    {downloadUrl ? (
-                      <a
-                        href={downloadUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex max-w-full items-center gap-1 truncate font-medium text-emerald-950 underline decoration-emerald-300 underline-offset-2 hover:text-emerald-700"
-                      >
-                        <span className="truncate">{documentName}</span>
-                        <ExternalLink className="h-3 w-3 flex-shrink-0" />
-                      </a>
-                    ) : (
-                      <div className="truncate font-medium text-emerald-950">{documentName}</div>
-                    )}
-                    <div className="text-[10px] text-emerald-700">
-                      Segment {record.segment?.position ?? '-'} | score {typeof record.score === 'number' ? record.score.toFixed(3) : '-'}
-                      {record.document?.id && <span> | doc {record.document.id.slice(0, 8)}</span>}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          {records.length > shownRecords.length && (
-            <div className="mt-1 text-[10px] text-emerald-700">+{records.length - shownRecords.length} more sources in Markdown preview</div>
-          )}
-        </div>
-      )}
-
-      {images.length > 0 && (
-        <div className="mb-2">
-          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Image attachments</div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-            {shownImages.map((image, index) => {
-              const previewUrl = image.preview_url || image.url || '';
-              const downloadUrl = image.download_url || image.url || previewUrl;
-              return (
-                <div key={`${previewUrl}-${index}`} className="overflow-hidden rounded border border-emerald-100 bg-white">
-                  <a href={previewUrl} target="_blank" rel="noreferrer" className="block">
-                    <img
-                      src={previewUrl}
-                      alt={image.name || 'knowledge image'}
-                      className="h-24 w-full bg-gray-50 object-cover"
-                      loading="lazy"
-                    />
-                  </a>
-                  <div className="space-y-1 px-2 py-1.5">
-                    <div className="truncate text-[10px] font-medium text-emerald-950">{image.document_name || image.name || 'image'}</div>
-                    <div className="text-[10px] text-emerald-700">Segment {image.segment_position ?? '-'}</div>
-                    <div className="flex flex-wrap gap-1">
-                      <a
-                        href={previewUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 rounded border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800 hover:bg-emerald-100"
-                      >
-                        <ExternalLink className="h-3 w-3" />
-                        Preview
-                      </a>
-                      <a
-                        href={downloadUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        download
-                        className="inline-flex items-center gap-1 rounded border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800 hover:bg-emerald-100"
-                      >
-                        <Download className="h-3 w-3" />
-                        Download
-                      </a>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          {images.length > shownImages.length && (
-            <div className="mt-1 text-[10px] text-emerald-700">+{images.length - shownImages.length} more images in Markdown preview</div>
-          )}
-        </div>
-      )}
-
-      {markdown && (
-        <details className="rounded bg-white/70 p-1.5">
-          <summary className="cursor-pointer font-medium text-emerald-800">Markdown preview</summary>
-          <div className="mt-1 max-h-72 overflow-y-auto rounded border border-emerald-100 bg-white p-2">
-            <StreamingMarkdown content={markdown} isStreaming={false} />
-          </div>
-        </details>
-      )}
-    </div>
-  );
-}
-
-function KnowledgeAnswerReferencesPanel({ event }: { event: KnowledgeSearchEvent }) {
-  return <EnhancedKnowledgeSearchResultPanel event={event} />;
 }
 
 /**
