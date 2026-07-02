@@ -16,6 +16,10 @@ PROXY_TARGET_HOST="127.0.0.1"
 # HTTPS 证书
 CERT_DIR="./.certs"
 
+# 系统提示词语言：zh-CN 时加载 *.zh.txt 中文版基础提示词（anthropic/beast/gemini/qwen 等）
+# 让系统提示词主体为中文，减少 Agent 思考过程漂移回英文的概率
+export SMARTCLAW_SESSION_PROMPT_LOCALE="zh-CN"
+
 # 在当前 Conda 虚拟环境的 bin 目录下，自动生成一个名为 smartclaw 的启动命令
 ensure_smartclaw_cli_wrapper() {
   if [ -z "$CONDA_PREFIX" ]; then

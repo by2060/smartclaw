@@ -30,7 +30,6 @@ DEFAULT_TARGETS: tuple[str, ...] = (
     ".gitattributes",
     ".gitignore",
     "pyproject.toml",
-    "AGENTS.md",
     "install.ps1",
     "install.sh",
     "install_zh.ps1",

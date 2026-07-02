@@ -2101,6 +2101,19 @@ class SessionRunner:
                                 "type": "text",
                                 "text": "The following tool was executed by the user",
                             })
+
+                # 就近中文思考锚点：仅在 zh-CN locale 且为"当前这一轮"用户消息时，
+                # 于消息尾部追加一次。零语义输入（纯符号/乱码）不含语言信号，远端系统
+                # 提示词约束不住，需要在最近的位置再钉一次，避免思考过程漂移回英文。
+                if is_latest_user_turn and get_prompt_locale() == "zh-CN":
+                    from flocks.session.prompt_strings import PROMPT_ZH_THINKING_ANCHOR
+                    if user_content_blocks:
+                        user_content_blocks.append({
+                            "type": "text",
+                            "text": PROMPT_ZH_THINKING_ANCHOR,
+                        })
+                    if user_content_parts:
+                        user_content_parts.append(PROMPT_ZH_THINKING_ANCHOR)
                 
                 if user_content_blocks and any(
                     block.get("type") == "image"

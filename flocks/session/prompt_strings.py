@@ -239,6 +239,20 @@ PROMPT_SYNTHETIC_CONTINUE = (
     "response to the user.</system-reminder>"
 )
 
+# 就近（recency 最强）的中文思考锚点：仅追加到"当前这一轮"用户消息尾部。
+# 用于压制零语义输入（纯符号 / 乱码 / 非自然语言）与英文输入时，思考过程漂移回英文的问题——
+# 这类输入不含中文语言信号，远端系统提示词约束不住，需要就近再钉一次。
+# 语义：默认思考+输出均简体中文；仅当用户明确要求用英文回答时，思考+输出才都改用英文。
+PROMPT_ZH_THINKING_ANCHOR = (
+    "<system-reminder>"
+    "语言判定（先用简体中文完成这一步判定）：本条消息是否为用户【明确要求用英文回答】的指令"
+    "（例如“用英文回答”“请用 English 回复”“现在我们用英文交流”）？"
+    "① 若不是——这是默认情况，包括本条消息本身就是英文、符号、数字或乱码——"
+    "你的思考过程与最终回复都必须使用简体中文，严禁用英文推理；用英文提问不等于要求用英文回答。"
+    "② 仅当明确是该指令时——思考过程与最终回复才都改用英文，直至用户要求改回中文。"
+    "</system-reminder>"
+)
+
 PROMPT_CAPABILITY_SELF_CHECK_EN = """## Capability Self-Check
 
 Before answering any action-oriented request, first consider whether the task requires tools, skills, knowledge bases, data access, external systems, credentials, or privileged operations.
@@ -370,6 +384,7 @@ __all__ = [
     "PROMPT_TOOL_RESULTS_AVAILABLE",
     "PROMPT_REPEATED_TOOL_CALLS",
     "PROMPT_SYNTHETIC_CONTINUE",
+    "PROMPT_ZH_THINKING_ANCHOR",
     "PROMPT_CAPABILITY_SELF_CHECK",
     "PROMPT_MAX_STEPS",
     "PROMPT_TOOL_INSTRUCTIONS",

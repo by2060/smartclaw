@@ -9,6 +9,7 @@
    - 优先smartclaw环境，如果是其他环境执行脚本失败，缺包安包
 
 ### 2、工具先后执行顺序：
+- 工程目录下执行：
 1. 隐藏前端弹窗与内置菜单：
    `python automated_script/toggle_home_prompts.py --disable`
 2. 去flocks+去rex+修改思考头像+修改浏览器链接标签头像：
@@ -17,9 +18,14 @@
    `python automated_script/curate_builtin_plugins.py --apply`
 4. 构建前端静态资源：
 ```bash
-   cd webui
-   npm ci  # 如果没有package-lock.json文件，改用 `npm install`
-   npm run build
+   # 方式一：直接在工程目录下执行
+   npm --prefix webui ci
+   npm --prefix webui run build
+   
+   # 方式二：手动进入webui目录
+   # cd webui
+   # npm ci  # 如果没有package-lock.json文件，改用 `npm install`
+   # npm run build
 ```
 5. 删除项目多余目录或文件：
    `python automated_script/prune_project.py --apply`
