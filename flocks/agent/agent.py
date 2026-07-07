@@ -152,8 +152,10 @@ class AgentInfo(BaseModel):
     # None means unrestricted for backward compatibility with existing agents.
     # An explicit empty list means no subagents are allowed.
     sub_agents: Optional[List[str]] = None
-    # Workflows this agent is allowed to enumerate. Absence means no workflow
-    # catalog visibility; execution remains controlled by tool permissions.
+    # Workflows this agent is allowed to enumerate or execute.
+    # Absence and an explicit empty list both mean no workflow execution access.
+    # Use workflow:list/view/read tokens for catalog visibility and concrete
+    # workflow ids or workflow:run/workflows:run for execution.
     workflows: Optional[List[str]] = None
     kb: Optional[List[str]] = Field(default=None, alias="knowledge_base")
 

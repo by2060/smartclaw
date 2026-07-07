@@ -394,6 +394,33 @@ async def run_workflow_tool(
         workflow_id = canonical_workflow_id or str(workflow_source)
 
     display_workflow_id = canonical_workflow_id or workflow_id
+    workflow_id_for_permission = canonical_workflow_id if isinstance(workflow_source, Path) else None
+    workflow_path_for_permission = str(workflow_source) if isinstance(workflow_source, Path) else None
+    from flocks.agent.controls import agent_allowed_workflows, agent_allows_workflow_execution
+
+    if not await agent_allows_workflow_execution(
+        ctx.agent,
+        workflow_id=workflow_id_for_permission,
+        workflow_path=workflow_path_for_permission,
+        session_id=ctx.session_id,
+        extra=getattr(ctx, "extra", None),
+    ):
+        allowed = await agent_allowed_workflows(ctx.agent)
+        allowed_text = ", ".join(allowed) or "none"
+        return ToolResult(
+            success=False,
+            error=(
+                f'Agent "{ctx.agent}" is not allowed to execute workflow '
+                f'"{display_workflow_id}". Allowed workflows: {allowed_text}'
+            ),
+            metadata={
+                "blocked_by_agent_workflows": True,
+                "agent": ctx.agent,
+                "workflow_id": str(display_workflow_id),
+                "workflow_name": str(workflow_name),
+            },
+        )
+
     tracked_execution: Optional[Dict[str, Any]] = None
     tracked_history: list[Dict[str, Any]] = []
     tracked_exec_key: Optional[str] = None

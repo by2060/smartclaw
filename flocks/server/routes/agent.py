@@ -73,6 +73,7 @@ def _agent_overlay(
     skills: Optional[List[str]] = None,
     tools: Optional[List[str]] = None,
     sub_agents: Optional[List[str]] = None,
+    workflows: Optional[List[str]] = None,
     kb: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     overlay: Dict[str, Any] = {}
@@ -84,6 +85,8 @@ def _agent_overlay(
         overlay["tools"] = _dedupe_strings(tools)
     if sub_agents is not None:
         overlay["sub_agents"] = _dedupe_strings(sub_agents)
+    if workflows is not None:
+        overlay["workflows"] = _dedupe_strings(workflows)
     if kb is not None:
         overlay["kb"] = _dedupe_strings(kb)
     return overlay
@@ -120,6 +123,7 @@ class AgentResponse(BaseModel):
     skills: List[str] = Field(default_factory=list)
     tools: List[str] = Field(default_factory=list)
     sub_agents: List[str] = Field(default_factory=list)
+    workflows: List[str] = Field(default_factory=list)
     kb: List[str] = Field(default_factory=list)
     tags: List[str] = Field(default_factory=list)
 
@@ -135,6 +139,7 @@ def agent_to_response(
     skills: Optional[List[str]] = None,
     tools: Optional[List[str]] = None,
     sub_agents: Optional[List[str]] = None,
+    workflows: Optional[List[str]] = None,
     kb: Optional[List[str]] = None,
     delegatable_override: Optional[bool] = None,
 ) -> AgentResponse:
@@ -177,6 +182,7 @@ def agent_to_response(
         skills=skills if skills is not None else (getattr(agent, "skills", None) or []),
         tools=tools if tools is not None else (agent.tools or []),
         sub_agents=sub_agents if sub_agents is not None else (getattr(agent, "sub_agents", None) or []),
+        workflows=workflows if workflows is not None else (getattr(agent, "workflows", None) or []),
         kb=kb if kb is not None else (getattr(agent, "kb", None) or []),
         tags=agent.tags,
     )
@@ -206,6 +212,7 @@ def _agent_data_to_info(agent_data: Dict[str, Any]) -> AgentInfoModel:
         tools=agent_data.get("tools", []),
         skills=agent_data.get("skills") if "skills" in agent_data else None,
         sub_agents=agent_data.get("sub_agents") if "sub_agents" in agent_data else None,
+        workflows=agent_data.get("workflows") if "workflows" in agent_data else None,
         kb=agent_data.get("kb") if "kb" in agent_data else agent_data.get("knowledge_base"),
         delegatable=agent_data.get("delegatable"),
     )
@@ -232,6 +239,7 @@ def _custom_agent_data_to_response(agent_data: Dict[str, Any]) -> AgentResponse:
         skills=agent_data.get("skills", []),
         tools=agent_data.get("tools", []),
         sub_agents=agent_data.get("sub_agents", []),
+        workflows=agent_data.get("workflows", []),
         kb=agent_data.get("kb", agent_data.get("knowledge_base", [])),
         tags=agent_data.get("tags", []),
         delegatable=agent_data.get("delegatable", True),
@@ -298,6 +306,7 @@ async def _build_single_agent_response(
         else getattr(agent, "kb", [])
     )
     delegatable = overlay.get("delegatable") if "delegatable" in overlay else None
+    workflows = overlay.get("workflows") if "workflows" in overlay else getattr(agent, "workflows", [])
     override = overrides.get(agent.name, {})
     model_override = {k: override[k] for k in ("modelID", "providerID") if k in override} or None
     temperature_override = override.get("temperature")
@@ -308,6 +317,7 @@ async def _build_single_agent_response(
         skills=skills,
         tools=tools,
         sub_agents=sub_agents,
+        workflows=workflows,
         kb=kb,
         delegatable_override=delegatable,
     )
@@ -403,6 +413,7 @@ class AgentCreateRequest(BaseModel):
     skills: Optional[List[str]] = Field(None, description="Enabled skill names")
     tools: List[str] = Field(default_factory=list, description="Enabled tool names")
     sub_agents: Optional[List[str]] = Field(None, description="Allowed L1 execution agent names")
+    workflows: Optional[List[str]] = Field(None, description="Allowed workflow IDs or workflow permission tokens")
     kb: Optional[List[str]] = Field(None, alias="knowledge_base", description="Allowed knowledge base dataset IDs")
 
 
@@ -420,6 +431,7 @@ class AgentUpdateRequest(BaseModel):
     skills: Optional[List[str]] = Field(None, description="Enabled skill names")
     tools: Optional[List[str]] = Field(None, description="Enabled tool names")
     sub_agents: Optional[List[str]] = Field(None, description="Allowed L1 execution agent names")
+    workflows: Optional[List[str]] = Field(None, description="Allowed workflow IDs or workflow permission tokens")
     kb: Optional[List[str]] = Field(None, alias="knowledge_base", description="Allowed knowledge base dataset IDs")
 
 
@@ -446,6 +458,7 @@ async def create_agent(req: AgentCreateRequest):
             skills=req.skills,
             tools=req.tools,
             sub_agents=req.sub_agents,
+            workflows=req.workflows,
             kb=req.kb,
         )
         agent_data: Dict[str, Any] = {
@@ -485,6 +498,7 @@ async def create_agent(req: AgentCreateRequest):
             skills=overlay.get("skills"),
             tools=overlay.get("tools"),
             sub_agents=overlay.get("sub_agents"),
+            workflows=overlay.get("workflows"),
             kb=overlay.get("kb"),
         )
     except HTTPException:
@@ -539,6 +553,10 @@ async def update_agent(name: str, req: AgentUpdateRequest):
                     req.sub_agents if req.sub_agents is not None
                     else agent_data.get("sub_agents") if "sub_agents" in agent_data else None
                 ),
+                workflows=(
+                    req.workflows if req.workflows is not None
+                    else agent_data.get("workflows") if "workflows" in agent_data else None
+                ),
                 kb=(
                     req.kb if req.kb is not None
                     else agent_data.get("kb") if "kb" in agent_data else agent_data.get("knowledge_base")
@@ -584,6 +602,10 @@ async def update_agent(name: str, req: AgentUpdateRequest):
                     req.sub_agents if req.sub_agents is not None
                     else yaml_data.get("sub_agents") if "sub_agents" in yaml_data else None
                 ),
+                workflows=(
+                    req.workflows if req.workflows is not None
+                    else yaml_data.get("workflows") if "workflows" in yaml_data else None
+                ),
                 kb=(
                     req.kb if req.kb is not None
                     else yaml_data.get("kb") if "kb" in yaml_data else yaml_data.get("knowledge_base")
@@ -597,7 +619,7 @@ async def update_agent(name: str, req: AgentUpdateRequest):
             # The entry intentionally omits "name" so it is not mistaken for a
             # full Storage-based custom agent on subsequent updates.
             extras: Dict[str, Any] = agent_data if isinstance(agent_data, dict) else {}
-            for key in ("delegatable", "skills", "tools", "sub_agents", "kb"):
+            for key in ("delegatable", "skills", "tools", "sub_agents", "workflows", "kb"):
                 if key in updates:
                     extras[key] = updates[key]
             await Storage.write(agent_key, extras)
@@ -630,6 +652,8 @@ async def update_agent(name: str, req: AgentUpdateRequest):
                     agent.tools = updates["tools"]
                 if "sub_agents" in updates:
                     agent.sub_agents = updates["sub_agents"]
+                if "workflows" in updates:
+                    agent.workflows = updates["workflows"]
                 if "kb" in updates:
                     agent.kb = updates["kb"]
                 overrides = await _load_model_overrides()

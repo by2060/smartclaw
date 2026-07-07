@@ -267,29 +267,234 @@ async def agent_allowed_tools(agent_name: Optional[str]) -> list[str]:
     return list(getattr(agent, "tools", None) or [])
 
 
-async def agent_allows_workflow_listing(agent_name: Optional[str]) -> bool:
-    """Return whether an agent may enumerate workflow names/descriptions."""
+_WORKFLOW_LIST_TOKENS = {
+    "list",
+    "view",
+    "read",
+    "workflow:list",
+    "workflow:view",
+    "workflow:read",
+    "workflows:list",
+    "workflows:view",
+}
+
+_WORKFLOW_RUN_TOKENS = {
+    "run",
+    "execute",
+    "workflow:run",
+    "workflow:execute",
+    "workflows:run",
+    "workflows:execute",
+}
+
+_WORKFLOW_ALL_TOKENS = {"*", "all"}
+
+
+async def rex_session_uses_full_workflow_catalog(
+    session_id: Optional[str],
+    agent_name: Optional[str],
+    extra: Optional[dict[str, Any]] = None,
+) -> bool:
+    """Return whether Rex may view the full workflow catalog."""
+    if not is_rex_agent(agent_name):
+        return False
+
+    if isinstance(extra, dict) and extra.get("workflow_tool_context"):
+        return True
+
+    return await _session_is_workflow(session_id)
+
+
+async def agent_visible_workflow_ids(
+    agent_name: Optional[str],
+    *,
+    session_id: Optional[str] = None,
+    extra: Optional[dict[str, Any]] = None,
+) -> Optional[set[str]]:
+    """Return visible workflow IDs, or None when the full catalog is visible."""
+    effective_agent = str(agent_name or "rex").strip() or "rex"
+    if await rex_session_uses_full_workflow_catalog(session_id, effective_agent, extra):
+        return None
+
     from flocks.agent.registry import Agent
 
-    effective_agent = str(agent_name or "rex").strip() or "rex"
     agent = await Agent.get(effective_agent)
+    if not agent:
+        return set()
+
+    declared_raw = getattr(agent, "workflows", None)
+    if not declared_raw:
+        return set()
+
+    declared = _normalize_names(declared_raw)
+    if declared & _WORKFLOW_ALL_TOKENS:
+        return None
+
+    hidden_tokens = _WORKFLOW_LIST_TOKENS | _WORKFLOW_RUN_TOKENS
+    return {
+        item
+        for item in declared
+        if item and item not in hidden_tokens and not item.startswith("workflow:") and not item.startswith("workflows:")
+    }
+
+
+async def agent_allows_workflow_listing(
+    agent_name: Optional[str],
+    *,
+    session_id: Optional[str] = None,
+    extra: Optional[dict[str, Any]] = None,
+) -> bool:
+    """Return whether an agent may enumerate workflow names/descriptions."""
+    visible_ids = await agent_visible_workflow_ids(agent_name, session_id=session_id, extra=extra)
+    return visible_ids is None or bool(visible_ids)
+
+
+async def filter_workflow_entries_for_agent(
+    entries: Iterable[Any],
+    agent_name: Optional[str],
+    *,
+    session_id: Optional[str] = None,
+    extra: Optional[dict[str, Any]] = None,
+) -> list[Any]:
+    """Filter workflow catalog entries for an agent-scoped conversation view."""
+    entry_list = list(entries)
+    visible_ids = await agent_visible_workflow_ids(agent_name, session_id=session_id, extra=extra)
+    if visible_ids is None:
+        return entry_list
+    if not visible_ids:
+        return []
+
+    def entry_id(entry: Any) -> str:
+        if isinstance(entry, dict):
+            return str(entry.get("id") or entry.get("workflowId") or entry.get("name") or "").strip().lower()
+        return str(
+            getattr(entry, "id", None)
+            or getattr(entry, "workflowId", None)
+            or getattr(entry, "name", None)
+            or ""
+        ).strip().lower()
+
+    return [entry for entry in entry_list if entry_id(entry) in visible_ids]
+
+
+async def rex_session_uses_full_workflow_execution(
+    session_id: Optional[str],
+    agent_name: Optional[str],
+    extra: Optional[dict[str, Any]] = None,
+) -> bool:
+    """Return whether Rex may execute workflows without agent.yaml workflow grants."""
+    if not is_rex_agent(agent_name):
+        return False
+
+    if isinstance(extra, dict) and extra.get("workflow_tool_context"):
+        return True
+
+    return await _session_is_workflow(session_id)
+
+
+def _workflow_id_from_canonical_path(value: Optional[Any]) -> Optional[str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        from pathlib import Path
+
+        parts = Path(raw).expanduser().parts
+    except Exception:
+        return None
+
+    for index in range(0, max(len(parts) - 3, 0)):
+        if parts[index:index + 3] != (".flocks", "plugins", "workflows"):
+            continue
+        workflow_index = index + 3
+        if workflow_index >= len(parts):
+            continue
+        workflow_id = str(parts[workflow_index]).strip()
+        if not workflow_id:
+            continue
+        remainder = parts[workflow_index + 1:]
+        if len(remainder) == 1 and str(remainder[0]).lower() == "workflow.json":
+            return workflow_id.lower()
+    return None
+
+
+def _workflow_candidate_tokens(
+    *,
+    workflow_id: Optional[str] = None,
+    workflow_path: Optional[str] = None,
+) -> set[str]:
+    tokens: set[str] = set()
+
+    def add_id(value: Optional[Any]) -> None:
+        text = str(value or "").strip()
+        if not text:
+            return
+        canonical_from_path = _workflow_id_from_canonical_path(text)
+        if canonical_from_path:
+            tokens.add(canonical_from_path)
+            return
+        if "/" in text or "\\" in text or text.endswith(".json"):
+            return
+        tokens.add(text.lower())
+
+    add_id(workflow_id)
+    canonical_path_id = _workflow_id_from_canonical_path(workflow_path)
+    if canonical_path_id:
+        tokens.add(canonical_path_id)
+    return tokens
+
+
+async def agent_allowed_workflows(agent_name: Optional[str]) -> list[str]:
+    from flocks.agent.registry import Agent
+
+    if not agent_name:
+        return []
+    agent = await Agent.get(agent_name or "")
+    if not agent:
+        return []
+    return list(getattr(agent, "workflows", None) or [])
+
+
+async def agent_allows_workflow_execution(
+    agent_name: Optional[str],
+    *,
+    workflow_id: Optional[str] = None,
+    workflow_path: Optional[str] = None,
+    session_id: Optional[str] = None,
+    extra: Optional[dict[str, Any]] = None,
+) -> bool:
+    """Return whether an agent may execute the requested workflow.
+
+    Missing ``workflows`` and an explicit empty list both deny execution. Rex
+    workflow sessions are exempt so existing workflow-category sessions keep
+    their current behavior.
+    """
+    if await rex_session_uses_full_workflow_execution(session_id, agent_name, extra):
+        return True
+    if not (workflow_id or workflow_path):
+        return False
+    if not agent_name:
+        return False
+
+    from flocks.agent.registry import Agent
+
+    agent = await Agent.get(agent_name or "")
     if not agent:
         return False
 
-    declared = _normalize_names(getattr(agent, "workflows", None) or [])
-    allowed_tokens = {
-        "*",
-        "all",
-        "list",
-        "view",
-        "read",
-        "workflow:list",
-        "workflow:view",
-        "workflow:read",
-        "workflows:list",
-        "workflows:view",
-    }
-    return bool(declared & allowed_tokens)
+    declared_raw = getattr(agent, "workflows", None)
+    if not declared_raw:
+        return False
+
+    declared = _normalize_names(declared_raw)
+    if declared & (_WORKFLOW_ALL_TOKENS | _WORKFLOW_RUN_TOKENS):
+        return True
+
+    candidates = _workflow_candidate_tokens(
+        workflow_id=workflow_id,
+        workflow_path=workflow_path,
+    )
+    return bool(declared & candidates)
 
 
 async def agent_allows_skill(agent_name: Optional[str], skill_name: Optional[str]) -> bool:

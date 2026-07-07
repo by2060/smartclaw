@@ -227,6 +227,34 @@ async def run_workflow_node_tool(
     except (ValueError, json.JSONDecodeError, FileNotFoundError) as e:
         return ToolResult(success=False, error=str(e))
 
+    workflow_name = str(workflow_dict.get("name") or workflow_id or "unknown workflow")
+    display_workflow_id = str(workflow_id or workflow_dict.get("id") or workflow_name)
+    workflow_id_for_permission = workflow_id if workflow_path else None
+    from flocks.agent.controls import agent_allowed_workflows, agent_allows_workflow_execution
+
+    if not await agent_allows_workflow_execution(
+        ctx.agent,
+        workflow_id=workflow_id_for_permission,
+        workflow_path=workflow_path,
+        session_id=ctx.session_id,
+        extra=getattr(ctx, "extra", None),
+    ):
+        allowed = await agent_allowed_workflows(ctx.agent)
+        allowed_text = ", ".join(allowed) or "none"
+        return ToolResult(
+            success=False,
+            error=(
+                f'Agent "{ctx.agent}" is not allowed to execute workflow '
+                f'"{display_workflow_id}". Allowed workflows: {allowed_text}'
+            ),
+            metadata={
+                "blocked_by_agent_workflows": True,
+                "agent": ctx.agent,
+                "workflow_id": display_workflow_id,
+                "workflow_name": workflow_name,
+            },
+        )
+
     node_inputs = dict(inputs or {})
     if workflow_path:
         resolved_workflow_path = str(Path(workflow_path).expanduser().resolve())

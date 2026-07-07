@@ -187,12 +187,9 @@ async def run_slash_command_tool(ctx: ToolContext, command: str) -> ToolResult:
         return ToolResult(success=True, output="\n".join(lines))
 
     if command == "workflows":
-        from flocks.agent.controls import agent_allows_workflow_listing
+        from flocks.agent.controls import filter_workflow_entries_for_agent
 
         effective_agent = str(ctx.agent or "rex").strip() or "rex"
-        if not await agent_allows_workflow_listing(effective_agent):
-            return ToolResult(success=True, output="No workflows are authorized for the current agent.")
-
         from flocks.workflow.center import format_workflow_entries, scan_skill_workflows
         try:
             entries = await scan_skill_workflows()
@@ -200,6 +197,14 @@ async def run_slash_command_tool(ctx: ToolContext, command: str) -> ToolResult:
             return ToolResult(success=False, error=f"Failed to scan workflows: {e}")
         if not entries:
             return ToolResult(success=True, output="No workflows found in .flocks/plugins/workflows/ directories.")
+        entries = await filter_workflow_entries_for_agent(
+            entries,
+            effective_agent,
+            session_id=ctx.session_id,
+            extra=getattr(ctx, "extra", None),
+        )
+        if not entries:
+            return ToolResult(success=True, output="No workflows are authorized for the current agent.")
         body = format_workflow_entries(entries, markdown=True)
         output = (
             "Available Workflows:\n\n"

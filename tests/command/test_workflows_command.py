@@ -1,10 +1,10 @@
 """
 tests/command/test_workflows_command.py
 
-单元测试：
-1. Command 注册表 — /workflows 命令存在且属性正确
-2. handler.handle_slash_command — /workflows 处理分支
-3. handler.handle_slash_command — /help 输出包含 /workflows 条目
+Unit tests for:
+1. Command registration: /workflows exists and has expected metadata.
+2. handler.handle_slash_command: /workflows handling.
+3. handler.handle_slash_command: /help includes /workflows.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ def _make_workflow_entry(
     status: str = "unpublished",
 ) -> Dict[str, Any]:
     return {
+        "id": name,
         "name": name,
         "description": description,
         "workflowPath": path,
@@ -38,7 +39,19 @@ def _make_workflow_entry(
     }
 
 
-async def _collect_text(content: str) -> tuple[list[str], bool]:
+@pytest.fixture(autouse=True)
+def _authorize_default_workflow_viewer(monkeypatch):
+    from flocks.agent.agent import AgentInfo
+    from flocks.agent.registry import Agent
+
+    agent = AgentInfo(name="workflow-viewer", mode="primary", workflows=["*"])
+
+    async def fake_get(name: str):
+        return agent if name == "workflow-viewer" else None
+
+    monkeypatch.setattr(Agent, "get", fake_get)
+
+async def _collect_text(content: str, agent_name: str = "workflow-viewer") -> tuple[list[str], bool]:
     """Run handle_slash_command, collect output strings, return (texts, handled)."""
     texts: list[str] = []
 
@@ -48,7 +61,12 @@ async def _collect_text(content: str) -> tuple[list[str], bool]:
     async def send_prompt(t: str) -> None:
         pass
 
-    handled = await handle_slash_command(content, send_text=send_text, send_prompt=send_prompt)
+    handled = await handle_slash_command(
+        content,
+        send_text=send_text,
+        send_prompt=send_prompt,
+        agent_name=agent_name,
+    )
     return texts, handled
 
 
@@ -101,7 +119,7 @@ class TestWorkflowsCommandRegistration:
 
 
 # ===========================================================================
-# /workflows handler — happy path
+# /workflows handler - happy path
 # ===========================================================================
 
 class TestWorkflowsHandler:
@@ -132,10 +150,10 @@ class TestWorkflowsHandler:
         assert "global_scan" in output
 
     async def test_descriptions_in_output(self):
-        entries = [_make_workflow_entry("wf", description="NDR 告警研判")]
+        entries = [_make_workflow_entry("wf", description="NDR alert triage")]
         with patch(self._SCAN_WF_CENTER, new_callable=AsyncMock, return_value=entries):
             texts, _ = await _collect_text("/workflows")
-        assert "NDR 告警研判" in "\n".join(texts)
+        assert "NDR alert triage" in "\n".join(texts)
 
     async def test_path_in_output(self):
         entries = [_make_workflow_entry("wf", path="/home/user/.flocks/workflow/wf/workflow.json")]
@@ -160,6 +178,41 @@ class TestWorkflowsHandler:
             texts, _ = await _collect_text("/workflows")
         assert "published" in "\n".join(texts)
 
+    async def test_filters_unauthorized_workflow_entries(self, monkeypatch):
+        from flocks.agent.agent import AgentInfo
+        from flocks.agent.registry import Agent
+
+        agent = AgentInfo(name="limited", mode="primary", workflows=["allowed"])
+
+        async def fake_get(name: str):
+            return agent if name == "limited" else None
+
+        monkeypatch.setattr(Agent, "get", fake_get)
+        entries = [
+            _make_workflow_entry("allowed"),
+            _make_workflow_entry("blocked"),
+        ]
+        with patch(self._SCAN_WF_CENTER, new_callable=AsyncMock, return_value=entries):
+            texts, _ = await _collect_text("/workflows", agent_name="limited")
+        output = "\n".join(texts)
+        assert "allowed" in output
+        assert "blocked" not in output
+
+    async def test_empty_workflow_grants_show_no_authorized_workflows(self, monkeypatch):
+        from flocks.agent.agent import AgentInfo
+        from flocks.agent.registry import Agent
+
+        agent = AgentInfo(name="limited", mode="primary", workflows=[])
+
+        async def fake_get(name: str):
+            return agent if name == "limited" else None
+
+        monkeypatch.setattr(Agent, "get", fake_get)
+        entries = [_make_workflow_entry("blocked")]
+        with patch(self._SCAN_WF_CENTER, new_callable=AsyncMock, return_value=entries):
+            texts, _ = await _collect_text("/workflows", agent_name="limited")
+        assert "No workflows are authorized" in "\n".join(texts)
+
     async def test_run_workflow_tip_in_output(self):
         entries = [_make_workflow_entry("wf")]
         with patch(self._SCAN_WF_CENTER, new_callable=AsyncMock, return_value=entries):
@@ -168,7 +221,7 @@ class TestWorkflowsHandler:
 
 
 # ===========================================================================
-# /workflows handler — edge cases
+# /workflows handler - edge cases
 # ===========================================================================
 
 class TestWorkflowsHandlerEdgeCases:

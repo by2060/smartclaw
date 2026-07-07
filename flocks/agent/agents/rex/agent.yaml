@@ -54,5 +54,6 @@ tools:
   # MCP管理 flocks_mcp
 kb:
   - all
+workflows:
 
 # prompt is left empty – injected dynamically by prompt_builder.py

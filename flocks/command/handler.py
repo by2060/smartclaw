@@ -24,6 +24,8 @@ async def handle_slash_command(
     clear_screen: Optional[ClearScreen] = None,
     surface: Optional[CommandSurface] = None,
     agent_name: Optional[str] = None,
+    session_id: Optional[str] = None,
+    extra: Optional[dict] = None,
 ) -> bool:
     """
     Handle supported slash commands.
@@ -218,13 +220,9 @@ async def handle_slash_command(
         return True
 
     if name == "workflows":
-        from flocks.agent.controls import agent_allows_workflow_listing
+        from flocks.agent.controls import filter_workflow_entries_for_agent
 
         effective_agent = str(agent_name or "rex").strip() or "rex"
-        if not await agent_allows_workflow_listing(effective_agent):
-            await send_text("No workflows are authorized for the current agent.")
-            return True
-
         from flocks.workflow.center import format_workflow_entries, scan_skill_workflows
         try:
             entries = await scan_skill_workflows()
@@ -237,6 +235,16 @@ async def handle_slash_command(
                 "No workflows found.\n"
                 "Create a workflow.json in .flocks/plugins/workflows/<name>/ to get started."
             )
+            return True
+
+        entries = await filter_workflow_entries_for_agent(
+            entries,
+            effective_agent,
+            session_id=session_id,
+            extra=extra,
+        )
+        if not entries:
+            await send_text("No workflows are authorized for the current agent.")
             return True
 
         body = format_workflow_entries(entries)

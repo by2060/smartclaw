@@ -138,6 +138,7 @@ class TestAgentCreate:
             "delegatable": True,
             "skills": ["skill1", "skill2"],
             "sub_agents": ["agent1", "agent2"],
+            "workflows": ["workflow:list", "alert-triage"],
             "kb": ["kb_a", "kb_b"],
         }
 
@@ -149,6 +150,7 @@ class TestAgentCreate:
             data = resp.json()
             assert data["delegatable"] is True
             assert data["sub_agents"] == ["agent1", "agent2"]
+            assert data["workflows"] == ["workflow:list", "alert-triage"]
             assert data["kb"] == ["kb_a", "kb_b"]
             assert data["tools"] == ["read", "skill"]
             for tool in ("read", "skill"):
@@ -160,6 +162,7 @@ class TestAgentCreate:
             assert raw["delegatable"] is True
             assert raw["skills"] == ["skill1", "skill2"]
             assert raw["sub_agents"] == ["agent1", "agent2"]
+            assert raw["workflows"] == ["workflow:list", "alert-triage"]
             assert raw["kb"] == ["kb_a", "kb_b"]
             assert raw["tools"] == ["read", "skill"]
             for tool in ("read", "skill"):
@@ -169,6 +172,7 @@ class TestAgentCreate:
             assert overlay["delegatable"] is True
             assert overlay["skills"] == ["skill1", "skill2"]
             assert overlay["sub_agents"] == ["agent1", "agent2"]
+            assert overlay["workflows"] == ["workflow:list", "alert-triage"]
             assert overlay["kb"] == ["kb_a", "kb_b"]
             assert overlay["tools"] == ["read", "skill"]
             for tool in ("read", "skill"):
@@ -225,6 +229,7 @@ class TestAgentUpdate:
                     "tools": ["write"],
                     "skills": ["skill2"],
                     "sub_agents": ["agent2"],
+                    "workflows": ["workflow:view", "remediate-alert"],
                     "kb": ["kb_c"],
                 },
             )
@@ -233,6 +238,7 @@ class TestAgentUpdate:
             assert data["delegatable"] is True
             assert data["skills"] == ["skill2"]
             assert data["sub_agents"] == ["agent2"]
+            assert data["workflows"] == ["workflow:view", "remediate-alert"]
             assert data["kb"] == ["kb_c"]
             assert data["tools"] == ["write"]
             for tool in ("write",):
@@ -245,6 +251,7 @@ class TestAgentUpdate:
             assert raw["delegatable"] is True
             assert raw["skills"] == ["skill2"]
             assert raw["sub_agents"] == ["agent2"]
+            assert raw["workflows"] == ["workflow:view", "remediate-alert"]
             assert raw["kb"] == ["kb_c"]
             assert raw["tools"] == ["write"]
             for tool in ("write",):
@@ -254,6 +261,7 @@ class TestAgentUpdate:
             assert overlay["delegatable"] is True
             assert overlay["skills"] == ["skill2"]
             assert overlay["sub_agents"] == ["agent2"]
+            assert overlay["workflows"] == ["workflow:view", "remediate-alert"]
             assert overlay["kb"] == ["kb_c"]
             assert overlay["tools"] == ["write"]
             for tool in ("write",):

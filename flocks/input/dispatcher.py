@@ -113,6 +113,7 @@ async def dispatch_user_input(event: UserInputEvent, sink: OutputSink) -> Dispat
             clear_screen=sink.clear_screen,
             surface=sink.surface,
             agent_name=event.agent,
+            session_id=getattr(event, "session_id", None),
         )
         if handled:
             if llm_prompts:

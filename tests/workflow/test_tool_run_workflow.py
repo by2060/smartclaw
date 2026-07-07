@@ -55,7 +55,8 @@ def tool_context():
     return ToolContext(
         session_id="test-session-workflow",
         message_id="test-message-workflow",
-        agent="test",
+        agent="rex",
+        extra={"workflow_tool_context": True},
     )
 
 
@@ -70,7 +71,8 @@ def tool_context_with_permission():
     ctx = ToolContext(
         session_id="test-session-workflow-perm",
         message_id="test-message-workflow-perm",
-        agent="test",
+        agent="rex",
+        extra={"workflow_tool_context": True},
         permission_callback=track_permission,
     )
     ctx._permissions_requested = permissions_requested

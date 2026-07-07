@@ -81,14 +81,93 @@ class ActiveWorkflowExecution:
 _active_workflow_executions: Dict[str, ActiveWorkflowExecution] = {}
 
 
-async def _agent_can_view_workflows(agent: Optional[str]) -> bool:
-    """Apply agent workflow visibility only for explicitly scoped requests."""
-    if agent is None or not str(agent).strip():
+def _workflow_agent_view_requested(
+    agent: Optional[str],
+    session_id: Optional[str] = None,
+    scope: Optional[str] = None,
+) -> bool:
+    """Return whether an API request explicitly asks for agent-scoped visibility."""
+    requested_scope = str(scope or "").strip().lower()
+    return (
+        bool(str(agent or "").strip())
+        or bool(str(session_id or "").strip())
+        or requested_scope in {"agent", "session", "conversation"}
+    )
+
+
+async def _workflow_effective_agent(agent: Optional[str], session_id: Optional[str] = None) -> str:
+    explicit_agent = str(agent or "").strip()
+    if explicit_agent:
+        return explicit_agent
+
+    if session_id:
+        try:
+            session = await Session.get_by_id(session_id)
+        except Exception:
+            session = None
+        session_agent = str(getattr(session, "agent", None) or "").strip() if session else ""
+        if session_agent:
+            return session_agent
+
+    return "rex"
+
+
+async def _workflow_visible_ids_for_request(
+    agent: Optional[str],
+    session_id: Optional[str] = None,
+    scope: Optional[str] = None,
+) -> Optional[set[str]]:
+    """Return visible workflow IDs for agent-scoped API calls.
+
+    None means either management/catalog view or full catalog visibility.
+    An empty set means the agent-scoped request has no visible workflows.
+    """
+    if not _workflow_agent_view_requested(agent, session_id=session_id, scope=scope):
+        return None
+
+    from flocks.agent.controls import agent_visible_workflow_ids
+
+    effective_agent = await _workflow_effective_agent(agent, session_id=session_id)
+    return await agent_visible_workflow_ids(effective_agent, session_id=session_id)
+
+
+async def _agent_can_view_workflows(
+    agent: Optional[str],
+    session_id: Optional[str] = None,
+    scope: Optional[str] = None,
+) -> bool:
+    visible_ids = await _workflow_visible_ids_for_request(agent, session_id=session_id, scope=scope)
+    return visible_ids is None or bool(visible_ids)
+
+
+def _workflow_id_from_mapping(data: Dict[str, Any]) -> str:
+    return str(data.get("id") or data.get("workflowId") or data.get("name") or "").strip().lower()
+
+
+async def _filter_workflow_items_for_request(
+    items: List[Dict[str, Any]],
+    agent: Optional[str],
+    session_id: Optional[str] = None,
+    scope: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    visible_ids = await _workflow_visible_ids_for_request(agent, session_id=session_id, scope=scope)
+    if visible_ids is None:
+        return items
+    if not visible_ids:
+        return []
+    return [item for item in items if _workflow_id_from_mapping(item) in visible_ids]
+
+
+async def _agent_can_view_workflow_id(
+    workflow_id: str,
+    agent: Optional[str],
+    session_id: Optional[str] = None,
+    scope: Optional[str] = None,
+) -> bool:
+    visible_ids = await _workflow_visible_ids_for_request(agent, session_id=session_id, scope=scope)
+    if visible_ids is None:
         return True
-
-    from flocks.agent.controls import agent_allows_workflow_listing
-
-    return await agent_allows_workflow_listing(str(agent).strip())
+    return str(workflow_id or "").strip().lower() in visible_ids
 
 
 # =============================================================================
@@ -644,6 +723,8 @@ async def list_workflows(
     status: Optional[str] = Query(None, description="Filter by status"),
     exclude_id: Optional[str] = Query(None, alias="excludeId", description="Exclude workflow by ID (e.g. exclude self when selecting sub-workflows)"),
     agent: Optional[str] = Query(None, description="Optional agent whose workflow visibility should be applied"),
+    session_id: Optional[str] = Query(None, alias="sessionId", description="Optional session whose workflow visibility should be applied"),
+    scope: Optional[str] = Query(None, description="Use scope=agent to apply agent workflow visibility; default is management catalog view"),
 ):
     """
     Get workflow list
@@ -652,13 +733,15 @@ async def list_workflows(
     first call to move any Storage-only workflows to the project workflow root.
     """
     try:
-        if not await _agent_can_view_workflows(agent):
-            log.info("workflow.list.unauthorized", {"agent": agent})
-            return []
 
         await _migrate_storage_to_filesystem()
 
-        all_data = _list_workflows_from_fs()
+        all_data = await _filter_workflow_items_for_request(
+            _list_workflows_from_fs(),
+            agent,
+            session_id=session_id,
+            scope=scope,
+        )
         workflows = []
 
         for data in all_data:
@@ -681,7 +764,7 @@ async def list_workflows(
 
         workflows.sort(key=lambda w: w.updatedAt, reverse=True)
 
-        log.info("workflow.list", {"count": len(workflows), "category": category, "status": status, "exclude_id": exclude_id})
+        log.info("workflow.list", {"count": len(workflows), "category": category, "status": status, "exclude_id": exclude_id, "scope": scope, "agent": agent})
         return workflows
     except Exception as e:
         log.error("workflow.list.error", {"error": str(e)})
@@ -734,6 +817,8 @@ async def create_workflow(req: WorkflowCreateRequest):
 async def get_workflow(
     workflow_id: str,
     agent: Optional[str] = Query(None, description="Optional agent whose workflow visibility should be applied"),
+    session_id: Optional[str] = Query(None, alias="sessionId", description="Optional session whose workflow visibility should be applied"),
+    scope: Optional[str] = Query(None, description="Use scope=agent to apply agent workflow visibility; default is management catalog view"),
 ):
     """
     Get workflow details
@@ -742,8 +827,8 @@ async def get_workflow(
     are always reflected immediately without any sync step.
     """
     try:
-        if not await _agent_can_view_workflows(agent):
-            log.info("workflow.get.unauthorized", {"agent": agent, "id": workflow_id})
+        if not await _agent_can_view_workflow_id(workflow_id, agent, session_id=session_id, scope=scope):
+            log.info("workflow.get.unauthorized", {"agent": agent, "session_id": session_id, "scope": scope, "id": workflow_id})
             raise HTTPException(status_code=403, detail="Workflow access is not authorized for the current agent")
 
         data = _read_workflow_from_fs(workflow_id)
@@ -1013,14 +1098,19 @@ async def validate_workflow(workflow_id: str):
 # =============================================================================
 
 @router.post("/workflow-center/scan-workflows")
-async def workflow_center_scan_workflows(agent: Optional[str] = Query(None, description="Optional agent whose workflow visibility should be applied")):
+async def workflow_center_scan_workflows(
+    agent: Optional[str] = Query(None, description="Optional agent whose workflow visibility should be applied"),
+    session_id: Optional[str] = Query(None, alias="sessionId", description="Optional session whose workflow visibility should be applied"),
+    scope: Optional[str] = Query(None, description="Use scope=agent to apply agent workflow visibility; default is management catalog view"),
+):
     """Scan workflow roots and register discovered workflows when authorized."""
     try:
-        if not await _agent_can_view_workflows(agent):
-            log.info("workflow.center.scan.unauthorized", {"agent": agent})
-            return {"count": 0, "items": []}
-
-        items = await scan_skill_workflows()
+        items = await _filter_workflow_items_for_request(
+            await scan_skill_workflows(),
+            agent,
+            session_id=session_id,
+            scope=scope,
+        )
         return {"count": len(items), "items": items}
     except Exception as e:
         log.error("workflow.center.scan.error", {"error": str(e)})
@@ -1030,18 +1120,23 @@ async def workflow_center_scan_workflows(agent: Optional[str] = Query(None, desc
 @router.post("/workflow-center/scan-skill", deprecated=True)
 async def workflow_center_scan_skill_alias():
     """Backward-compatible alias for scan-workflows."""
-    return await workflow_center_scan_workflows(agent=None)
+    return await workflow_center_scan_workflows(agent=None, session_id=None, scope=None)
 
 
 @router.get("/workflow-center")
-async def workflow_center_list(agent: Optional[str] = Query(None, description="Optional agent whose workflow visibility should be applied")):
+async def workflow_center_list(
+    agent: Optional[str] = Query(None, description="Optional agent whose workflow visibility should be applied"),
+    session_id: Optional[str] = Query(None, alias="sessionId", description="Optional session whose workflow visibility should be applied"),
+    scope: Optional[str] = Query(None, description="Use scope=agent to apply agent workflow visibility; default is management catalog view"),
+):
     """List workflow center registry entries."""
     try:
-        if not await _agent_can_view_workflows(agent):
-            log.info("workflow.center.list.unauthorized", {"agent": agent})
-            return {"count": 0, "items": []}
-
-        items = await list_registry_entries()
+        items = await _filter_workflow_items_for_request(
+            await list_registry_entries(),
+            agent,
+            session_id=session_id,
+            scope=scope,
+        )
         return {"count": len(items), "items": items}
     except Exception as e:
         log.error("workflow.center.list.error", {"error": str(e)})
@@ -1200,16 +1295,17 @@ async def get_execution_details(workflow_id: str, exec_id: str):
 # =============================================================================
 
 @router.get("/workflow/stats", response_model=WorkflowStatsResponse)
-async def get_aggregate_stats(agent: Optional[str] = Query(None, description="Optional agent whose workflow visibility should be applied")):
+async def get_aggregate_stats(
+    agent: Optional[str] = Query(None, description="Optional agent whose workflow visibility should be applied"),
+    session_id: Optional[str] = Query(None, alias="sessionId", description="Optional session whose workflow visibility should be applied"),
+    scope: Optional[str] = Query(None, description="Use scope=agent to apply agent workflow visibility; default is management catalog view"),
+):
     """
     Get aggregate workflow statistics
     
     Returns statistics across all workflows.
     """
     try:
-        if not await _agent_can_view_workflows(agent):
-            log.info("workflow.stats.unauthorized", {"agent": agent})
-            raise HTTPException(status_code=403, detail="Workflow access is not authorized for the current agent")
 
         aggregate = {
             "workflowId": None,
@@ -1222,7 +1318,12 @@ async def get_aggregate_stats(agent: Optional[str] = Query(None, description="Op
             "thumbsDown": 0,
         }
 
-        all_workflows = _list_workflows_from_fs()
+        all_workflows = await _filter_workflow_items_for_request(
+            _list_workflows_from_fs(),
+            agent,
+            session_id=session_id,
+            scope=scope,
+        )
         workflow_count = 0
         for wf in all_workflows:
             try:
