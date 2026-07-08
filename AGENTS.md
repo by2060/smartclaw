@@ -81,7 +81,7 @@ Sure. I'll respond in English from now on. ...
 |---|---|
 | 分析报告、汇总结果、最终输出 | `~/.flocks/workspace/outputs/<today>/<session_id>/` |
 | LLM 中间推理落盘（workflow 节点内） | `~/.flocks/workspace/outputs/<today>/<session_id>/artifacts/` |
-| 临时调试/草稿文件 | `/tmp/` |
+| 临时调试/草稿文件 | `~/.flocks/workspace/outputs/<today>/<session_id>/` |
 
 ### 代码示例（workflow 节点 / Python 脚本）
 
