@@ -542,7 +542,7 @@ def _attach_output_migrations(result: ToolResult, migrations: list[dict[str, str
 
 def _is_allowed_temporary_script_path(path: str, cwd: str, ctx: ToolContext) -> bool:
     normalized = str(path).replace("\\", "/").strip("'\"")
-    if normalized.startswith(("/tmp/", "/var/tmp/", "/workspace/artifacts/")):
+    if normalized.startswith(("/tmp/", "/var/tmp/", "/workspace/")):
         return True
 
     candidate = Path(path).expanduser()
@@ -831,7 +831,7 @@ async def bash_tool(
             error=(
                 "Temporary helper scripts must not be created in the project directory with Bash. "
                 f"Detected attempted script path: {blocked_script_path}. "
-                f"Use /tmp for throwaway scripts, or Write with a filePath under: {artifacts_dir}"
+                f"Write with a filePath under: {artifacts_dir}"
             ),
             title=description or command,
             metadata={
