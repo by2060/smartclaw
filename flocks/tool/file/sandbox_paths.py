@@ -151,9 +151,17 @@ def _map_workspace_upload_container_path(
         if raw == upload_prefix:
             rel = "uploads/chat"
             break
+        upload_task_prefix = f"{root.rstrip('/')}/uploads/task"
+        if raw == upload_task_prefix:
+            rel = "uploads/task"
+            break
         if raw.startswith(upload_prefix + "/"):
             rel = "uploads/chat/" + raw[len(upload_prefix + "/"):]
             break
+        if raw.startswith(upload_task_prefix + "/"):
+            rel = "uploads/task/" + raw[len(upload_task_prefix + "/"):]
+            break
+    
     if rel is None:
         return None
 
