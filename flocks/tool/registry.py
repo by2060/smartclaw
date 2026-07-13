@@ -626,11 +626,14 @@ class ToolRegistry:
     def _bump_revision(cls, reason: str) -> None:
         """Advance the registry revision and invalidate agent prompt caches."""
         cls._revision += 1
-        try:
-            from flocks.agent.registry import Agent
-            Agent.invalidate_cache()
-        except Exception as e:
-            log.debug("tool.revision.agent_invalidate_failed", {"error": str(e)})
+        from flocks.agent.registry import invalidate_agent_cache_after_tool_change
+
+        invalidate_agent_cache_after_tool_change(
+            "tool_registry_revision_bumped",
+            source="tool_registry",
+            registry_reason=reason,
+            revision=cls._revision,
+        )
         log.info("tool.registry.revision.bumped", {"revision": cls._revision, "reason": reason})
 
     @classmethod

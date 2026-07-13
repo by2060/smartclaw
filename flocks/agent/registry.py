@@ -69,6 +69,19 @@ def _set_agents_ref(agents: Dict[str, AgentInfo]) -> None:
     _agents_ref = agents
 
 
+def invalidate_agent_cache_after_tool_change(reason: str, **metadata: Any) -> None:
+    """Invalidate agent snapshots after tool availability changes."""
+    payload = {"reason": reason, **metadata}
+    try:
+        Agent.invalidate_cache()
+        log.debug("agent.cache_invalidated_after_tool_change", payload)
+    except Exception as e:
+        log.warning(
+            "agent.cache_invalidate_after_tool_change_failed",
+            {**payload, "error": str(e)},
+        )
+
+
 # ---------------------------------------------------------------------------
 # Metadata query helpers  (merged from metadata.py)
 # ---------------------------------------------------------------------------

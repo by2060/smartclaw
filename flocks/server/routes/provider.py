@@ -1229,6 +1229,16 @@ def _set_api_service_tools_enabled(provider_id: str, enabled: bool) -> int:
     matched_tools = _get_api_service_tool_infos(provider_id)
     for tool_info in matched_tools:
         tool_info.enabled = enabled
+    if matched_tools:
+        from flocks.agent.registry import invalidate_agent_cache_after_tool_change
+
+        invalidate_agent_cache_after_tool_change(
+            "api_service_tools_enabled_changed",
+            source="api_service",
+            provider_id=provider_id,
+            enabled=enabled,
+            tool_count=len(matched_tools),
+        )
     return len(matched_tools)
 
 

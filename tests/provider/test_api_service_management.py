@@ -113,6 +113,21 @@ class TestAPIServiceManagement:
         assert written_statuses["threatbook_api"]["status"] == "disabled"
         assert result == expected_summary
 
+    def test_set_api_service_tools_enabled_invalidates_agent_cache_when_tools_matched(self):
+        from flocks.server.routes.provider import _set_api_service_tools_enabled
+
+        tools = [MagicMock(enabled=False), MagicMock(enabled=False)]
+
+        with (
+            patch("flocks.server.routes.provider._get_api_service_tool_infos", return_value=tools),
+            patch("flocks.agent.registry.Agent.invalidate_cache") as mock_invalidate,
+        ):
+            count = _set_api_service_tools_enabled("threatbook_api", True)
+
+        assert count == 2
+        assert all(tool.enabled is True for tool in tools)
+        mock_invalidate.assert_called_once()
+
 
 class TestToolRouteAPIServiceSync:
     def test_effective_api_tool_state_requires_service_credentials(self):

@@ -280,6 +280,15 @@ class McpServerManager:
         from flocks.tool import ToolRegistry
         for tool_name in tool_names:
             ToolRegistry.unregister(tool_name)
+        if tool_names:
+            from flocks.agent.registry import invalidate_agent_cache_after_tool_change
+
+            invalidate_agent_cache_after_tool_change(
+                "mcp_tools_removed",
+                source="mcp",
+                server_name=name,
+                tool_count=len(tool_names),
+            )
 
         self._status.pop(name, None)
         self._tools_cache.pop(name, None)
@@ -347,6 +356,16 @@ class McpServerManager:
                     "error": str(e)
                 })
         
+        if registered:
+            from flocks.agent.registry import invalidate_agent_cache_after_tool_change
+
+            invalidate_agent_cache_after_tool_change(
+                "mcp_tools_registered",
+                source="mcp",
+                server_name=server_name,
+                tool_count=registered,
+            )
+
         return registered
     
     async def status(self) -> Dict[str, McpStatusInfo]:
@@ -508,6 +527,15 @@ class McpServerManager:
                 from flocks.tool import ToolRegistry
                 for tool_name in tool_names:
                     ToolRegistry.unregister(tool_name)
+                if tool_names:
+                    from flocks.agent.registry import invalidate_agent_cache_after_tool_change
+
+                    invalidate_agent_cache_after_tool_change(
+                        "mcp_tools_unregistered_for_refresh",
+                        source="mcp",
+                        server_name=name,
+                        tool_count=len(tool_names),
+                    )
                 
                 # Register new tools
                 registered = await self._register_tools(name, new_tools, client)

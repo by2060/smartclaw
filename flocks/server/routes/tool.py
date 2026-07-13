@@ -40,6 +40,13 @@ log = Log.create(service="tool-routes")
 _SECRET_REF_PATTERN = re.compile(r"\{secret:([^}]+)\}")
 
 
+def _invalidate_agent_cache_after_tool_change(reason: str) -> None:
+    """Invalidate agent snapshots after tool availability changes."""
+    from flocks.agent.registry import invalidate_agent_cache_after_tool_change
+
+    invalidate_agent_cache_after_tool_change(reason, source="tool_route")
+
+
 # Request/Response Models
 
 class ToolInfoResponse(BaseModel):
@@ -645,6 +652,7 @@ async def update_tool(tool_name: str, request: ToolUpdateRequest, _admin: object
         })
 
     tool.info.enabled = new_enabled
+    _invalidate_agent_cache_after_tool_change("tool_setting_updated")
     return _build_tool_response(tool.info)
 
 
@@ -682,6 +690,7 @@ async def reset_tool_setting(tool_name: str, _admin: object = Depends(require_ad
         "default": default,
         "restored_enabled": new_enabled,
     })
+    _invalidate_agent_cache_after_tool_change("tool_setting_reset")
     return _build_tool_response(tool.info)
 
 
@@ -865,6 +874,7 @@ async def refresh_tools(_admin: object = Depends(require_admin)):
     # 1. Reload generated tools (generated/)
     try:
         ToolRegistry.refresh_dynamic_tools()
+        _invalidate_agent_cache_after_tool_change("dynamic_tools_refreshed")
     except Exception as e:
         log.error("tools.refresh.dynamic_error", {"error": str(e)})
         errors.append(f"dynamic: {e}")
@@ -872,6 +882,7 @@ async def refresh_tools(_admin: object = Depends(require_admin)):
     # 2. Reload plugin tools (api/, python/) — unregisters stale entries first
     try:
         ToolRegistry.refresh_plugin_tools()
+        _invalidate_agent_cache_after_tool_change("plugin_tools_refreshed")
     except Exception as e:
         log.error("tools.refresh.plugin_error", {"error": str(e)})
         errors.append(f"plugin: {e}")
@@ -1200,6 +1211,7 @@ async def _create_and_register_yaml_tool(
         ToolRegistry.register(tool)
         if tool.info.name not in ToolRegistry._plugin_tool_names:
             ToolRegistry._plugin_tool_names.append(tool.info.name)
+        _invalidate_agent_cache_after_tool_change("yaml_tool_registered")
     except Exception as e:
         log.error("tool.create.register_error", {"error": str(e), "name": data.get("name")})
         _restore_text_file(yaml_path, previous_content, name=tool_name or str(data.get("name") or "unknown"))
@@ -1389,6 +1401,7 @@ async def confirm_api_tool_draft_route(
                     deleted_missing = delete_api_provider_tool(draft.provider.id, tool_name) or deleted_missing
             if deleted_missing:
                 ToolRegistry.refresh_plugin_tools()
+                _invalidate_agent_cache_after_tool_change("api_draft_missing_tools_deleted")
     except Exception:
         for tool_name, yaml_path, previous_content in reversed(written_tool_snapshots):
             _restore_text_file(yaml_path, previous_content, name=tool_name)
@@ -1396,9 +1409,12 @@ async def confirm_api_tool_draft_route(
         _restore_text_file(provider_path, previous_provider_content, name=draft.provider.id)
         try:
             ToolRegistry.refresh_plugin_tools()
+            _invalidate_agent_cache_after_tool_change("api_draft_rollback_refreshed")
         except Exception as e:
             log.warning("tool.draft.rollback_refresh_failed", {"provider": draft.provider.id, "error": str(e)})
         raise
+
+    _invalidate_agent_cache_after_tool_change("api_draft_confirmed")
 
     return ConfirmAPIToolDraftResponse(
         provider_path=str(provider_path),
@@ -1477,6 +1493,7 @@ async def delete_api_tool_provider_route(
 
     if deleted_provider_path is not None or removed_config_keys:
         ToolRegistry.refresh_plugin_tools()
+        _invalidate_agent_cache_after_tool_change("api_provider_deleted")
 
     if deleted_provider_path is None and not removed_config_keys and not deleted_secret_ids:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"API tool provider not found: {provider_id}")
@@ -1529,6 +1546,7 @@ async def create_tool(request: CreateToolRequest, _admin: object = Depends(requi
         provider=request.provider,
         enabled=request.enabled,
     )
+    _invalidate_agent_cache_after_tool_change("tool_created")
     return _build_tool_response(tool.info)
 
 
@@ -1584,6 +1602,7 @@ async def update_plugin_tool(name: str, request: UpdateToolRequest, _admin: obje
             if not tool.info.source:
                 tool.info.source = "plugin_yaml"
             ToolRegistry.register(tool)
+            _invalidate_agent_cache_after_tool_change("tool_updated")
             return _build_tool_response(tool.info)
     except Exception as e:
         log.error("tool.update.reload_error", {"error": str(e), "name": name})
@@ -1631,6 +1650,7 @@ async def delete_tool(name: str, _admin: object = Depends(require_admin)):
 
     # Refresh plugin tools so stale decorator-registered python tools are removed too.
     ToolRegistry.refresh_plugin_tools()
+    _invalidate_agent_cache_after_tool_change("tool_deleted")
 
     from flocks.hub import local as hub_local
 
@@ -1669,6 +1689,7 @@ async def reload_tool(name: str, _admin: object = Depends(require_admin)):
             tool.info.source = "plugin_yaml"
         ToolRegistry.register(tool)
         log.info("tool.reloaded", {"name": name})
+        _invalidate_agent_cache_after_tool_change("tool_reloaded")
         return _build_tool_response(tool.info)
     except Exception as e:
         log.error("tool.reload.error", {"error": str(e), "name": name})
