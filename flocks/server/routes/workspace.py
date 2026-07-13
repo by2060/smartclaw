@@ -108,8 +108,9 @@ def _resolve_upload_target(dest_dir: Path, filename: str, *, auto_rename: bool) 
 
 def _sandbox_upload_path(relative_path: str) -> str | None:
     parts = Path(relative_path).parts
+    host_workspace_dir = _get_manager().get_user_workspace_dir()
     if len(parts) >= 4 and parts[0] == "uploads" and parts[1] == "chat":
-        return "/" + "/".join(("workspace", *parts))
+        return "/".join((host_workspace_dir, *parts))
     return None
 
 

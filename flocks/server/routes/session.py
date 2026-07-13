@@ -2214,8 +2214,8 @@ async def _process_session_message(
     # (e.g. "/tools create foo" stores the slash command text, not the full skill
     # prompt that is sent to the LLM).
     display_text = getattr(request, "display_text", None) or text_content
-    text_content = rewrite_upload_paths_for_prompt(text_content, sessionID)
-    display_text = rewrite_upload_paths_for_prompt(display_text, sessionID)
+    #text_content = rewrite_upload_paths_for_prompt(text_content, sessionID)
+    #display_text = rewrite_upload_paths_for_prompt(display_text, sessionID)
 
     _is_no_reply = bool(request.noReply)
     user_message = await Message.create(
