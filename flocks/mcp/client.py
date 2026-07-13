@@ -520,7 +520,7 @@ class McpClient:
             resources = [
                 McpResource(
                     name=resource.name,
-                    uri=resource.uri,
+                    uri=str(resource.uri),
                     description=getattr(resource, "description", None),
                     mime_type=getattr(resource, "mimeType", None),
                     server=self.name,
