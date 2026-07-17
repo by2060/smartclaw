@@ -121,6 +121,11 @@ def _is_chat_upload_dest(path: str) -> bool:
     return len(parts) >= 3 and parts[0] == "uploads" and parts[1] == "chat"
 
 
+def _is_task_upload_dest(path: str) -> bool:
+    parts = Path(path).parts
+    return len(parts) >= 3 and parts[0] == "uploads" and parts[1] == "task"
+
+
 def _normalize_workspace_path(path: str | None) -> str:
     """Accept sandbox-visible /workspace paths from tool output in the UI API."""
 
@@ -135,6 +140,7 @@ def _normalize_workspace_path(path: str | None) -> str:
     # sandbox-visible segment as authoritative so downloads still work.
     for marker, replacement in (
         ("/workspace/uploads/chat/", "uploads/chat/"),
+        ("/workspace/uploads/task/", "uploads/task/"),
         ("/workspace/outputs/", "outputs/")
     ):
         marker_index = raw.find(marker)
@@ -174,7 +180,11 @@ def _resolve_workspace_api_path(mgr: WorkspaceManager, path: str) -> Path:
     """Resolve UI/API paths, including sandbox aliases for user artifacts."""
 
     normalized = _normalize_workspace_path(path)
-    if _is_chat_upload_dest(normalized) or _is_session_scoped_outputs_path(normalized):
+    if (
+        _is_chat_upload_dest(normalized)
+        or _is_task_upload_dest(normalized)
+        or _is_session_scoped_outputs_path(normalized)
+    ):
         return mgr.resolve_user_workspace_path(normalized)
     return mgr.resolve_workspace_path(normalized)
 
