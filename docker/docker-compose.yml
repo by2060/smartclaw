@@ -1,0 +1,51 @@
+# =============================================================================
+# SmartClaw docker-compose
+#
+# 使用方式：
+#   构建：  docker compose -f docker/docker-compose.yml build
+#   启动：  docker compose -f docker/docker-compose.yml up -d
+#   日志：  docker compose -f docker/docker-compose.yml logs -f
+#   停止：  docker compose -f docker/docker-compose.yml down
+#
+# 说明：
+#   - 采用 host 网络模式，容器直接共享宿主机网络栈：
+#       * 端口 5173/5174 直接绑定在宿主机上，与源码 service_config.sh 一致
+#       * 容器内 hostname -I 取到的即宿主机真实 IP，HTTPS 证书 SAN 自动匹配，
+#         客户无需手工配置任何 IP（与源码方式的自动探测行为完全一致）
+#   - 配置与数据通过宿主目录挂载持久化到容器内 /root/.smartclaw
+#     （即源码方式下 root 用户的 ~/.smartclaw，路径完全一致）
+# =============================================================================
+services:
+  smartclaw:
+    image: smartclaw:latest
+    container_name: smartclaw
+    restart: unless-stopped  # 异常退出，自动重启
+    # host 网络模式：与源码方式一样直接使用宿主机网络。
+    # 此模式下不需要 ports 映射（端口由服务自身绑定到宿主机），
+    # 也无需配置 ACCESS_HOST —— 启动脚本会像源码那样自动探测宿主机 IP 生成证书。
+    # 注意：host 模式仅在 Linux 宿主机上生效（生产服务器为 Linux，符合要求）。
+    network_mode: host
+    environment:
+      # ---- 端口 / HTTPS / 证书目录（对应源码 service_config.sh 中的同名变量）----
+      # 原项目 service_config.sh 保持原版不改（同一套代码既能源码部署也能 docker 部署）。
+      # Docker 下改这里即可，改完 up -d 生效，无需重建镜像。entrypoint 会在读取
+      # service_config.sh 之后用这些环境变量覆盖其硬编码默认值。
+      - FRONTEND_PORT=5173        # 前端端口
+      - BACKEND_PORT=5174         # 后端端口
+      - ENABLE_HTTPS=true         # 是否启用 HTTPS
+      # 证书目录：指向挂载卷内，使自签名证书持久化（重建容器不重新生成）。
+      # 如需与源码方式完全一致（证书在 /app/.certs 不持久化），删除本行即可。
+      - CERT_DIR=/home/smartclaw/.smartclaw/.certs
+      - SMARTCLAW_UID=${SMARTCLAW_UID:-1000}
+      - SMARTCLAW_GID=${SMARTCLAW_GID:-1000}
+    volumes:
+      # (1) 用户级配置 + 数据持久化：宿主目录 <-> 容器内 ~/.smartclaw
+      # 首次启动服务会自动把镜像内 .smartclaw/*.example 复制到 config/ 下，
+      # 客户后续直接编辑宿主机 ./smartclaw-home/config/ 内的配置文件即可。
+      - ../smartclaw-home:/home/smartclaw/.smartclaw
+      # (2) 项目级 .smartclaw 运行时数据持久化：宿主目录 <-> 容器内 /app/smartclaw/.smartclaw
+      # 源码已在 build 时 COPY 进镜像，故不再挂载整个项目根，只把运行时会读写的
+      # 项目级 .smartclaw（预置 plugins、*.example 模板、data 等）挂载出来持久化。
+      # 该宿主目录首次为空，会遮盖镜像里烤入的 .smartclaw；entrypoint 首次启动时
+      # 从镜像内副本 .smartclaw.default 播种预置内容，避免空目录遮盖导致丢插件/模板。
+      - ../.smartclaw:/app/smartclaw/.smartclaw

@@ -200,7 +200,7 @@ if [ "$ENABLE_HTTPS" = "true" ]; then
     --ssl-keyfile "$HTTPS_KEY_FILE" \
     >> ./logs/webui.log 2>&1 &
   disown $! 2>/dev/null || true
-  echo "正在启动 HTTPS 前端服务..."
+  echo "正在启动前端服务..."
 else
   mkdir -p ./logs && nohup python ./scripts/serve_webui.py --directory ./webui/dist --host "$FRONTEND_HOST" --port "$FRONTEND_PORT" --proxy-target "$BACKEND_SCHEME://$PROXY_TARGET_HOST:$BACKEND_PORT" >> ./logs/webui.log 2>&1 &
   disown $! 2>/dev/null || true

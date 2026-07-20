@@ -1,36 +1,43 @@
+# =============================================================================
+# SmartClaw Dockerfile
+#
+# 说明：
+#   - 基础镜像 python:3.13-slim，与服务器 smartclaw 环境的 Python 版本一致
+#   - 构建时通过 pip 安装 requirements.txt（构建机需联网；现场离线可用
+#     docker save/load 导入构建好的镜像）
+#   - 运行时行为与源码 start.sh 保持一致：配置根目录仍为 ~/.smartclaw
+#     （容器内以 root 运行即 /root/.smartclaw），端口/HTTPS 逻辑不变
+# =============================================================================
+FROM python:3.13-slim
 
-FROM node:22-bookworm
+# 系统依赖：
+#   openssl  - 生成/校验 HTTPS 自签名证书（与源码一致）
+#   ca-certificates - HTTPS 出站请求所需根证书
+#   procps   - 提供 ps 等基础排障命令
+# 说明：容器内前台单进程组，不再依赖 lsof 做端口探测，故不安装 lsof。
+# 替换 Debian 默认源为阿里云源（兼容新版 Debian 12 的配置路径）
+RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources || \
+    sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list
 
-ARG VITE_API_BASE_URL=
-ARG VITE_WS_BASE_URL=
-ARG VITE_APP_ENV=docker
-ARG VITE_APP_NAME=Flocks
-ARG VITE_APP_VERSION=docker
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        openssl \
+        ca-certificates \
+        procps \
+    && rm -rf /var/lib/apt/lists/*
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    FLOCKS_DEPLOY_MODE=docker \
-    FLOCKS_BACKEND_HOST=0.0.0.0 \
-    FLOCKS_FRONTEND_HOST=0.0.0.0 \
-    FLOCKS_FRONTEND_DIST_DIR=/opt/flocks/webui/dist \
-    FLOCKS_ROOT=/home/flocks/.flocks \
-    FLOCKS_CONFIG_DIR=/home/flocks/.flocks/config \
-    HOME=/home/flocks \
-    LANG=zh_CN.UTF-8 \
-    LANGUAGE=zh_CN:zh \
-    LC_ALL=zh_CN.UTF-8 \
-    PATH=/usr/local/bin:/home/flocks/.local/bin:/opt/flocks/.venv/bin:$PATH \
-    PYTHONUNBUFFERED=1 \
-    NO_AT_BRIDGE=1 \
-    UV_INSTALL_DIR=/usr/local/bin \
-    VITE_API_BASE_URL=${VITE_API_BASE_URL} \
-    VITE_WS_BASE_URL=${VITE_WS_BASE_URL} \
-    VITE_APP_ENV=${VITE_APP_ENV} \
-    VITE_APP_NAME=${VITE_APP_NAME} \
-    VITE_APP_VERSION=${VITE_APP_VERSION}
+WORKDIR /app/smartclaw
 
-WORKDIR /opt/flocks
 
-COPY . .
+
+# 先仅复制依赖清单以利用构建缓存
+COPY requirements.txt /app/smartclaw/requirements.txt
+# RUN pip install --no-cache-dir -r /app/smartclaw/requirements.txt
+RUN pip install --no-cache-dir \
+    -i https://mirrors.aliyun.com/pypi/simple/ \
+    --trusted-host mirrors.aliyun.com \
+    -r /app/smartclaw/requirements.txt
+
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
@@ -67,30 +74,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tini \
     && rm -rf /var/lib/apt/lists/*
 
+
 RUN sed -i 's/^# *zh_CN.UTF-8 UTF-8/zh_CN.UTF-8 UTF-8/' /etc/locale.gen \
     && locale-gen zh_CN.UTF-8 \
-    && useradd --create-home --shell /bin/bash flocks \
-    && chmod +x ./scripts/install.sh ./scripts/container-start.sh \
-    && bash ./scripts/install.sh \
-    && AGENT_BROWSER_BIN="$(npm prefix -g)/bin/agent-browser" \
-    && if [ ! -x "$AGENT_BROWSER_BIN" ] && [ -x "/home/flocks/.npm-global/bin/agent-browser" ]; then \
-         AGENT_BROWSER_BIN="/home/flocks/.npm-global/bin/agent-browser"; \
-       fi \
-    && if [ ! -x "$AGENT_BROWSER_BIN" ]; then \
-         echo "agent-browser 安装后仍未找到可执行文件" >&2; \
-         exit 1; \
-       fi \
-    && if [ "$AGENT_BROWSER_BIN" != "/usr/local/bin/agent-browser" ]; then \
-         ln -sf "$AGENT_BROWSER_BIN" /usr/local/bin/agent-browser; \
-       fi \
-    && (cd ./webui && npm run build)
+    && useradd --create-home --shell /bin/bash smartclaw
 
-RUN mkdir -p "$HOME/.flocks" "$HOME/.flocks/config" "$HOME/.agent-browser" \
-    && chown -R flocks:flocks /opt/flocks "$HOME"
+# 复制项目源码（.dockerignore 已排除 logs/.certs/__pycache__ 等运行态文件）
+COPY . /app/smartclaw
 
-EXPOSE 8000 5173
+# 入口脚本转为可执行（Windows 检出可能丢失可执行位，这里显式赋权）。
+# 现在只挂载 .smartclaw 子目录、不再挂载整个项目根，故 docker/ 下脚本不被遮盖，
+# 此 chmod 生效；ENTRYPOINT 仍用 bash 显式执行做双保险，不依赖可执行位。
+RUN chmod +x /app/smartclaw/docker/docker-entrypoint.sh \
+    && chmod o-rwx /app/smartclaw/docker/*.sh
 
-USER flocks
+# 播种源备份：compose 仅把宿主目录挂到 /app/smartclaw/.smartclaw（首次为空），
+# 会遮盖镜像里烤入的 .smartclaw。故此处保留一份不被遮盖的副本 .smartclaw.default，
+# 供 entrypoint 首次启动时把预置内容（配置模板 + 预置 plugins）播种进挂载目录。
+RUN cp -r /app/smartclaw/.smartclaw /app/smartclaw/.smartclaw.default
 
-ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["bash", "./scripts/container-start.sh"]
+# 与源码 service_config.sh 中的端口保持一致
+EXPOSE 5173 5174
+
+# 用 bash 显式执行入口脚本：即便宿主机挂载的脚本没有可执行位（Windows 检出常见），
+# 也能正常启动，不依赖文件的 +x 权限。
+ENTRYPOINT ["bash", "/app/smartclaw/docker/docker-entrypoint.sh"]

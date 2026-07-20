@@ -4,9 +4,9 @@
 
 前置条件：机器需联网
 ### 1、如何使用
-1. 将automated_script文件夹放入flocks项目根目录
+1. git clone 拉取代码
 2. 进入一个python虚拟环境
-   - 优先smartclaw环境，如果是其他环境执行脚本失败，缺包安包
+   - 优先使用conda base环境执行即可，不满足再进入smartclaw环境或其他环境，如果其他环境执行脚本失败，缺包安包
 
 ### 2、工具先后执行顺序：
 - 工程目录下执行：
@@ -31,7 +31,7 @@
    `python automated_script/prune_project.py --apply`
 6. 查看项目中是否存在Flocks、flocks、Rex、rex字样：
    `python automated_script/check_flocks_keyword.py`
-7. 此步可选，根据需要选择是否执行：
+7. 此步可选，根据需要选择是否执行（当前不需要此步）：
    代码编译（编译后默认项目名为[delivery_build]，可自行修改所需项目名）：
    `python automated_script/build_delivery_artifact.py --apply`
 
