@@ -12,7 +12,7 @@ import os
 import pytest
 from datetime import date
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from flocks.tool.registry import ToolRegistry, ToolContext
 
@@ -197,6 +197,60 @@ async def test_write_uses_output_session_id_from_context(tmp_path, monkeypatch):
     assert expected.exists()
     assert expected.read_text() == "root scoped"
     assert result.metadata["filepath"] == str(expected)
+
+
+@pytest.mark.asyncio
+async def test_write_resolves_root_session_when_context_has_no_output_session_id(tmp_path, monkeypatch):
+    from flocks.config.config import Config
+    from flocks.session.session import Session
+    from flocks.workspace.manager import WorkspaceManager
+
+    workspace = tmp_path / "workspace"
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.delenv("FLOCKS_OUTPUTS_DIR", raising=False)
+    monkeypatch.setenv("FLOCKS_WORKSPACE_DIR", str(workspace))
+    monkeypatch.setattr("flocks.workspace.manager._user_home_dir", lambda: home)
+    WorkspaceManager._instance = None
+    Config._global_config = None
+    try:
+        requested = (
+            home
+            / ".flocks"
+            / "workspace"
+            / "outputs"
+            / "2026-05-06"
+            / "ses_child"
+            / "report.md"
+        )
+        expected = (
+            home
+            / ".flocks"
+            / "workspace"
+            / "outputs"
+            / "2026-05-06"
+            / "ses_root"
+            / "report.md"
+        )
+        resolve_root = AsyncMock(return_value="ses_root")
+
+        ctx = _make_ctx(session_id="ses_child", extra={})
+        with patch.object(Session, "resolve_root_session_id", resolve_root):
+            result = await ToolRegistry.execute(
+                "write", ctx, filePath=str(requested), content="root scoped fallback"
+            )
+    finally:
+        WorkspaceManager._instance = None
+        Config._global_config = None
+
+    assert result.success, f"write failed: {result.error}"
+    resolve_root.assert_awaited_once_with("ses_child")
+    assert not requested.exists()
+    assert expected.exists()
+    assert expected.read_text() == "root scoped fallback"
+    assert result.metadata["filepath"] == str(expected)
+    assert result.metadata["session_id"] == "ses_child"
+    assert result.metadata["output_session_id"] == "ses_root"
 
 
 @pytest.mark.asyncio

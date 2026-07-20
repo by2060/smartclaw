@@ -184,14 +184,28 @@ def _safe_session_component(session_id: Optional[str]) -> str:
     return component or "default-session"
 
 
-def _effective_output_session_id(ctx: ToolContext) -> Optional[str]:
-    """Return the session id that should scope user-facing output files."""
+async def _effective_output_session_id(ctx: ToolContext) -> Optional[str]:
+    """Return the root session id that should scope user-facing output files."""
     extra = ctx.extra if isinstance(ctx.extra, dict) else {}
     for key in ("output_session_id", "main_session_key"):
         value = extra.get(key)
         if value:
             return str(value)
-    return ctx.session_id
+
+    session_id = ctx.session_id
+    if not session_id:
+        return None
+
+    try:
+        from flocks.session.session import Session
+
+        return await Session.resolve_root_session_id(str(session_id))
+    except Exception as exc:
+        log.warn(
+            "write.output_session.resolve_failed",
+            {"session_id": session_id, "error": str(exc)},
+        )
+        return str(session_id)
 
 
 def _is_user_workspace_output_path(filepath: str, session_id: Optional[str]) -> bool:
@@ -644,7 +658,7 @@ async def write_tool(
     # Resolve path
     filepath = filePath
     base_dir = Instance.get_directory() or os.getcwd()
-    output_session_id = _effective_output_session_id(ctx)
+    output_session_id = await _effective_output_session_id(ctx)
     sandbox = ctx.extra.get("sandbox") if ctx.extra else None
     if not os.path.isabs(filepath) and _sandbox_container_relative_path(filepath, sandbox) is None:
         filepath = os.path.join(base_dir, filepath)
@@ -840,6 +854,8 @@ async def write_tool(
         title=title,
         metadata={
             "filepath": filepath,
+            "session_id": ctx.session_id,
+            "output_session_id": output_session_id,
             # 输出按会话隔离新增
             "rewritten_from": rewritten_from,
             "deduplicated_from": deduplicated_from,
