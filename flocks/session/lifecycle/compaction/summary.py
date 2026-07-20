@@ -140,14 +140,18 @@ async def _llm_chat_with_timeout(
     messages: list,
     max_tokens: int,
     timeout: int = COMPACTION_TIMEOUT_SECONDS,
+    gateway_context: Any = None,
 ) -> Any:
     """Call provider_client.chat with a timeout guard."""
+    request_kwargs = {
+        "model_id": model_id,
+        "messages": messages,
+        "max_tokens": max_tokens,
+    }
+    if gateway_context is not None:
+        request_kwargs["gateway_context"] = gateway_context
     return await asyncio.wait_for(
-        provider_client.chat(
-            model_id=model_id,
-            messages=messages,
-            max_tokens=max_tokens,
-        ),
+        provider_client.chat(**request_kwargs),
         timeout=timeout,
     )
 
@@ -160,6 +164,7 @@ async def summarize_single_pass(
     model_id: str,
     max_tokens: int,
     focus_instruction: Optional[str] = None,
+    gateway_context: Any = None,
 ) -> Optional[str]:
     """Generate summary in a single LLM call (for short conversations).
 
@@ -189,6 +194,7 @@ async def summarize_single_pass(
             model_id=model_id,
             messages=[ChatMessage(role="user", content=request)],
             max_tokens=max_tokens,
+            gateway_context=gateway_context,
         )
     except asyncio.TimeoutError:
         log.error("compaction.single_pass.timeout", {
@@ -243,6 +249,7 @@ async def summarize_chunked(
     chunk_size: Optional[int] = None,
     focus_instruction: Optional[str] = None,
     progress_callback: Optional[ProgressCallback] = None,
+    gateway_context: Any = None,
 ) -> Optional[str]:
     """Generate summary by chunking a long conversation.
 
@@ -331,6 +338,7 @@ async def summarize_chunked(
                     )],
                     max_tokens=max(1000, max_tokens // 2),
                     timeout=per_chunk_timeout,
+                    gateway_context=gateway_context,
                 )
                 duration_ms = (time.perf_counter() - started) * 1000
                 if resp and resp.content:
@@ -435,6 +443,7 @@ async def summarize_chunked(
                 messages=[ChatMessage(role="user", content=merge_request)],
                 max_tokens=max_tokens,
                 timeout=merge_timeout,
+                gateway_context=gateway_context,
             )
             merge_duration_ms = (time.perf_counter() - merge_started) * 1000
             if resp and resp.content:

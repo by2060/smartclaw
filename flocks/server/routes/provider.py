@@ -353,7 +353,7 @@ async def list_providers() -> ProviderListResponse:
             if provider_id in disabled:
                 continue
             
-            provider = Provider.get(provider_id)
+            provider = Provider._get_raw(provider_id)
             if not provider:
                 continue
             
@@ -602,7 +602,7 @@ async def get_provider(provider_id: str) -> ProviderInfo:
     """
     try:
         Provider._ensure_initialized()
-        provider = Provider.get(provider_id)
+        provider = Provider._get_raw(provider_id)
         
         if not provider:
             raise HTTPException(
@@ -704,7 +704,7 @@ async def configure_provider(provider_id: str, config: ProviderConfigRequest) ->
     """
     try:
         Provider._ensure_initialized()
-        provider = Provider.get(provider_id)
+        provider = Provider._get_raw(provider_id)
         
         if not provider:
             raise HTTPException(
@@ -754,7 +754,7 @@ async def test_provider(provider_id: str) -> Dict[str, Any]:
     """
     try:
         Provider._ensure_initialized()
-        provider = Provider.get(provider_id)
+        provider = Provider._get_raw(provider_id)
         
         if not provider:
             raise HTTPException(
@@ -805,7 +805,7 @@ async def update_provider(provider_id: str, config: ProviderConfigRequest) -> Pr
     """
     try:
         Provider._ensure_initialized()
-        provider = Provider.get(provider_id)
+        provider = Provider._get_raw(provider_id)
         
         if not provider:
             raise HTTPException(
@@ -1878,7 +1878,7 @@ async def set_provider_credentials(provider_id: str, request: ProviderCredential
 
             if not models:
                 try:
-                    sdk_provider = Provider.get(provider_id)
+                    sdk_provider = Provider._get_raw(provider_id)
                     if sdk_provider:
                         for m in sdk_provider.get_models():
                             models[m.id] = {"name": m.name}
@@ -1896,7 +1896,7 @@ async def set_provider_credentials(provider_id: str, request: ProviderCredential
                 except Exception:
                     pass
             if not effective_base_url:
-                sdk_provider = Provider.get(provider_id)
+                sdk_provider = Provider._get_raw(provider_id)
                 if sdk_provider and hasattr(sdk_provider, "DEFAULT_BASE_URL"):
                     effective_base_url = sdk_provider.DEFAULT_BASE_URL or None
 
@@ -1912,7 +1912,7 @@ async def set_provider_credentials(provider_id: str, request: ProviderCredential
 
         # 3. Configure the provider runtime so is_configured() reflects the change
         Provider._ensure_initialized()
-        provider = Provider.get(provider_id)
+        provider = Provider._get_raw(provider_id)
         if provider:
             # Preserve the existing base_url from flocks.json when not explicitly provided,
             # so we don't accidentally overwrite it with None in the runtime config.
@@ -1985,7 +1985,7 @@ async def delete_provider_credentials(provider_id: str):
 
         # 4. Clear provider runtime config
         Provider._ensure_initialized()
-        provider = Provider.get(provider_id)
+        provider = Provider._get_raw(provider_id)
         if provider:
             provider._config = None
             if hasattr(provider, "_client"):
@@ -1993,7 +1993,7 @@ async def delete_provider_credentials(provider_id: str):
 
         # 5. Remove from Provider registry if it's a custom provider
         if provider_id.startswith("custom-"):
-            Provider._providers.pop(provider_id, None)
+            Provider.unregister(provider_id)
 
         log.info("provider.credentials.deleted", {"provider_id": provider_id})
         return {"success": True, "cleared_defaults": affected_defaults}
@@ -2300,7 +2300,7 @@ async def test_provider_credentials(provider_id: str, body: Optional[TestCredent
         # Apply config to ensure _config_models (user-defined models) are loaded
         config = await Config.get()
         await Provider.apply_config(config, provider_id=provider_id)
-        provider = Provider.get(provider_id)
+        provider = Provider._get_raw(provider_id)
 
         if provider:
             from flocks.provider.provider import ProviderConfig, ChatMessage as ProviderChatMessage

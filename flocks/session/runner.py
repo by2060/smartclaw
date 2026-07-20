@@ -883,7 +883,21 @@ class SessionRunner:
         max_steps = agent.steps if hasattr(agent, 'steps') and agent.steps is not None else float('inf')
         is_last_step = self._step >= max_steps
         
-        # Get provider
+        # Apply configuration before resolving the inference provider. If
+        # configuration cannot be applied, fail closed instead of using the raw
+        # provider and bypassing SMG.
+        try:
+            await Provider.apply_config(provider_id=self.provider_id)
+        except Exception as e:
+            error = f"Provider {self.provider_id} configuration failed ({type(e).__name__})"
+            log.error("runner.provider.apply_config.error", {
+                "provider": self.provider_id,
+                "error_type": type(e).__name__,
+            })
+            if self.callbacks.on_error:
+                await self.callbacks.on_error(error)
+            return StepResult(action="stop", error=error)
+
         provider = Provider.get(self.provider_id)
         if not provider:
             error = f"Provider {self.provider_id} not found"
@@ -891,15 +905,6 @@ class SessionRunner:
                 await self.callbacks.on_error(error)
             return StepResult(action="stop", error=error)
 
-        # Apply config-based provider options (api_key/base_url)
-        try:
-            await Provider.apply_config(provider_id=self.provider_id)
-        except Exception as e:
-            log.debug("runner.provider.apply_config.error", {
-                "provider": self.provider_id,
-                "error": str(e),
-            })
-        
         if not provider.is_configured():
             error = f"Provider {self.provider_id} not configured"
             if self.callbacks.on_error:
@@ -2574,6 +2579,9 @@ class SessionRunner:
 
         llm_call_started_at = time.perf_counter()
         try:
+            gateway_context = await Session.build_gateway_request_context(
+                self.session.id, trace_id=assistant_msg.id, call_source="session.runner"
+            )
             async for chunk in _iter_with_chunk_timeout(
                 provider.chat_stream(
                     model_id=self.model_id,
@@ -2584,6 +2592,7 @@ class SessionRunner:
                     # reasoning replay) can do so.  Providers that don't care
                     # simply ignore unknown kwargs.
                     session_id=self.session.id,
+                    gateway_context=gateway_context,
                     **provider_options,
                 ),
                 first_chunk_timeout_s=LLM_STREAM_FIRST_CHUNK_TIMEOUT_S,

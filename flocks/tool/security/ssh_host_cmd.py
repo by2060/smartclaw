@@ -382,7 +382,7 @@ _audit_log = audit_log
 # LLM safety evaluation
 # ---------------------------------------------------------------------------
 
-async def _llm_evaluate_command(command: str) -> tuple[str, str]:
+async def _llm_evaluate_command(command: str, ctx: ToolContext) -> tuple[str, str]:
     """
     Ask the configured LLM to evaluate whether a command is safe for forensic use.
 
@@ -390,14 +390,18 @@ async def _llm_evaluate_command(command: str) -> tuple[str, str]:
     Returns: (decision, reason) where decision is SAFE / UNSAFE / UNCERTAIN.
     """
     try:
-        from flocks.provider.manager import ProviderManager
         from flocks.config.config import Config
+        from flocks.provider.provider import ChatMessage, Provider
 
         llm = await Config.resolve_default_llm()
         if not llm:
             return "UNCERTAIN", "no LLM configured"
 
-        provider = await ProviderManager.get(llm["provider_id"])
+        await Provider.apply_config(provider_id=llm["provider_id"])
+        provider = Provider.get(llm["provider_id"])
+        if provider is None:
+            return "UNCERTAIN", "LLM provider not found"
+
 
         system_prompt = (
             "You are a security command safety evaluator. "
@@ -413,18 +417,25 @@ async def _llm_evaluate_command(command: str) -> tuple[str, str]:
             "Do NOT include any other text."
         )
 
-        messages = [{"role": "user", "content": f"Command to evaluate:\n```\n{command}\n```"}]
+        messages = [
+            ChatMessage(role="system", content=system_prompt),
+            ChatMessage(role="user", content=f"Command to evaluate:\n```\n{command}\n```"),
+        ]
 
+        from flocks.session.session import Session
+        gateway_context = await Session.build_gateway_request_context(
+            ctx.session_id, trace_id=ctx.message_id,
+            call_source="tool.ssh_host_cmd",
+        )
         response_text = ""
-        async for event in provider.chat_stream(
-            model=llm["model_id"],
-            system=system_prompt,
+        async for chunk in provider.chat_stream(
+            model_id=llm["model_id"],
             messages=messages,
             max_tokens=100,
             temperature=0.0,
+            gateway_context=gateway_context,
         ):
-            if event.get("type") == "content_delta":
-                response_text += event.get("text", "")
+            response_text += getattr(chunk, "delta", "") or ""
 
         # Parse response
         decision = "UNCERTAIN"
@@ -623,7 +634,7 @@ async def ssh_host_cmd(
     # ── ② LLM evaluation for gray-area commands ──────────────────────────
     llm_source = "static-rule"
     if decision == SafetyDecision.NEEDS_CONFIRM:
-        llm_decision, llm_reason = await _llm_evaluate_command(command)
+        llm_decision, llm_reason = await _llm_evaluate_command(command, ctx)
 
         if llm_decision == "UNSAFE":
             _audit_log(

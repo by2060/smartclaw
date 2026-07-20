@@ -587,6 +587,7 @@ async def generate_api_tool_draft(
     auth_hint: Optional[dict[str, Any]] = None,
     tool_name_prefix: Optional[str] = None,
     model_id: Optional[str] = None,
+    current_token: Optional[str] = None,
 ) -> APIToolDraftGenerationResult:
     target_model = model_id
     if not target_model:
@@ -595,6 +596,9 @@ async def generate_api_tool_draft(
             target_model = default_llm.get("model_id")
     if not target_model:
         raise ValueError("Default LLM model is not configured")
+    from flocks.provider.smg_provider import GatewayRequestContext
+    gateway_context = GatewayRequestContext(user_token=current_token, call_source="tool.api_tool_draft")
+
 
     prompt = build_prompt(
         source_context=source_context,
@@ -608,6 +612,7 @@ async def generate_api_tool_draft(
             ChatMessage(role="user", content=prompt),
         ],
         temperature=0.1,
+        gateway_context=gateway_context,
     )
     raw = extract_json_object(response.content)
     if raw.get("is_api_related") is False:

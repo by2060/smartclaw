@@ -116,6 +116,12 @@ def run_sync(coro: Coroutine[Any, Any, Any]) -> Any:
         default_timeout = 600.0
         return future.result(timeout=default_timeout)
     except concurrent.futures.TimeoutError as exc:
+        # asyncio.TimeoutError raised by the coroutine aliases the same built-in
+        # class. A completed future means this is the caller's timeout, not the
+        # 600-second bridge timeout.
+        if future.done():
+            raise
+
         future.cancel()
         raise RuntimeError(f"Async tool execution timeout ({default_timeout}s)") from exc
     except concurrent.futures.CancelledError as exc:

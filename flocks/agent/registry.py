@@ -593,7 +593,13 @@ class Agent:
             ),
         ]
 
-        response = await Provider.chat(model_id=model_id, messages=messages)
+        from flocks.provider.smg_provider import GatewayRequestContext
+        gateway_context = GatewayRequestContext(call_source="agent.registry")
+        response = await Provider.chat(
+            model_id=model_id,
+            messages=messages,
+            gateway_context=gateway_context,
+        )
         content = response.content
         if "```json" in content:
             content = content.split("```json")[1].split("```")[0].strip()

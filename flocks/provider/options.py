@@ -193,7 +193,7 @@ def _apply_max_tokens_from_config(
     """Set ``max_tokens`` from provider / model config when available."""
     from flocks.provider.provider import Provider
 
-    provider = Provider.get(provider_id)
+    provider = Provider._get_raw(provider_id)
     if not provider:
         return
 

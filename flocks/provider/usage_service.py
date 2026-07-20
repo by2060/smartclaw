@@ -123,7 +123,7 @@ class BackfillUsageResult(BaseModel):
 def resolve_usage_pricing(provider_id: str, model_id: str) -> Optional[PriceConfig]:
     """Resolve runtime pricing for a provider/model pair."""
     model_info = None
-    provider = Provider.get(provider_id)
+    provider = Provider._get_raw(provider_id)
     if provider:
         for candidate in getattr(provider, "_config_models", []):
             if candidate.id == model_id:

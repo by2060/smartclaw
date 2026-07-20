@@ -46,6 +46,8 @@ class LLMClient:
         model: Optional[str] = None,
         *,
         provider_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        trace_id: Optional[str] = None,
     ):
         # NOTE: This module is intentionally synchronous at the edges (workflow runtime),
         # but uses flocks Provider (async) internally for consistency with the rest of flocks.
@@ -56,6 +58,8 @@ class LLMClient:
         self.model = ((model or "") or "").strip()
         self.api_key = (api_key or "").strip() or None
         self.base_url = (base_url or "").strip() or None
+        self.session_id = (session_id or "").strip() or None
+        self.trace_id = (trace_id or "").strip() or None
         workflow_llm_cfg = self._load_workflow_llm_config()
         self.trust_env = _coerce_bool(workflow_llm_cfg.get("trust_env"), False)
 
@@ -190,20 +194,16 @@ class LLMClient:
         return None
 
     def _prepare_provider(self, provider_id: str) -> Any:
-        try:
-            _run_coro_sync(Provider.apply_config(provider_id=provider_id))
-        except Exception:
-            # Keep workflow runtime resilient: provider apply_config failure
-            # should not block ask() for environments driven by env vars.
-            pass
+        _run_coro_sync(Provider.apply_config(provider_id=provider_id))
 
         provider = self._get_provider(provider_id)
-        cfg = getattr(provider, "_config", None)
+        raw_provider = getattr(provider, "_original_provider", provider)
+        cfg = getattr(raw_provider, "_config", None)
         existing_custom = getattr(cfg, "custom_settings", None) or {}
         custom_settings = dict(existing_custom) if isinstance(existing_custom, dict) else {}
         custom_settings["trust_env"] = self.trust_env
 
-        provider.configure(
+        raw_provider.configure(
             ProviderConfig(
                 provider_id=provider_id,
                 api_key=self.api_key if self.api_key is not None else getattr(cfg, "api_key", None),
@@ -213,9 +213,9 @@ class LLMClient:
         )
 
         # Some async SDK clients are loop-bound. Reset and recreate per call.
-        if hasattr(provider, "_client"):
+        if hasattr(raw_provider, "_client"):
             try:
-                setattr(provider, "_client", None)
+                setattr(raw_provider, "_client", None)
             except Exception:
                 pass
         return provider
@@ -269,6 +269,8 @@ class LLMClient:
                 base_url=self.base_url,
                 model=model if model is not None else self.model,
                 provider_id=provider_id if provider_id is not None else self.provider_id,
+                session_id=self.session_id,
+                trace_id=self.trace_id,
             ).ask(
                 prompt,
                 temperature=temperature,
@@ -292,10 +294,24 @@ class LLMClient:
             provider = self._prepare_provider(target.provider_id)
 
             async def _call():
+                from flocks.provider.smg_provider import GatewayRequestContext
+                if self.session_id:
+                    from flocks.session.session import Session
+                    gateway_context = await Session.build_gateway_request_context(
+                        self.session_id,
+                        trace_id=self.trace_id,
+                        call_source="workflow.llm",
+                    )
+                else:
+                    gateway_context = GatewayRequestContext(
+                        trace_id=self.trace_id,
+                        call_source="workflow.llm",
+                    )
                 coro = provider.chat(
                     model_id=target.model_id,
                     messages=[ChatMessage(role="user", content=prompt + "请使用中文输出。")],
                     temperature=temperature,
+                    gateway_context=gateway_context,
                 )
                 if timeout_s is not None and float(timeout_s) > 0:
                     return await asyncio.wait_for(coro, timeout=float(timeout_s))
@@ -336,12 +352,16 @@ def get_llm_client(
     base_url: Optional[str] = None,
     model: Optional[str] = None,
     provider_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    trace_id: Optional[str] = None,
 ) -> LLMClient:
     return LLMClient(
         api_key=api_key,
         base_url=base_url,
         model=model,
         provider_id=provider_id,
+        session_id=session_id,
+        trace_id=trace_id,
     )
 
 

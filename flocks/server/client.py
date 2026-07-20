@@ -124,10 +124,10 @@ class ConfigClient:
         
         providers = []
         for provider_type in Provider.list_providers():
-            provider = Provider.get(provider_type)
+            provider = Provider._get_raw(provider_type)
             if provider:
                 models = {}
-                for model in provider.list_models():
+                for model in provider.get_models():
                     models[model.id] = {
                         "id": model.id,
                         "name": model.name,

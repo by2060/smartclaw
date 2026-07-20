@@ -772,6 +772,51 @@ class Session:
             parent_id = getattr(parent, "parent_id", None)
 
         return root_id
+
+    @classmethod
+    async def resolve_session_chain(cls, session_id: str, max_depth: int = 32) -> List[str]:
+        """Resolve a cycle-safe root-to-current session chain."""
+        chain: List[str] = []
+        current_id: Optional[str] = session_id
+        seen = set()
+        while current_id and current_id not in seen and len(chain) < max_depth:
+            seen.add(current_id)
+            chain.append(current_id)
+            current = await cls.get_by_id(current_id)
+            if current is None:
+                break
+            current_id = getattr(current, "parent_id", None)
+        chain.reverse()
+        return chain
+
+    @classmethod
+    async def build_gateway_request_context(
+        cls,
+        session_id: str,
+        *,
+        trace_id: Optional[str] = None,
+        call_source: str = "unknown",
+    ):
+        from flocks.provider.smg_provider import GatewayRequestContext
+
+        chain = await cls.resolve_session_chain(session_id)
+        token = None
+        # Child sessions may not duplicate user_context. Prefer the current
+        # session, then walk toward the root to recover an available token.
+        for candidate_id in reversed(chain):
+            candidate = await cls.get_by_id(candidate_id)
+            user_context = getattr(candidate, "user_context", None) if candidate else None
+            if isinstance(user_context, dict) and user_context.get("currentToken"):
+                token = user_context["currentToken"]
+                break
+        return GatewayRequestContext(
+            session_chain_ids=tuple(chain),
+            root_session_id=chain[0] if chain else None,
+            current_session_id=session_id,
+            user_token=token,
+            trace_id=trace_id,
+            call_source=call_source,
+        )
     
     @classmethod
     async def fork(

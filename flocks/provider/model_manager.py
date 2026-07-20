@@ -50,12 +50,12 @@ class ModelManager:
         definitions: List[ModelDefinition] = []
 
         if provider_id:
-            provider = Provider.get(provider_id)
+            provider = Provider._get_raw(provider_id)
             if provider:
                 definitions = provider.get_model_definitions()
         else:
             for pid in Provider.list_providers():
-                p = Provider.get(pid)
+                p = Provider._get_raw(pid)
                 if p:
                     definitions.extend(p.get_model_definitions())
 
@@ -81,7 +81,7 @@ class ModelManager:
         self, provider_id: str, model_id: str
     ) -> Optional[ModelDefinition]:
         """Get a single model definition."""
-        provider = Provider.get(provider_id)
+        provider = Provider._get_raw(provider_id)
         if not provider:
             return None
 

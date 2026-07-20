@@ -266,6 +266,39 @@ def _normalize_stream_usage(raw_usage: Any) -> Optional[Dict[str, int]]:
     return usage
 
 
+def _resolve_extra_headers(kwargs: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    """Resolve request headers immediately before an HTTP request is sent."""
+    factory = kwargs.get("_extra_headers_factory")
+    if callable(factory):
+        headers = factory()
+        return dict(headers) if headers else None
+    headers = kwargs.get("extra_headers")
+    return dict(headers) if headers else None
+
+
+def _serialize_tool_calls(raw_tool_calls: Any) -> Optional[List[Dict[str, Any]]]:
+    """Convert SDK tool-call objects into the provider-neutral response shape."""
+    if not raw_tool_calls or not isinstance(raw_tool_calls, (list, tuple)):
+        return None
+    result: List[Dict[str, Any]] = []
+    for tool_call in raw_tool_calls:
+        if isinstance(tool_call, dict):
+            result.append(dict(tool_call))
+        elif hasattr(tool_call, "model_dump"):
+            result.append(tool_call.model_dump(exclude_none=True))
+        else:
+            function = getattr(tool_call, "function", None)
+            result.append({
+                "id": getattr(tool_call, "id", "") or "",
+                "type": getattr(tool_call, "type", "function") or "function",
+                "function": {
+                    "name": getattr(function, "name", "") or "",
+                    "arguments": getattr(function, "arguments", "") or "",
+                },
+            })
+    return result or None
+
+
 def _supports_include_usage_fallback(exc: Exception) -> bool:
     """Return True when the provider rejects OpenAI stream usage options."""
     message = str(exc).lower()
@@ -685,6 +718,9 @@ class OpenAIBaseProvider(BaseProvider):
             params["max_tokens"] = kwargs["max_tokens"]
         if kwargs.get("tools"):
             params["tools"] = kwargs["tools"]
+        extra_headers = _resolve_extra_headers(kwargs)
+        if extra_headers:
+            params["extra_headers"] = extra_headers
 
         # Mirror ``chat_stream``'s diagnostic log so non-streaming multimodal
         # regressions are equally visible. Never logs raw base64 — see
@@ -716,6 +752,9 @@ class OpenAIBaseProvider(BaseProvider):
                 f"{self.name} API returned choice with null message. "
                 f"model={model_id}, detail={err_detail}"
             )
+        reasoning = extract_reasoning_content(msg)
+        if not isinstance(reasoning, str):
+            reasoning = None
         return ChatResponse(
             id=response.id,
             model=response.model,
@@ -728,6 +767,8 @@ class OpenAIBaseProvider(BaseProvider):
                 ),
                 "total_tokens": response.usage.total_tokens if response.usage else 0,
             },
+            tool_calls=_serialize_tool_calls(getattr(msg, "tool_calls", None)),
+            reasoning=reasoning,
         )
 
     async def chat_stream(
@@ -760,6 +801,9 @@ class OpenAIBaseProvider(BaseProvider):
             params["max_tokens"] = kwargs["max_tokens"]
         if kwargs.get("tools"):
             params["tools"] = kwargs["tools"]
+        extra_headers = _resolve_extra_headers(kwargs)
+        if extra_headers:
+            params["extra_headers"] = extra_headers
 
         # Inspect content shape so multimodal regressions surface in the log.
         # We *never* log full base64 payloads — see ``_summarise_block``.
@@ -781,10 +825,13 @@ class OpenAIBaseProvider(BaseProvider):
                 raise
             log.warn("openai_base.stream.include_usage_unsupported", {
                 "model": model_id,
-                "error": str(exc),
+                "error_type": type(exc).__name__,
             })
             params_without_usage = dict(params)
             params_without_usage.pop("stream_options", None)
+            retry_headers = _resolve_extra_headers(kwargs)
+            if retry_headers:
+                params_without_usage["extra_headers"] = retry_headers
             stream = await client.chat.completions.create(**params_without_usage)
         tool_calls: Dict[int, Dict[str, Any]] = {}
         emitted_substantive_chunk = False
