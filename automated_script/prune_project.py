@@ -19,7 +19,6 @@ DEFAULT_TARGETS: tuple[str, ...] = (
     "tests",
     "assets",
     ".venv",
-    "docker",
     "docs",
     "scripts/install.ps1",
     "scripts/install.sh",
