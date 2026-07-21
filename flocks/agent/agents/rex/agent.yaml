@@ -50,7 +50,9 @@ tools:
   # 安全运维  ssh_host_cmd, ssh_run_script
   # 通道/企微	channel_message, wecom_mcp
   #  always-load 工具包含 question, memory_search, memory_get, memory_write
-  # Web	webfetch, websearch
+  # Web	搜索
+  - websearch
+  - webfetch
   # MCP管理 flocks_mcp
 kb:
   - all
