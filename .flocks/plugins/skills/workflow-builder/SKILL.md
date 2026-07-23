@@ -16,8 +16,6 @@ description_cn: 根据自然语言描述生成 flocks 内置工作流（workflow
 | 文件                                                     | 内容                                                                                                    | 何时读取                         |
 | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- | ---------------------------- |
 | [references/reference.md](references/reference.md)     | 生成总原则、节点类型与最小示例、数据传递与 Edge Mapping、控制流与 Join、节点决策、工具返回值处理、外部能力调用、并发/多子任务、文件输出与报告生成、`workflow.json` 骨架模板 | **生成 `workflow.json` 前建议读取** |
-| [references/templates/](references/templates/)         | Python 优先的阶段节点模板，以及少量分支、HTTP、子流程等边界模板，按场景选取后再裁剪，格式为 md 文件                                                           | 生成完整 `workflow.json` 前参考     |
-| [references/templates/python-orchestrator.md](references/templates/python-orchestrator.md) | 默认 Python 阶段节点模板，示范在一个业务阶段内调用工具、LLM、Agent 并统一输出结果 | 生成完整 `workflow.json` 前优先参考 |
 | [references/composition.md](references/composition.md) | 嵌套工作流（subworkflow）组合格式与展开规则                                                                           | 仅在用户需要嵌套工作流时读取               |
 
 ---
