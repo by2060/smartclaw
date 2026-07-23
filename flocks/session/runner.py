@@ -2582,6 +2582,16 @@ class SessionRunner:
             gateway_context = await Session.build_gateway_request_context(
                 self.session.id, trace_id=assistant_msg.id, call_source="session.runner"
             )
+            log.info("runner.llm.request.start", {
+                "session_id": self.session.id,
+                "provider_id": self.provider_id,
+                "model_id": self.model_id,
+                "trace_id": gateway_context.trace_id,
+                "call_source": gateway_context.call_source,
+                "step": self._step,
+                "message_count": len(messages),
+                "tool_count": len(provider_tools or []),
+            })
             async for chunk in _iter_with_chunk_timeout(
                 provider.chat_stream(
                     model_id=self.model_id,
@@ -2679,6 +2689,16 @@ class SessionRunner:
                     for tc in chunk_tool_calls:
                         await tool_accumulator.feed_chunk(tc)
         except Exception as exc:
+            log.error("runner.llm.request.failed", {
+                "session_id": self.session.id,
+                "provider_id": self.provider_id,
+                "model_id": self.model_id,
+                "trace_id": getattr(locals().get("gateway_context"), "trace_id", None),
+                "step": self._step,
+                "duration_ms": int((time.perf_counter() - llm_call_started_at) * 1000),
+                "error_type": type(exc).__name__,
+                "chunk_counts": dict(chunk_counts),
+            })
             try:
                 await HookPipeline.run_llm_after(
                     llm_hook_input,

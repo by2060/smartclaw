@@ -3,11 +3,62 @@ from __future__ import annotations
 import asyncio
 import inspect
 import threading
+import time
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Optional
+from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
+
+import httpx
+
 from flocks.provider.provider import BaseProvider, ChatMessage, ChatResponse, ProviderConfig, StreamChunk
 from flocks.provider.sdk.openai_base import OpenAIBaseProvider
+from flocks.utils.log import Log
+
+
+log = Log.create(service="provider.smg")
+
+
+def _safe_url(value: Any) -> str:
+    """Return a URL suitable for logs without credentials, query, or fragment."""
+    try:
+        parsed = urlsplit(str(value))
+        hostname = parsed.hostname or ""
+        if parsed.port is not None:
+            hostname = f"{hostname}:{parsed.port}"
+        return urlunsplit((parsed.scheme, hostname, parsed.path, "", ""))
+    except (TypeError, ValueError):
+        return "invalid-url"
+
+
+def _redact_detail(value: str, secrets: tuple[Optional[str], ...]) -> str:
+    result = value
+    for secret in secrets:
+        if secret:
+            result = result.replace(secret, "[redacted]")
+    return result[:500]
+
+
+def _exception_diagnostics(
+    exc: Exception,
+    secrets: tuple[Optional[str], ...],
+) -> tuple[list[str], Optional[str]]:
+    """Extract exception types and a safe transport-level root cause."""
+    chain: list[BaseException] = []
+    current: Optional[BaseException] = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen and len(chain) < 8:
+        seen.add(id(current))
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+
+    detail = None
+    for item in reversed(chain):
+        module = type(item).__module__.split(".", 1)[0]
+        if module in {"httpx", "httpcore", "ssl", "socket"} or isinstance(item, OSError):
+            detail = _redact_detail(str(item), secrets)
+            break
+    return [type(item).__name__ for item in chain], detail
 
 @dataclass(frozen=True)
 class GatewayRequestContext:
@@ -51,6 +102,43 @@ class SMGProvider(OpenAIBaseProvider):
                 self._client = None
                 self._clients_by_loop[loop] = client
             return client
+
+    def _http_event_hooks(self) -> dict[str, list[Any]]:
+        return {
+            "request": [self._log_http_attempt],
+            "response": [self._log_http_response],
+        }
+
+    async def _log_http_attempt(self, request: httpx.Request) -> None:
+        request.extensions["flocks_smg_started_at"] = time.perf_counter()
+        log.info("smg.http.attempt", {
+            "provider_id": self.id,
+            "method": request.method,
+            "url": _safe_url(request.url),
+            "span_id": request.headers.get("X-Span-Id"),
+            "trace_id": request.headers.get("X-Trace-Id"),
+            "retry_count": request.headers.get("x-stainless-retry-count", "0"),
+            "content_length": request.headers.get("content-length"),
+        })
+
+    async def _log_http_response(self, response: httpx.Response) -> None:
+        started_at = response.request.extensions.get("flocks_smg_started_at")
+        duration_ms = (
+            int((time.perf_counter() - started_at) * 1000)
+            if isinstance(started_at, (int, float))
+            else None
+        )
+        log.info("smg.http.response", {
+            "provider_id": self.id,
+            "method": response.request.method,
+            "url": _safe_url(response.request.url),
+            "span_id": response.request.headers.get("X-Span-Id"),
+            "trace_id": response.request.headers.get("X-Trace-Id"),
+            "retry_count": response.request.headers.get("x-stainless-retry-count", "0"),
+            "status_code": response.status_code,
+            "request_id": response.headers.get("x-request-id"),
+            "duration_ms": duration_ms,
+        })
 
     def close_clients(self) -> None:
         """Detach and close all event-loop-scoped clients where possible."""
@@ -112,6 +200,7 @@ class SMGProvider(OpenAIBaseProvider):
     def _request_kwargs(
         self,
         kwargs: dict[str, Any],
+        model_id: Optional[str] = None,
     ) -> tuple[dict[str, Any], dict[str, Optional[str]]]:
         result = dict(kwargs)
         context = result.pop("gateway_context", None)
@@ -143,11 +232,57 @@ class SMGProvider(OpenAIBaseProvider):
                     headers["X-Session-Id"] = context.session_chain_id
                 if context.trace_id:
                     headers["X-Trace-Id"] = context.trace_id
+            log.info("smg.request.prepared", {
+                "provider_id": self.id,
+                "model_id": model_id,
+                "call_source": request_state["call_source"],
+                "url": _safe_url(self._config.base_url if self._config else None),
+                "span_id": span_id,
+                "trace_id": request_state["trace_id"],
+                "has_user": "X-User" in headers,
+                "has_session": "X-Session-Id" in headers,
+            })
             return headers
 
         result["_extra_headers_factory"] = _headers_factory
         result["_smg_gateway_context"] = context
         return result, request_state
+
+    def _log_request_failure(
+        self,
+        model_id: str,
+        state: dict[str, Optional[str]],
+        exc: Exception,
+        *,
+        started_at: float,
+        stream: bool,
+        received_chunks: int = 0,
+    ) -> None:
+        request = getattr(exc, "request", None)
+        headers = getattr(request, "headers", {}) or {}
+        secrets = (
+            self._config.api_key if self._config else None,
+            headers.get("X-User"),
+        )
+        error_chain, cause_detail = _exception_diagnostics(exc, secrets)
+        response = getattr(exc, "response", None)
+        log.error("smg.request.failed", {
+            "provider_id": self.id,
+            "model_id": model_id,
+            "call_source": state.get("call_source") or "unknown",
+            "url": _safe_url(getattr(request, "url", None) or (self._config.base_url if self._config else None)),
+            "span_id": state.get("span_id") or "unassigned",
+            "trace_id": state.get("trace_id"),
+            "retry_count": headers.get("x-stainless-retry-count"),
+            "stream": stream,
+            "received_chunks": received_chunks,
+            "duration_ms": int((time.perf_counter() - started_at) * 1000),
+            "error_type": type(exc).__name__,
+            "error_chain": error_chain,
+            "cause_detail": cause_detail,
+            "status_code": getattr(response, "status_code", None),
+            "request_id": getattr(response, "headers", {}).get("x-request-id") if response is not None else None,
+        })
 
     def _request_error(
         self,
@@ -167,18 +302,33 @@ class SMGProvider(OpenAIBaseProvider):
         return RuntimeError("SMG request failed (" + ", ".join(fields) + ")")
 
     async def chat(self, model_id: str, messages: list[ChatMessage], **kwargs) -> ChatResponse:
-        request_kwargs, state = self._request_kwargs(kwargs)
+        request_kwargs, state = self._request_kwargs(kwargs, model_id=model_id)
+        started_at = time.perf_counter()
         try:
             return await super().chat(model_id, messages, **request_kwargs)
         except Exception as exc:
+            self._log_request_failure(
+                model_id, state, exc, started_at=started_at, stream=False
+            )
             raise self._request_error(model_id, state, exc) from None
 
     async def chat_stream(self, model_id: str, messages: list[ChatMessage], **kwargs) -> AsyncIterator[StreamChunk]:
-        request_kwargs, state = self._request_kwargs(kwargs)
+        request_kwargs, state = self._request_kwargs(kwargs, model_id=model_id)
+        started_at = time.perf_counter()
+        received_chunks = 0
         try:
             async for chunk in super().chat_stream(model_id, messages, **request_kwargs):
+                received_chunks += 1
                 yield chunk
         except Exception as exc:
+            self._log_request_failure(
+                model_id,
+                state,
+                exc,
+                started_at=started_at,
+                stream=True,
+                received_chunks=received_chunks,
+            )
             raise self._request_error(model_id, state, exc) from None
 
     def __getattr__(self, name: str):

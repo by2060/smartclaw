@@ -142,6 +142,7 @@ async def call_omo_agent_tool(
         if not session:
             return ToolResult(success=False, error=f"Session {session_id} not found")
         target_session_id = session.id
+        target_session = session
     else:
         parent_session = await Session.get_by_id(ctx.session_id)
         if not parent_session:
@@ -159,6 +160,13 @@ async def call_omo_agent_tool(
             owner_username=parent_session.owner_username,
         )
         target_session_id = created.id
+        target_session = created
+
+    target_session = await Session.inherit_gateway_trace(
+        target_session,
+        ctx.session_id,
+        ctx.message_id,
+    )
 
     await Message.create(
         session_id=target_session_id,

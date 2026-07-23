@@ -395,6 +395,11 @@ class BackgroundManager:
                 child_session = await Session.create(
                     **create_kwargs,
                 )
+                child_session = await Session.inherit_gateway_trace(
+                    child_session,
+                    input_data.parent_session_id,
+                    input_data.parent_message_id,
+                )
                 task.session_id = child_session.id
 
                 await Message.create(
@@ -439,6 +444,11 @@ class BackgroundManager:
                 session = await Session.get_by_id(input_data.session_id)
                 if not session:
                     raise RuntimeError(f"Session {input_data.session_id} not found")
+                session = await Session.inherit_gateway_trace(
+                    session,
+                    input_data.parent_session_id,
+                    input_data.parent_message_id,
+                )
 
                 await Message.create(
                     session_id=session.id,

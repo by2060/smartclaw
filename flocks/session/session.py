@@ -134,6 +134,8 @@ class Session:
     Mirrors original Flocks Session namespace from index.ts
     """
     
+    _GATEWAY_TRACE_METADATA_KEY = "smgTraceId"
+
     # Per-task current session (concurrent-safe via contextvars)
     _current_var: contextvars.ContextVar[Optional[SessionInfo]] = contextvars.ContextVar(
         "session_current", default=None,
@@ -790,6 +792,84 @@ class Session:
         return chain
 
     @classmethod
+    async def resolve_gateway_trace_id(
+        cls,
+        session_id: str,
+        trace_id: Optional[str],
+    ) -> Optional[str]:
+        """Resolve an SMG trace to the root user turn for this session chain."""
+        if not trace_id:
+            return None
+
+        session = await cls.get_by_id(session_id)
+        metadata = getattr(session, "metadata", None) if session else None
+        inherited_trace_id = (
+            metadata.get(cls._GATEWAY_TRACE_METADATA_KEY)
+            if isinstance(metadata, dict)
+            else None
+        )
+        if inherited_trace_id:
+            return str(inherited_trace_id)
+
+        from flocks.session.message import Message, MessageRole
+
+        trace_message = await Message.get(session_id, trace_id)
+        trace_role = getattr(trace_message, "role", None) if trace_message else None
+        if trace_role == MessageRole.ASSISTANT or trace_role == MessageRole.ASSISTANT.value:
+            parent_message_id = getattr(trace_message, "parentID", None)
+            parent_message = (
+                await Message.get(session_id, parent_message_id)
+                if parent_message_id
+                else None
+            )
+            parent_role = getattr(parent_message, "role", None) if parent_message else None
+            if parent_role == MessageRole.USER or parent_role == MessageRole.USER.value:
+                return parent_message.id
+        return trace_id
+
+    @classmethod
+    async def inherit_gateway_trace(
+        cls,
+        child_session: SessionInfo,
+        parent_session_id: Optional[str],
+        parent_message_id: Optional[str],
+    ) -> SessionInfo:
+        """Persist the parent user-turn trace on a child or resumed session."""
+        if not parent_session_id or not parent_message_id:
+            return child_session
+        try:
+            inherited_trace_id = await cls.resolve_gateway_trace_id(
+                parent_session_id,
+                parent_message_id,
+            )
+        except Exception as exc:
+            log.warn("session.gateway_trace.resolve_failed", {
+                "session_id": child_session.id,
+                "error_type": type(exc).__name__,
+            })
+            return child_session
+        if not inherited_trace_id:
+            return child_session
+
+        metadata = dict(getattr(child_session, "metadata", None) or {})
+        if metadata.get(cls._GATEWAY_TRACE_METADATA_KEY) == inherited_trace_id:
+            return child_session
+        metadata[cls._GATEWAY_TRACE_METADATA_KEY] = inherited_trace_id
+        try:
+            updated = await cls.update(
+                child_session.project_id,
+                child_session.id,
+                metadata=metadata,
+            )
+        except Exception as exc:
+            log.warn("session.gateway_trace.persist_failed", {
+                "session_id": getattr(child_session, "id", None),
+                "error_type": type(exc).__name__,
+            })
+            return child_session
+        return updated or child_session
+
+    @classmethod
     async def build_gateway_request_context(
         cls,
         session_id: str,
@@ -798,8 +878,15 @@ class Session:
         call_source: str = "unknown",
     ):
         from flocks.provider.smg_provider import GatewayRequestContext
-
         chain = await cls.resolve_session_chain(session_id)
+        try:
+            resolved_trace_id = await cls.resolve_gateway_trace_id(session_id, trace_id)
+        except Exception as exc:
+            log.warn("session.gateway_trace.resolve_failed", {
+                "session_id": session_id,
+                "error_type": type(exc).__name__,
+            })
+            resolved_trace_id = trace_id
         token = None
         # Child sessions may not duplicate user_context. Prefer the current
         # session, then walk toward the root to recover an available token.
@@ -814,7 +901,7 @@ class Session:
             root_session_id=chain[0] if chain else None,
             current_session_id=session_id,
             user_token=token,
-            trace_id=trace_id,
+            trace_id=resolved_trace_id,
             call_source=call_source,
         )
     

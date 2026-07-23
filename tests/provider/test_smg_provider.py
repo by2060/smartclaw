@@ -1,6 +1,8 @@
+import io
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
+import httpx
 import pytest
 
 from flocks.provider.provider import (
@@ -12,6 +14,7 @@ from flocks.provider.provider import (
 )
 from flocks.provider.sdk.openai_base import OpenAIBaseProvider
 from flocks.provider.smg_provider import GatewayRequestContext, SMGProvider
+from flocks.utils.log import Log
 
 
 class _RawProvider(BaseProvider):
@@ -347,3 +350,215 @@ def test_unregister_removes_raw_provider_and_closes_proxy(monkeypatch):
     assert "demo" not in Provider._providers
     assert "demo" not in Provider._smg_providers
     proxy.close_clients.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_smg_http_hooks_log_correlated_redacted_metadata():
+    proxy = SMGProvider(_RawProvider(), _smg_config())
+    request = httpx.Request(
+        "POST",
+        "https://user:password@smg.example/v1/chat/completions?api_key=query-secret",
+        headers={
+            "Authorization": "Bearer auth-secret",
+            "X-User": "user-secret",
+            "X-Span-Id": "span-123",
+            "X-Trace-Id": "trace-456",
+            "x-stainless-retry-count": "2",
+            "content-length": "123",
+        },
+    )
+    response = httpx.Response(
+        502,
+        headers={"x-request-id": "gateway-request-789"},
+        request=request,
+    )
+    old_writer = Log._writer
+    old_level = Log._level
+    Log._writer = io.StringIO()
+    Log._level = "INFO"
+    try:
+        await proxy._log_http_attempt(request)
+        await proxy._log_http_response(response)
+        output = Log._writer.getvalue()
+    finally:
+        Log._writer = old_writer
+        Log._level = old_level
+
+    assert "smg.http.attempt" in output
+    assert "smg.http.response" in output
+    assert "url=https://smg.example/v1/chat/completions" in output
+    assert "span_id=span-123" in output
+    assert "trace_id=trace-456" in output
+    assert "retry_count=2" in output
+    assert "status_code=502" in output
+    assert "request_id=gateway-request-789" in output
+    assert "password" not in output
+    assert "query-secret" not in output
+    assert "auth-secret" not in output
+    assert "user-secret" not in output
+
+
+def test_smg_failure_log_redacts_transport_cause():
+    proxy = SMGProvider(_RawProvider(), _smg_config())
+    request = httpx.Request(
+        "POST",
+        "https://smg.example/v1/chat/completions",
+        headers={
+            "X-User": "user-secret",
+            "x-stainless-retry-count": "2",
+        },
+    )
+    error = httpx.ConnectError(
+        "connection refused: user-secret smg-secret",
+        request=request,
+    )
+    old_writer = Log._writer
+    old_level = Log._level
+    Log._writer = io.StringIO()
+    Log._level = "INFO"
+    try:
+        proxy._log_request_failure(
+            "demo-model",
+            {"span_id": "span-123", "trace_id": "trace-456", "call_source": "test"},
+            error,
+            started_at=0.0,
+            stream=True,
+        )
+        output = Log._writer.getvalue()
+    finally:
+        Log._writer = old_writer
+        Log._level = old_level
+
+    assert "smg.request.failed" in output
+    assert "error_chain=['ConnectError']" in output
+    assert "cause_detail=connection refused: [redacted] [redacted]" in output
+    assert "user-secret" not in output
+    assert "smg-secret" not in output
+
+
+@pytest.mark.asyncio
+async def test_gateway_context_uses_one_user_trace_for_all_assistant_steps(monkeypatch):
+    from flocks.session.message import Message
+    from flocks.session.session import Session
+
+    user_message = SimpleNamespace(id="user-turn", role="user")
+    messages = {
+        "assistant-step-1": SimpleNamespace(
+            id="assistant-step-1", role="assistant", parentID="user-turn"
+        ),
+        "assistant-step-2": SimpleNamespace(
+            id="assistant-step-2", role="assistant", parentID="user-turn"
+        ),
+        "user-turn": user_message,
+    }
+
+    async def get_message(_session_id, message_id):
+        return messages.get(message_id)
+
+    monkeypatch.setattr(Session, "resolve_session_chain", AsyncMock(return_value=["session-1"]))
+    monkeypatch.setattr(
+        Session,
+        "get_by_id",
+        AsyncMock(return_value=SimpleNamespace(user_context={})),
+    )
+    monkeypatch.setattr(Message, "get", get_message)
+
+    first = await Session.build_gateway_request_context(
+        "session-1", trace_id="assistant-step-1", call_source="test"
+    )
+    second = await Session.build_gateway_request_context(
+        "session-1", trace_id="assistant-step-2", call_source="test"
+    )
+    original = await Session.build_gateway_request_context(
+        "session-1", trace_id="user-turn", call_source="test"
+    )
+
+    assert first.trace_id == "user-turn"
+    assert second.trace_id == "user-turn"
+    assert original.trace_id == "user-turn"
+
+
+@pytest.mark.asyncio
+async def test_two_child_sessions_share_the_parent_user_trace(monkeypatch):
+    from flocks.session.message import Message
+    from flocks.session.session import Session
+
+    sessions = {
+        "root-session": SimpleNamespace(metadata={}, user_context={}),
+        "child-1": SimpleNamespace(
+            metadata={"smgTraceId": "user-turn"},
+            user_context={},
+        ),
+        "child-2": SimpleNamespace(
+            metadata={"smgTraceId": "user-turn"},
+            user_context={},
+        ),
+    }
+
+    async def get_session(session_id):
+        return sessions.get(session_id)
+
+    async def resolve_chain(session_id):
+        return ["root-session", session_id]
+
+    monkeypatch.setattr(Session, "get_by_id", get_session)
+    monkeypatch.setattr(Session, "resolve_session_chain", resolve_chain)
+    message_get = AsyncMock(return_value=None)
+    monkeypatch.setattr(Message, "get", message_get)
+
+    first = await Session.build_gateway_request_context(
+        "child-1", trace_id="child-assistant-1", call_source="session.runner"
+    )
+    second = await Session.build_gateway_request_context(
+        "child-2", trace_id="child-assistant-2", call_source="session.runner"
+    )
+
+    assert first.trace_id == "user-turn"
+    assert second.trace_id == "user-turn"
+    assert first.session_chain_ids == ("root-session", "child-1")
+    assert second.session_chain_ids == ("root-session", "child-2")
+    message_get.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_child_session_inherits_parent_user_trace_without_losing_metadata(monkeypatch):
+    from flocks.session.message import Message
+    from flocks.session.session import Session
+
+    parent_session = SimpleNamespace(metadata={})
+    child_session = SimpleNamespace(
+        id="child-session",
+        project_id="project-1",
+        metadata={"existing": "value", "smgTraceId": "previous-turn"},
+    )
+    messages = {
+        "parent-assistant": SimpleNamespace(
+            id="parent-assistant",
+            role="assistant",
+            parentID="user-turn",
+        ),
+        "user-turn": SimpleNamespace(id="user-turn", role="user"),
+    }
+
+    async def get_session(session_id):
+        return parent_session if session_id == "parent-session" else child_session
+
+    async def get_message(_session_id, message_id):
+        return messages.get(message_id)
+
+    update = AsyncMock(return_value=child_session)
+    monkeypatch.setattr(Session, "get_by_id", get_session)
+    monkeypatch.setattr(Session, "update", update)
+    monkeypatch.setattr(Message, "get", get_message)
+
+    await Session.inherit_gateway_trace(
+        child_session,
+        "parent-session",
+        "parent-assistant",
+    )
+
+    update.assert_awaited_once_with(
+        "project-1",
+        "child-session",
+        metadata={"existing": "value", "smgTraceId": "user-turn"},
+    )

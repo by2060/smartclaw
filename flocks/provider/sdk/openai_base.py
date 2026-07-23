@@ -602,6 +602,10 @@ class OpenAIBaseProvider(BaseProvider):
         api_key = self._config.api_key if self._config else self._api_key
         return bool(api_key)
 
+    def _http_event_hooks(self) -> Dict[str, List[Any]]:
+        """Return optional HTTPX hooks for provider-specific diagnostics."""
+        return {}
+
     def _get_client(self):
         """Get or create AsyncOpenAI client."""
         if self._client is None:
@@ -643,6 +647,7 @@ class OpenAIBaseProvider(BaseProvider):
                 trust_env=trust_env,
                 verify=verify_ssl,
                 timeout=timeout,
+                event_hooks=self._http_event_hooks(),
             )
 
             self._client = AsyncOpenAI(
@@ -651,10 +656,13 @@ class OpenAIBaseProvider(BaseProvider):
                 http_client=http_client,
             )
             log.info("openai_base.client.created", {
-                "provider_id": getattr(self._config, "id", None),
+                "provider_id": getattr(self._config, "provider_id", None),
                 "base_url": base_url,
                 "trust_env": trust_env,
                 "verify_ssl": verify_ssl,
+                "http_proxy_configured": bool(os.getenv("HTTP_PROXY") or os.getenv("http_proxy")),
+                "https_proxy_configured": bool(os.getenv("HTTPS_PROXY") or os.getenv("https_proxy")),
+                "no_proxy_configured": bool(os.getenv("NO_PROXY") or os.getenv("no_proxy")),
             })
         return self._client
 
