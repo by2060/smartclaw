@@ -63,7 +63,7 @@ async def set_provider_auth(provider_id: str, request: Request) -> Dict[str, Any
             Provider._ensure_initialized()
             
             # Get provider and configure it
-            provider = Provider.get(provider_id)
+            provider = Provider._get_raw(provider_id)
             if provider:
                 config = ProviderConfig(
                     provider_id=provider_id,

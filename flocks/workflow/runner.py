@@ -438,6 +438,10 @@ def run_workflow(
         workflow_path_for_engine,
         session_id=workflow_session_id,
     )
+    if tool_context is not None:
+        initial_inputs.setdefault("_gateway_session_id", getattr(tool_context, "session_id", None))
+        initial_inputs.setdefault("_message_id", getattr(tool_context, "message_id", None))
+
     _logger.info(
         "开始执行 workflow (timeout=%ss, inputs=%s)",
         timeout_s,

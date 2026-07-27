@@ -183,7 +183,7 @@ async def delete_provider(provider_id: str):
         pass
 
     # Remove from runtime
-    Provider._providers.pop(provider_id, None)
+    Provider.unregister(provider_id)
 
     log.info("custom_provider.deleted", {"id": provider_id})
 
@@ -285,7 +285,7 @@ def _register_provider(
     pid: str, name: str, base_url: str, api_key: Optional[str] = None
 ):
     """Register a custom provider in the runtime Provider registry."""
-    if Provider.get(pid):
+    if Provider._get_raw(pid):
         return
     p = CustomProvider(provider_id=pid, name=name)
     p._base_url = base_url
@@ -331,7 +331,7 @@ def _add_model_to_runtime(provider_id: str, body: CreateModelReq):
         "supports_reasoning", "input_price", "output_price", "currency",
     }
     Provider._models[body.model_id] = mi
-    p = Provider.get(provider_id)
+    p = Provider._get_raw(provider_id)
     if p:
         # CustomProvider (custom-* providers) uses _custom_models
         if hasattr(p, "_custom_models"):
@@ -411,7 +411,7 @@ async def load_custom_providers_on_startup():
             )
             mi._explicit_keys = set(mcfg.keys())
             Provider._models[model_id] = mi
-            p = Provider.get(pid)
+            p = Provider._get_raw(pid)
             if p and hasattr(p, "_custom_models"):
                 p._custom_models.append(mi)
             loaded_models += 1

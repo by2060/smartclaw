@@ -153,6 +153,31 @@ class LLM:
     """
     
     @classmethod
+    async def _get_provider(cls, provider_id: str):
+        await Provider.apply_config(provider_id=provider_id)
+        provider = Provider.get(provider_id)
+        if not provider:
+            raise LLMError(f"Provider {provider_id} not found")
+        return provider
+
+    @classmethod
+    async def _gateway_context(
+        cls,
+        session_id: Optional[str],
+        trace_id: Optional[str],
+        call_source: str,
+    ):
+        from flocks.provider.smg_provider import GatewayRequestContext
+        if not session_id:
+            return GatewayRequestContext(trace_id=trace_id, call_source=call_source)
+        from flocks.session.session import Session
+        return await Session.build_gateway_request_context(
+            session_id,
+            trace_id=trace_id,
+            call_source=call_source,
+        )
+
+    @classmethod
     def _hash_messages(cls, messages: List[Dict[str, Any]], model: str) -> str:
         """Create hash key for message list"""
         import hashlib
@@ -188,7 +213,7 @@ class LLM:
         """
         try:
             # Get provider
-            provider = Provider.get(provider_id)
+            provider = await cls._get_provider(provider_id)
             if not provider:
                 raise LLMError(f"Provider {provider_id} not found")
             
@@ -223,6 +248,13 @@ class LLM:
                 "message_count": len(chat_messages),
             })
             
+            kwargs.setdefault(
+                "gateway_context",
+                await cls._gateway_context(
+                    session_id, getattr(messages[-1], "id", None) if messages else None,
+                    "session.streaming.chat",
+                ),
+            )
             with log.time("llm.chat"):
                 response = await provider.chat(
                     model_id=model,
@@ -310,7 +342,7 @@ class LLM:
         """
         try:
             # Get provider
-            provider = Provider.get(provider_id)
+            provider = await cls._get_provider(provider_id)
             if not provider:
                 raise LLMError(f"Provider {provider_id} not found")
             
@@ -329,6 +361,13 @@ class LLM:
                 "provider": provider_id,
             })
             
+            kwargs.setdefault(
+                "gateway_context",
+                await cls._gateway_context(
+                    session_id, getattr(messages[-1], "id", None) if messages else None,
+                    "session.streaming.chat_stream",
+                ),
+            )
             # Stream response
             full_content = []
             async for chunk in provider.chat_stream(
@@ -405,7 +444,7 @@ class LLM:
                 provider_id = model.get("providerID") if isinstance(model, dict) else getattr(model, "providerID", "openai")
                 model_id = model.get("modelID") if isinstance(model, dict) else getattr(model, "id", "gpt-4")
                 
-                provider = Provider.get(provider_id)
+                provider = await cls._get_provider(provider_id)
                 if not provider:
                     raise LLMError(f"Provider {provider_id} not found")
                 
@@ -423,9 +462,14 @@ class LLM:
                         content = "\n".join(text_parts)
                     chat_messages.append(ChatMessage(role=role, content=content))
                 
+                gateway_context = await cls._gateway_context(
+                    session_id, getattr(user, "id", None),
+                    "session.streaming.stream",
+                )
                 async for chunk in provider.chat_stream(
                     model_id=model_id,
                     messages=chat_messages,
+                    gateway_context=gateway_context,
                 ):
                     text = chunk.delta if hasattr(chunk, 'delta') else str(chunk)
                     full_text.append(text)
@@ -472,7 +516,7 @@ class LLM:
             context = "\n".join(context_parts)
             
             # Create title generation prompt
-            provider = Provider.get(provider_id)
+            provider = await cls._get_provider(provider_id)
             if not provider:
                 return "New Session"
             
@@ -483,11 +527,17 @@ class LLM:
                 )
             ]
             
+            gateway_context = await cls._gateway_context(
+                getattr(messages[0], "sessionID", None),
+                getattr(messages[0], "id", None),
+                "session.streaming.generate_title",
+            )
             response = await provider.chat(
                 model_id=model,
                 messages=title_messages,
                 max_tokens=50,
                 temperature=0.7,
+                gateway_context=gateway_context,
             )
             
             title = response.content.strip().strip('"\'')

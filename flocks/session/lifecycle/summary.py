@@ -254,6 +254,7 @@ class SessionSummary:
                     session_id=session_id,
                     text=text_part["text"],
                     model_info=user_msg.get("model"),
+                    message_id=message_id,
                 )
         
         summary = MessageSummaryInfo(
@@ -279,6 +280,7 @@ class SessionSummary:
         session_id: str,
         text: str,
         model_info: Optional[Dict[str, str]] = None,
+        message_id: Optional[str] = None,
         max_length: int = 100,
     ) -> Optional[str]:
         """
@@ -331,11 +333,17 @@ class SessionSummary:
                 )
             ]
             
+            from flocks.session.session import Session
+            gateway_context = await Session.build_gateway_request_context(
+                session_id, trace_id=message_id,
+                call_source="session.lifecycle.summary",
+            )
             response = await Provider.chat(
                 model_id=model_id,
                 messages=messages,
                 max_tokens=50,
                 temperature=0.7,
+                gateway_context=gateway_context,
             )
             
             if response and response.content:

@@ -177,6 +177,15 @@ class ProviderConfig(BaseModel):
     models: Optional[Dict[str, ModelConfig]] = None
     options: Optional[ProviderOptionsConfig] = None
 
+class SMGConfig(BaseModel):
+    """Smart Model Gateway configuration."""
+    model_config = {"extra": "forbid", "populate_by_name": True}
+    enabled: bool = False
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    platform_identifier: Optional[str] = None
+
+
 
 # ==================== MCP Configuration ====================
 
@@ -536,6 +545,7 @@ class ConfigInfo(BaseModel):
     agent: Optional[Dict[str, AgentConfig]] = None
     provider: Optional[Dict[str, ProviderConfig]] = None
     categories: Optional[Dict[str, CategoryConfig]] = None
+    smg: Optional[SMGConfig] = None
     mcp: Optional[Dict[str, Union[McpConfig, Dict[str, Any]]]] = None
     formatter: Optional[Union[Literal[False], Dict[str, Any]]] = None
     lsp: Optional[Union[Literal[False], Dict[str, Any]]] = None
@@ -1279,6 +1289,13 @@ class Config:
     def clear_cache(cls) -> None:
         """Clear cached configuration"""
         cls._cached_config = None
+        # Keep the provider proxy lifecycle aligned with configuration reloads.
+        # Import lazily to avoid the Config/Provider module cycle.
+        try:
+            from flocks.provider.provider import Provider
+            Provider.invalidate_smg_runtime_config()
+        except ImportError:
+            pass
     
     @classmethod
     def get_data_path(cls) -> Path:

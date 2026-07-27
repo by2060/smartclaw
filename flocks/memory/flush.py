@@ -309,6 +309,7 @@ async def extract_and_save(
     ChatMessage: Any,
     policy: Optional["CompactionPolicy"] = None,
     count_tokens: Optional[Callable[[str], int]] = None,
+    gateway_context: Any = None,
 ) -> None:
     """Extract key memories from the conversation and save to daily file.
 
@@ -383,11 +384,14 @@ async def extract_and_save(
 
     memory_text: Optional[str] = None
     try:
-        mem_response = await provider.chat(
-            model_id=model_id,
-            messages=[ChatMessage(role="user", content=memory_prompt)],
-            max_tokens=1500,
-        )
+        request_kwargs = {
+            "model_id": model_id,
+            "messages": [ChatMessage(role="user", content=memory_prompt)],
+            "max_tokens": 1500,
+        }
+        if gateway_context is not None:
+            request_kwargs["gateway_context"] = gateway_context
+        mem_response = await provider.chat(**request_kwargs)
         if mem_response and mem_response.content:
             content = mem_response.content.strip()
             if content.upper() != "NOTHING":

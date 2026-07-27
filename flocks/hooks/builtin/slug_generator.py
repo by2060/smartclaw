@@ -4,9 +4,12 @@ LLM Slug Generator - Generate descriptive filenames using LLM
 Uses LLM to generate a 1-2 word slug for session memory filenames.
 """
 
-from typing import Optional
+import asyncio
 import re
+from typing import Any, Optional
 
+from flocks.config.config import Config
+from flocks.provider.provider import ChatMessage
 from flocks.provider import Provider
 from flocks.utils.log import Log
 
@@ -15,7 +18,7 @@ log = Log.create(service="hooks.slug_generator")
 
 async def generate_slug_via_llm(
     conversation: str,
-    config: any,
+    config: Any,
     session_id: str,
     timeout_seconds: int = 15,
 ) -> Optional[str]:
@@ -30,10 +33,6 @@ async def generate_slug_via_llm(
         
     Returns:
         slug string or None (on failure)
-        
-    Examples:
-        >>> await generate_slug_via_llm("user: Design API\\nassistant: Sure...")
-        "api-design"
     """
     try:
         # Construct prompt
@@ -45,23 +44,35 @@ Conversation summary:
 Reply with ONLY the slug, nothing else. Examples: "vendor-pitch", "api-design", "bug-fix"
 """
         
-        # Get provider configuration
-        provider_id = getattr(config.memory.embedding, 'provider', 'openai')
-        if provider_id == "auto":
-            provider_id = "openai"
-        
-        # Call LLM (use lightweight model)
-        response = await Provider.chat(
-            messages=[{"role": "user", "content": prompt}],
-            provider_id=provider_id,
-            model="gpt-3.5-turbo",  # Fast lightweight model
-            max_tokens=50,
-            temperature=0.7,
+        llm = await Config.resolve_default_llm()
+        if not llm:
+            return None
+        provider_id = llm["provider_id"]
+        model_id = llm["model_id"]
+        await Provider.apply_config(provider_id=provider_id)
+        provider = Provider.get(provider_id)
+        if provider is None:
+            return None
+
+        from flocks.session.session import Session
+        gateway_context = await Session.build_gateway_request_context(
+            session_id,
+            call_source="hooks.slug_generator",
         )
-        
+        response = await asyncio.wait_for(
+            provider.chat(
+                model_id=model_id,
+                messages=[ChatMessage(role="user", content=prompt)],
+                max_tokens=50,
+                temperature=0.7,
+                gateway_context=gateway_context,
+            ),
+            timeout=timeout_seconds,
+        )
+
         # Extract and clean slug
-        if response and response.get('content'):
-            text = response['content'].strip()
+        if response and response.content:
+            text = response.content.strip()
             
             # Clean format
             slug = text.lower().replace(" ", "-").replace("_", "-")
