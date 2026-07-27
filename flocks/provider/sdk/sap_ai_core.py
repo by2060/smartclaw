@@ -278,8 +278,7 @@ class SAPAICoreProvider(BaseProvider):
                     )
                 else:
                     log.error("sap_ai_core.chat.error", {
-                        "status": response.status_code,
-                        "body": response.text[:500],
+                        "status": response.status_code
                     })
                     raise Exception(f"SAP AI Core API error: {response.status_code}")
                     

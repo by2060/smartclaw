@@ -969,10 +969,6 @@ async def _execute_host(
     try:
         if sys.platform == "win32":
             shell_name, shell_cmd = _get_windows_shell_command(command)
-            log.info(
-                "bash.execute.host",
-                {"command": command, "cwd": cwd, "shell": shell_name, "shell_cmd": shell_cmd[:-1]},
-            )
             proc = await asyncio.create_subprocess_exec(
                 *shell_cmd,
                 stdout=asyncio.subprocess.PIPE,

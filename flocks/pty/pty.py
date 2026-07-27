@@ -212,13 +212,6 @@ class Pty:
         # Prepare environment
         env = cls._prepare_environment(input_data.env)
         
-        log.info("pty.creating", {
-            "id": pty_id,
-            "command": command,
-            "args": args,
-            "cwd": cwd,
-        })
-        
         try:
             # Try to use ptyprocess for real PTY
             from ptyprocess import PtyProcess

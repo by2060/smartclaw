@@ -1053,7 +1053,6 @@ class InboundDispatcher:
             log.warning("dispatcher.inbound_media_download_failed", {
                 "channel_id": msg.channel_id,
                 "message_id": msg.message_id,
-                "media_url": msg.media_url,
                 "error": str(e),
             })
 

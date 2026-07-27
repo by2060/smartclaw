@@ -663,12 +663,6 @@ class SessionRunner:
         # Create prompt request
         parts = [{"type": "text", "text": template}]
         
-        log.info("runner.command", {
-            "session_id": session_id,
-            "command": command,
-            "arguments": arguments[:50] if arguments else "",
-        })
-        
         return {
             "command": command,
             "arguments": arguments,
