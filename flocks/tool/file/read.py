@@ -20,7 +20,7 @@ from flocks.tool.registry import (
 from flocks.project.instance import Instance
 from flocks.utils.log import Log
 from flocks.utils.id import Identifier
-from flocks.tool.file.sandbox_paths import display_path, resolve_sandbox_path
+from flocks.tool.file.sandbox_paths import  resolve_sandbox_path
 
 
 log = Log.create(service="tool.read")
@@ -342,7 +342,7 @@ async def read_tool(
         return ToolResult(
             success=False,
             error=(
-                f"Cannot read binary file: {display_path(filepath, ctx)}. "
+                f"Cannot read binary file: {filepath}. "
                 "For PDF, Word, Excel, PowerPoint, or HTML documents, use doc_parser "
                 "to extract readable Markdown."
             ),

@@ -134,3 +134,8 @@ changelog.md
 # Integration tests with real host credentials (not for commit)
 tests/integration_ssh_*.py
 .cursor
+.understand-anything/.understandignore
+.understand-anything/fingerprints.json
+.understand-anything/meta.json
+.understand-anything/knowledge-graph.json
+.claude/settings.local.json

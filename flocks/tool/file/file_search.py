@@ -3,7 +3,7 @@ import re
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from flocks.tool.registry import ToolContext, ToolRegistry, ToolResult
-from flocks.tool.file.sandbox_paths import display_path, resolve_sandbox_path, sandbox_search_roots
+from flocks.tool.file.sandbox_paths import resolve_sandbox_path, sandbox_search_roots
 
 # Sensitive directories to exclude from search
 SENSITIVE_DIRS = {
@@ -155,11 +155,6 @@ async def file_search(
                 results.extend(_search_filenames(
                     search_dir, pattern, recursive, remaining
                 ))
-
-        if ctx:
-            for item in results:
-                if isinstance(item, dict) and item.get("path"):
-                    item["path"] = display_path(str(item["path"]), ctx)
         
         return finish({
             "status": "success",

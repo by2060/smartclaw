@@ -21,7 +21,7 @@ from flocks.tool.registry import (
 )
 from flocks.project.instance import Instance
 from flocks.utils.log import Log
-from flocks.tool.file.sandbox_paths import display_path, resolve_sandbox_path, sandbox_search_roots
+from flocks.tool.file.sandbox_paths import resolve_sandbox_path, sandbox_search_roots
 
 
 log = Log.create(service="tool.grep")
@@ -334,7 +334,7 @@ async def grep_tool(
     
     current_file = ""
     for match in final_matches:
-        display_file = display_path(match['path'], ctx)
+        display_file = match['path']
         if current_file != display_file:
             if current_file:
                 output_lines.append("")

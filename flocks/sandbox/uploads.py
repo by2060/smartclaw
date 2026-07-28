@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from flocks.workspace.manager import WorkspaceManager
 
 UPLOADS_CHAT_PREFIX = "uploads/chat"
+UPLOADS_TASK_PREFIX = "uploads/task"
 
 
 class SandboxUploadMount(BaseModel):
@@ -63,12 +64,19 @@ def get_session_upload_mounts(
         return []
 
     root = container_workdir.replace("\\", "/").rstrip("/") or "/workspace"
+
+    # 增加task目录，实现有点丑
     return [
         SandboxUploadMount(
             host_dir=str(upload_dir.resolve()),
             container_dir=f"{root}/{UPLOADS_CHAT_PREFIX}/{safe_id}",
             read_only=True,
-        )
+        ),
+        SandboxUploadMount(
+            host_dir=str(upload_dir.resolve()).replace(UPLOADS_CHAT_PREFIX, UPLOADS_TASK_PREFIX),
+            container_dir=f"{root}/{UPLOADS_TASK_PREFIX}/{safe_id}",
+            read_only=True,
+        ),
     ]
 
 

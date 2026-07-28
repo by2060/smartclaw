@@ -372,40 +372,6 @@ def _already_session_scoped_output(suffix: str) -> bool:
     )
 
 
-def _normalize_bash_display_paths(ctx: ToolContext, output: str) -> str:
-    """Rewrite short sandbox output paths to stable date/session paths."""
-
-    if not output or "/workspace/" not in output:
-        return output
-    scope = _workspace_output_scope(ctx)
-    if not scope:
-        return output
-
-    def replace_output(match: re.Match[str]) -> str:
-        prefix = match.group("prefix")
-        suffix = match.group("suffix")
-        if _already_session_scoped_output(suffix):
-            return match.group(0)
-        scheme = "file://" if prefix.startswith("file://") else ""
-        return f"{scheme}/workspace/outputs/{scope}{suffix}"
-
-    normalized = re.sub(
-        r"(?P<prefix>(?:file://)?/workspace/(?:outputs|output))(?P<suffix>/[^\s'\"<>]+)",
-        replace_output,
-        output,
-    )
-
-    def replace_artifact(match: re.Match[str]) -> str:
-        suffix = match.group("suffix")
-        scheme = "file://" if match.group("prefix").startswith("file://") else ""
-        return f"{scheme}/workspace/outputs/{scope}/artifacts{suffix}"
-
-    return re.sub(
-        r"(?P<prefix>(?:file://)?/workspace/artifacts)(?P<suffix>/[^\s'\"<>]+)",
-        replace_artifact,
-        normalized,
-    )
-
 
 def _next_available_path(path: Path) -> Path:
     if not path.exists():
@@ -542,7 +508,11 @@ def _attach_output_migrations(result: ToolResult, migrations: list[dict[str, str
 
 def _is_allowed_temporary_script_path(path: str, cwd: str, ctx: ToolContext) -> bool:
     normalized = str(path).replace("\\", "/").strip("'\"")
-    if normalized.startswith(("/tmp/", "/var/tmp/", "/workspace/")):
+    if normalized.startswith(("/tmp/", "/var/tmp/")):
+        return True
+    sandbox = ctx.extra.get("sandbox") if ctx.extra else None
+    container_workdir = sandbox.get("container_workdir", "") if isinstance(sandbox, dict) else ""
+    if container_workdir and normalized.startswith(container_workdir.rstrip("/") + "/"):
         return True
 
     candidate = Path(path).expanduser()
@@ -563,8 +533,6 @@ def _is_flocks_plugin_write_path(path: str, base_dir: str) -> bool:
     """Return True when a shell write targets a project Flocks plugin definition."""
     normalized = str(path).replace("\\", "/").strip("'\"")
     if normalized.startswith((".flocks/plugins/", "./.flocks/plugins/")):
-        return True
-    if normalized.startswith("/workspace/.flocks/plugins/"):
         return True
 
     candidate = Path(path).expanduser()
@@ -1247,8 +1215,6 @@ async def _stream_output(
 
     if result_metadata:
         output += "\n\n<bash_metadata>\n" + "\n".join(result_metadata) + "\n</bash_metadata>"
-
-    output = _normalize_bash_display_paths(ctx, output)
 
     # Truncate output for metadata
     truncated_output = output

@@ -19,7 +19,7 @@ from flocks.tool.registry import (
 )
 from flocks.project.instance import Instance
 from flocks.utils.log import Log
-from flocks.tool.file.sandbox_paths import display_path, resolve_sandbox_path
+from flocks.tool.file.sandbox_paths import  resolve_sandbox_path
 
 
 log = Log.create(service="tool.list")
@@ -343,7 +343,7 @@ async def list_tool(
     truncated = len(files) >= LIMIT
     
     # Build output
-    output = render_directory_tree(files, display_path(search_path, ctx))
+    output = render_directory_tree(files, search_path)
     
     return ToolResult(
         success=True,

@@ -88,6 +88,16 @@ class RequirementsInstaller:
         return True
 
 
+def _to_container_abs_path(container_workdir: str, path: str) -> str:
+    """将 /workspace 相对路径转换为使用实际 container_workdir 的绝对路径。"""
+    p = str(path).replace("\\", "/")
+    if p.startswith("/workspace/"):
+        return container_workdir.rstrip("/") + "/" + p[len("/workspace/"):]
+    if p in ("/workspace", "workspace"):
+        return container_workdir.rstrip("/")
+    return p
+
+
 @dataclass(frozen=True)
 class SandboxRequirementsInstaller:
     """Install workflow requirements inside sandbox container with marker cache."""
@@ -153,7 +163,16 @@ class SandboxRequirementsInstaller:
             return False
         py = self.python_executable.strip() or "python3"
         key = requirements_cache_key(reqs, python_executable=f"container:{py}")
-        marker_path = self._marker_path(key)
+
+        # 路径统一后，container_workdir 为真实宿主机路径（而非 /workspace）
+        # 使用 _to_container_abs_path 将字段默认值中的 /workspace 前缀替换为实际路径
+        container_workdir = str(
+            sandbox.get("container_workdir") or sandbox.get("workspace_dir") or "/workspace"
+        ).strip() or "/workspace"
+        abs_marker_root = _to_container_abs_path(container_workdir, self.marker_root)
+        abs_site_packages_dir = _to_container_abs_path(container_workdir, self.site_packages_dir)
+        marker_path = f"{abs_marker_root.rstrip('/')}/{key}.installed"
+
         base_cmd = self._docker_base_cmd(sandbox)
 
         check_cmd = [*base_cmd, py, "-c", self._python_exists_script(marker_path)]
@@ -161,7 +180,7 @@ class SandboxRequirementsInstaller:
         if marker_status.returncode == 0:
             return False
 
-        mkdir_cmd = [*base_cmd, py, "-c", self._python_mkdir_script(self.site_packages_dir)]
+        mkdir_cmd = [*base_cmd, py, "-c", self._python_mkdir_script(abs_site_packages_dir)]
         subprocess.run(mkdir_cmd, check=True)
 
         which = self._select_installer()
@@ -174,7 +193,7 @@ class SandboxRequirementsInstaller:
                 "--python",
                 py,
                 "--target",
-                self.site_packages_dir,
+                abs_site_packages_dir,
                 *reqs,
             ]
         else:
@@ -187,7 +206,7 @@ class SandboxRequirementsInstaller:
                 "--disable-pip-version-check",
                 "--no-cache-dir",
                 "--target",
-                self.site_packages_dir,
+                abs_site_packages_dir,
                 *reqs,
             ]
         subprocess.run(install_cmd, check=True)
@@ -196,3 +215,4 @@ class SandboxRequirementsInstaller:
         write_marker_cmd = [*base_cmd, py, "-c", self._python_write_script(marker_path, marker_content)]
         subprocess.run(write_marker_cmd, check=True)
         return True
+

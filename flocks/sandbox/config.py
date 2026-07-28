@@ -6,7 +6,7 @@
 - 层级: agents.defaults.sandbox → agents.list[].sandbox → 硬编码默认值
 - scope === "shared" 时忽略 agent 级 docker 覆写
 """
-
+import os
 from typing import Any, Dict, Optional
 
 from .defaults import (
@@ -81,7 +81,7 @@ def resolve_sandbox_docker_config(
     return SandboxDockerConfig(
         image=_pick("image", DEFAULT_SANDBOX_IMAGE),
         container_prefix=_pick("container_prefix", DEFAULT_SANDBOX_CONTAINER_PREFIX),
-        workdir=_pick("workdir", DEFAULT_SANDBOX_WORKDIR),
+        workdir=os.getcwd(),     # 容器内路径
         read_only_root=_pick("read_only_root", True),
         tmpfs=_pick("tmpfs", ["/tmp", "/var/tmp", "/run"]),
         network=_pick("network", "none"),
@@ -212,8 +212,7 @@ def resolve_sandbox_config_for_agent(
             or global_sandbox.get("workspace_access", "none")
         ),
         workspace_root=(
-            agent_sandbox.get("workspace_root")
-            or global_sandbox.get("workspace_root")
+            os.getcwd()  # 宿主机路径
         ),
         docker=docker,
         tools=tools,

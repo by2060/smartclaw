@@ -259,7 +259,7 @@ async def create_sandbox_container(
         agent_mount_suffix = ":ro" if workspace_access == "ro" else ""
         args.extend([
             "-v",
-            f"{agent_workspace_dir}:{SANDBOX_AGENT_WORKSPACE_MOUNT}{agent_mount_suffix}",
+            f"{agent_workspace_dir}:{agent_workspace_dir}{agent_mount_suffix}",
         ])
 
     # 镜像 + 保持容器运行
@@ -268,6 +268,11 @@ async def create_sandbox_container(
     if cfg.binds:
         for bind in cfg.binds:
             args.extend(["-v", bind])
+
+    # 设置镜像内的用户id
+    current_uid = os.getuid()
+    current_gid = os.getgid()
+    args.extend(["--user", f"{current_uid}:{current_gid}"])
 
     args.extend([cfg.image, "sleep", "infinity"])
 

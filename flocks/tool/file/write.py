@@ -620,9 +620,9 @@ async def _resolve_sandbox_file_path(
                 "- Project source file (source code, tests, configs that belong to the project)"
                 " → Source code directory\n"
                 "- Agent-generated output (scripts, reports, examples, analysis results, drafts"
-                " requested by user) → Workspace outputs directory\n"
+                " requested by user) → Session outputs directory\n"
                 "\n"
-                "Agent-generated outputs MUST go to the Workspace outputs directory."
+                "Agent-generated outputs MUST go to the Session outputs directory."
                 " This directory is date- and session-scoped"
                 " (outputs/<YYYY-MM-DD>/<session_id>/). NEVER write them"
                 " into the Source code directory."
@@ -677,6 +677,7 @@ async def write_tool(
     workflow_id_hint = None
     if isinstance(ctx.extra, dict):
         workflow_id_hint = ctx.extra.get("workflow_id") or ctx.extra.get("workflowId")
+
     filepath, rewritten_from = _rewrite_workflow_json_path(
         filepath,
         filePath,
@@ -843,8 +844,8 @@ async def write_tool(
             )
 
     # Build output
-    output = "Wrote workflow artifact successfully." if artifact_record is not None else "Wrote file successfully."
-    
+    output = "Wrote workflow artifact successfully." if artifact_record is not None else "Wrote file successfully.\n"
+    output += f"最终文件输出目录：{filepath}"
     # Note: LSP diagnostics integration would go here
     # For now we just return success
     

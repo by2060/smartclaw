@@ -175,12 +175,10 @@ def _map_workspace_upload_container_path(
 
         manager = WorkspaceManager.get_instance()
         mapped = manager.resolve_user_workspace_path(rel)
-        uploads_root = manager.resolve_user_workspace_path(UPLOADS_CHAT_PREFIX)
+
     except Exception:
         return None
 
-    if not _path_within(mapped, uploads_root):
-        return None
     return ResolvedToolPath(
         path=str(mapped),
         sandbox=sandbox,
@@ -537,7 +535,7 @@ async def resolve_sandbox_path(
         except Exception:
             return None, (
                 f"Path escapes sandbox outputs directory: {filepath}. "
-                "Use paths inside /workspace/outputs only."
+                "Use paths inside <workspace>/outputs only."
             )
         return ResolvedToolPath(
             path=resolved,
@@ -561,7 +559,7 @@ async def resolve_sandbox_path(
         except Exception:
             return None, (
                 f"Path escapes project plugin directory: {filepath}. "
-                "Use paths inside /workspace/.flocks/plugins only."
+                "Use paths inside <workspace>/.flocks/plugins only."
             )
         return ResolvedToolPath(
             path=resolved,
@@ -578,7 +576,7 @@ async def resolve_sandbox_path(
         except Exception:
             return None, (
                 f"Path escapes project plugin directory: {filepath}. "
-                "Use paths inside /workspace/.flocks/plugins only."
+                "Use paths inside <workspace>/.flocks/plugins only."
             )
         return ResolvedToolPath(
             path=resolved,
@@ -586,6 +584,7 @@ async def resolve_sandbox_path(
             mapped_from=host_project_plugin.mapped_from,
             read_only=host_project_plugin.read_only,
         ), None
+
 
     output_mapped = _map_session_output_path(ctx, filepath, sandbox)
     if output_mapped is not None:
