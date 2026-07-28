@@ -21,6 +21,8 @@ import datetime as dt
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
+from flocks.workspace import WorkspaceManager
+
 if TYPE_CHECKING:
     from flocks.sandbox.types import BashSandboxConfig
 
@@ -510,6 +512,9 @@ def _is_allowed_temporary_script_path(path: str, cwd: str, ctx: ToolContext) -> 
     normalized = str(path).replace("\\", "/").strip("'\"")
     if normalized.startswith(("/tmp/", "/var/tmp/")):
         return True
+    manager = WorkspaceManager.get_instance()
+    if normalized.startswith(str(manager.get_user_workspace_dir())):
+        return True
     sandbox = ctx.extra.get("sandbox") if ctx.extra else None
     container_workdir = sandbox.get("container_workdir", "") if isinstance(sandbox, dict) else ""
     if container_workdir and normalized.startswith(container_workdir.rstrip("/") + "/"):
@@ -519,7 +524,7 @@ def _is_allowed_temporary_script_path(path: str, cwd: str, ctx: ToolContext) -> 
     if not candidate.is_absolute():
         candidate = Path(cwd) / candidate
 
-    allowed_roots = [Path(tempfile.gettempdir()), _artifacts_dir_for_session(ctx)]
+    allowed_roots = [Path(tempfile.gettempdir()), _artifacts_dir_for_session(ctx), ]
     for root in allowed_roots:
         try:
             if candidate.resolve().is_relative_to(root.resolve()):

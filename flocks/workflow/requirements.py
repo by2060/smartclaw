@@ -104,8 +104,8 @@ class SandboxRequirementsInstaller:
 
     installer: str = "auto"
     python_executable: str = "python3"
-    marker_root: str = "/workspace/.flocks/workflow/requirements"
-    site_packages_dir: str = "/workspace/.flocks/workflow/site-packages"
+    marker_root: str = f"{os.getcwd()}/.flocks/workflow/requirements"
+    site_packages_dir: str = f"{os.getcwd()}/.flocks/workflow/site-packages"
 
     def _select_installer(self) -> str:
         v = (self.installer or "auto").strip().lower()

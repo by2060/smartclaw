@@ -246,13 +246,13 @@ async def create_sandbox_container(
     )
 
     # 工作目录
-    args.extend(["--workdir", cfg.workdir])
+    args.extend(["--workdir", workspace_dir])
 
     # workspace 挂载
     main_mount_suffix = ""
     if workspace_access == "ro" and workspace_dir == agent_workspace_dir:
         main_mount_suffix = ":ro"
-    args.extend(["-v", f"{workspace_dir}:{cfg.workdir}{main_mount_suffix}"])
+    args.extend(["-v", f"{workspace_dir}:{workspace_dir}{main_mount_suffix}"])
 
     # agent workspace 额外挂载 (当 workspaceAccess != none 且 workspace 不同)
     if workspace_access != "none" and workspace_dir != agent_workspace_dir:
@@ -488,7 +488,7 @@ def build_sandbox_env(
     default_path: str,
     params_env: Optional[Dict[str, str]] = None,
     sandbox_env: Optional[Dict[str, str]] = None,
-    container_workdir: str = "/workspace",
+    container_workdir: str = os.getcwd(),
 ) -> Dict[str, str]:
     """
     构建沙箱内环境变量。

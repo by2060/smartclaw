@@ -173,7 +173,7 @@ async def resolve_sandbox_context(
         upload_mounts.extend(
             get_session_upload_mounts(
                 upload_session_key,
-                container_workdir=f"{user_workspace_dir}",
+                container_workdir=f"{user_workspace_dir}",   # upload目录在用户目录下
                 create=create_upload_dir,
             )
         )
@@ -182,7 +182,7 @@ async def resolve_sandbox_context(
     output_dir = workspace_manager.get_outputs_dir(output_session_key)
     artifacts_dir = output_dir / "artifacts"
     artifacts_dir.mkdir(parents=True, exist_ok=True)
-    container_workdir = cfg.docker.workdir.replace("\\", "/").rstrip("/") or "/workspace"
+    container_workdir = effective_workspace_dir
     user_outputs_root = user_workspace_dir / "outputs"
     user_outputs_root.mkdir(parents=True, exist_ok=True)
     resolved_output_dir = output_dir.resolve()
@@ -191,7 +191,7 @@ async def resolve_sandbox_context(
         output_scope = resolved_output_dir.relative_to(resolved_outputs_root).as_posix()
     except ValueError:
         output_scope = output_dir.name
-    container_output_dir = f"{user_workspace_dir}/outputs/{output_scope}".rstrip("/")
+    container_output_dir = str(resolved_output_dir)
     container_artifacts_dir = f"{container_output_dir}/artifacts"
     project_plugins_dir = _resolve_project_plugins_dir(agent_workspace_dir)
     project_plugins_dir.mkdir(parents=True, exist_ok=True)
@@ -209,10 +209,10 @@ async def resolve_sandbox_context(
             if bind not in binds:
                 binds.append(bind)
         env = dict(docker_cfg.env or {})
-        env["FLOCKS_WORKSPACE_DIR"] = container_workdir
+        env["FLOCKS_WORKSPACE_DIR"] = effective_workspace_dir
         env["FLOCKS_OUTPUTS_DIR"] = container_output_dir
         env["FLOCKS_ARTIFACTS_DIR"] = container_artifacts_dir
-        env["FLOCKS_PROJECT_PLUGINS_DIR"] = f"{container_workdir}/.flocks/plugins"
+        env["FLOCKS_PROJECT_PLUGINS_DIR"] = f"{effective_workspace_dir}/.flocks/plugins"
         env["FLOCKS_SESSION_ID"] = output_session_key
         docker_cfg.binds = binds
         docker_cfg.env = env
@@ -250,7 +250,7 @@ async def resolve_sandbox_context(
         project_plugins_dir=str(project_plugins_dir),
         workspace_access=cfg.workspace_access,
         container_name=container_name,
-        container_workdir=cfg.docker.workdir,
+        container_workdir=effective_workspace_dir,
         docker=cfg.docker,
         tools=cfg.tools,
         # 文件上传目录挂载到沙箱新增

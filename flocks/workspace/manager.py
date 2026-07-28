@@ -169,9 +169,6 @@ class WorkspaceManager:
 
     # 输出按会话隔离新增
     def get_user_workspace_dir(self) -> Path:
-        runtime_workspace = os.getenv("FLOCKS_WORKSPACE_DIR")
-        if runtime_workspace and os.getenv("FLOCKS_OUTPUTS_DIR"):
-            return Path(runtime_workspace).expanduser()
         return _user_workspace_dir()
 
     def get_memory_dir(self) -> Path:
