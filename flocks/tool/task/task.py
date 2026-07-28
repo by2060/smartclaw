@@ -315,6 +315,11 @@ async def task_tool(
         session = await Session.get_by_id(session_id)
         if not session:
             return ToolResult(success=False, error=f"Session {session_id} not found")
+        session = await Session.inherit_gateway_trace(
+            session,
+            ctx.session_id,
+            ctx.message_id,
+        )
         await Message.create(
             session_id=session.id,
             role=MessageRole.USER,
@@ -382,6 +387,11 @@ async def task_tool(
                 model_pinned=True,
             )
         created = await Session.create(**create_kwargs)
+        created = await Session.inherit_gateway_trace(
+            created,
+            ctx.session_id,
+            ctx.message_id,
+        )
         await Message.create(
             session_id=created.id,
             role=MessageRole.USER,

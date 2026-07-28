@@ -663,12 +663,6 @@ class SessionRunner:
         # Create prompt request
         parts = [{"type": "text", "text": template}]
         
-        log.info("runner.command", {
-            "session_id": session_id,
-            "command": command,
-            "arguments": arguments[:50] if arguments else "",
-        })
-        
         return {
             "command": command,
             "arguments": arguments,
@@ -883,7 +877,21 @@ class SessionRunner:
         max_steps = agent.steps if hasattr(agent, 'steps') and agent.steps is not None else float('inf')
         is_last_step = self._step >= max_steps
         
-        # Get provider
+        # Apply configuration before resolving the inference provider. If
+        # configuration cannot be applied, fail closed instead of using the raw
+        # provider and bypassing SMG.
+        try:
+            await Provider.apply_config(provider_id=self.provider_id)
+        except Exception as e:
+            error = f"Provider {self.provider_id} configuration failed ({type(e).__name__})"
+            log.error("runner.provider.apply_config.error", {
+                "provider": self.provider_id,
+                "error_type": type(e).__name__,
+            })
+            if self.callbacks.on_error:
+                await self.callbacks.on_error(error)
+            return StepResult(action="stop", error=error)
+
         provider = Provider.get(self.provider_id)
         if not provider:
             error = f"Provider {self.provider_id} not found"
@@ -891,15 +899,6 @@ class SessionRunner:
                 await self.callbacks.on_error(error)
             return StepResult(action="stop", error=error)
 
-        # Apply config-based provider options (api_key/base_url)
-        try:
-            await Provider.apply_config(provider_id=self.provider_id)
-        except Exception as e:
-            log.debug("runner.provider.apply_config.error", {
-                "provider": self.provider_id,
-                "error": str(e),
-            })
-        
         if not provider.is_configured():
             error = f"Provider {self.provider_id} not configured"
             if self.callbacks.on_error:
@@ -2574,6 +2573,19 @@ class SessionRunner:
 
         llm_call_started_at = time.perf_counter()
         try:
+            gateway_context = await Session.build_gateway_request_context(
+                self.session.id, trace_id=assistant_msg.id, call_source="session.runner"
+            )
+            log.info("runner.llm.request.start", {
+                "session_id": self.session.id,
+                "provider_id": self.provider_id,
+                "model_id": self.model_id,
+                "trace_id": gateway_context.trace_id,
+                "call_source": gateway_context.call_source,
+                "step": self._step,
+                "message_count": len(messages),
+                "tool_count": len(provider_tools or []),
+            })
             async for chunk in _iter_with_chunk_timeout(
                 provider.chat_stream(
                     model_id=self.model_id,
@@ -2584,6 +2596,7 @@ class SessionRunner:
                     # reasoning replay) can do so.  Providers that don't care
                     # simply ignore unknown kwargs.
                     session_id=self.session.id,
+                    gateway_context=gateway_context,
                     **provider_options,
                 ),
                 first_chunk_timeout_s=LLM_STREAM_FIRST_CHUNK_TIMEOUT_S,
@@ -2670,6 +2683,16 @@ class SessionRunner:
                     for tc in chunk_tool_calls:
                         await tool_accumulator.feed_chunk(tc)
         except Exception as exc:
+            log.error("runner.llm.request.failed", {
+                "session_id": self.session.id,
+                "provider_id": self.provider_id,
+                "model_id": self.model_id,
+                "trace_id": getattr(locals().get("gateway_context"), "trace_id", None),
+                "step": self._step,
+                "duration_ms": int((time.perf_counter() - llm_call_started_at) * 1000),
+                "error_type": type(exc).__name__,
+                "chunk_counts": dict(chunk_counts),
+            })
             try:
                 await HookPipeline.run_llm_after(
                     llm_hook_input,

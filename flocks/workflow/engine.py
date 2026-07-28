@@ -643,7 +643,11 @@ class WorkflowEngine:
             ) from e
         from .llm import get_llm_client
         try:
-            client = get_llm_client(model=node.model)
+            client = get_llm_client(
+                model=node.model,
+                session_id=inputs.get("_gateway_session_id") or inputs.get("_session_id"),
+                trace_id=inputs.get("_message_id"),
+            )
             text = client.ask(rendered)
         except Exception as e:
             raise NodeExecutionError(

@@ -107,6 +107,7 @@ class SessionTitle:
             
             # Call LLM to generate title
             Provider._ensure_initialized()
+            await Provider.apply_config(provider_id=provider_id)
             provider = Provider.get(provider_id)
             
             if not provider:
@@ -122,6 +123,11 @@ class SessionTitle:
             # Send PROMPT_TITLE as system instruction, user question as user message
             title = ""
             try:
+                gateway_context = await Session.build_gateway_request_context(
+                    session_id,
+                    trace_id=first_user_msg.id,
+                    call_source="session.lifecycle.title",
+                )
                 async for chunk in provider.chat_stream(
                     model_id,
                     [
@@ -129,6 +135,7 @@ class SessionTitle:
                         ChatMessage(role="user", content=question),
                     ],
                     max_tokens=50,
+                    gateway_context=gateway_context,
                 ):
                     if hasattr(chunk, 'delta') and chunk.delta:
                         title += chunk.delta

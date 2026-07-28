@@ -371,6 +371,11 @@ async def delegate_task_tool(
             )
             return ToolResult(success=True, output=output, title=description, metadata={"sessionId": task.session_id})
         # Sync continuation
+        session = await Session.inherit_gateway_trace(
+            session,
+            ctx.session_id,
+            ctx.message_id,
+        )
         await Message.create(
             session_id=session.id,
             role=MessageRole.USER,
@@ -494,6 +499,11 @@ async def delegate_task_tool(
         # 澄清选择答案记忆新增
         owner_user_id=parent_session.owner_user_id,
         owner_username=parent_session.owner_username,
+    )
+    created = await Session.inherit_gateway_trace(
+        created,
+        ctx.session_id,
+        ctx.message_id,
     )
     await Message.create(
         session_id=created.id,

@@ -73,7 +73,7 @@ async def list_providers_tool(
         Provider._ensure_initialized()
 
         if provider_id:
-            provider = Provider.get(provider_id)
+            provider = Provider._get_raw(provider_id)
             if not provider:
                 return ToolResult(
                     success=False,
@@ -82,7 +82,7 @@ async def list_providers_tool(
             providers_list = [provider]
         else:
             providers_list = [
-                Provider.get(pid) for pid in Provider.list_providers()
+                Provider._get_raw(pid) for pid in Provider.list_providers()
             ]
 
         lines: List[str] = []
@@ -367,11 +367,11 @@ async def add_model_tool(
             provider_id = resolved
 
         raw = ConfigWriter.get_provider_raw(provider_id)
-        provider = Provider.get(provider_id)
+        provider = Provider._get_raw(provider_id)
         if raw is None and not provider:
             avail = []
             for c in candidates[:20]:
-                p = Provider.get(c)
+                p = Provider._get_raw(c)
                 n = p.name if p else c
                 avail.append(f"  - {c} ({n})")
             return ToolResult(
@@ -420,7 +420,7 @@ async def add_model_tool(
             ),
         )
         Provider._models[model_id] = mi
-        p = Provider.get(provider_id)
+        p = Provider._get_raw(provider_id)
         if p:
             # CustomProvider uses _custom_models; built-in providers use _config_models
             added = False
@@ -485,7 +485,7 @@ def _fuzzy_match_provider(query: str, candidates: List[str]) -> Optional[str]:
     # Build name index
     id_to_name: Dict[str, str] = {}
     for c in candidates:
-        p = Provider.get(c)
+        p = Provider._get_raw(c)
         id_to_name[c] = (p.name or "").strip() if p else ""
 
     # 1. Exact name match (case-sensitive)

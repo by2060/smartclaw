@@ -26,6 +26,12 @@
       "created_at": "2026-05-19T07:00:53.993000+00:00"
     }
   },
+  "smg": {
+    "enabled": false,
+    "base_url": "{secret:smg_base_url}",
+    "api_key": "{secret:smg_api_key}",
+    "platform_identifier": "{secret:platform_identifier}"
+  },
   "default_models": {
     "llm": {
       "provider_id": "custom-glm-4.7-fp8",

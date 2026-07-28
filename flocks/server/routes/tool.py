@@ -6,7 +6,7 @@ import asyncio
 import re
 import time
 from typing import List, Optional, Dict, Any, Literal, Union
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from flocks.server.auth import require_admin
@@ -1249,6 +1249,7 @@ async def _create_and_register_yaml_tool(
 )
 async def generate_api_tool_draft_route(
     request: GenerateAPIToolDraftRequest,
+    current_token: Optional[str] = Header(None, alias="currentToken"),
     _admin: object = Depends(require_admin),
 ):
     if not request.sources:
@@ -1262,12 +1263,15 @@ async def generate_api_tool_draft_route(
     try:
         from flocks.tool.api_tool_draft_llm import generate_api_tool_draft
 
-        result = await generate_api_tool_draft(
+        generation_kwargs = dict(
             source_context=source_context,
             auth_hint=request.auth_hint,
             tool_name_prefix=request.tool_name_prefix,
             model_id=request.model_id,
         )
+        if current_token is not None:
+            generation_kwargs["current_token"] = current_token
+        result = await generate_api_tool_draft(**generation_kwargs)
     except ValueError as e:
         message = str(e)
         code = status.HTTP_400_BAD_REQUEST if "not configured" in message else status.HTTP_422_UNPROCESSABLE_ENTITY

@@ -207,7 +207,7 @@ async def send_media_feishu(
             )
         except Exception as exc:
             log.warning("feishu.media.upload_failed", {
-                "url": media_url, "error": str(exc),
+                 "error": str(exc),
             })
             # Graceful fallback: send the URL as text
             fallback_text = f"{text}\n{media_url}".strip() if text else media_url

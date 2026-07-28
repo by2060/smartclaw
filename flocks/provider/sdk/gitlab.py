@@ -199,8 +199,7 @@ class GitLabProvider(BaseProvider):
                     )
                 else:
                     log.error("gitlab.chat.error", {
-                        "status": response.status_code,
-                        "body": response.text
+                        "status": response.status_code
                     })
                     raise Exception(f"GitLab API error: {response.status_code}")
                     

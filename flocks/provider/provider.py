@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Any, AsyncIterator, Union
 from pydantic import BaseModel, Field, PrivateAttr
 from enum import Enum
 import os
+import threading
 
 from flocks.utils.log import Log
 from flocks.config.config import Config
@@ -150,6 +151,10 @@ class Provider:
     
     # Registry of providers
     _providers: Dict[str, "BaseProvider"] = {}
+    _smg_providers: Dict[str, "BaseProvider"] = {}
+    _smg_config: Optional[Any] = None
+    _smg_config_stale: bool = False
+    _smg_lock = threading.RLock()
     _models: Dict[str, ModelInfo] = {}
     _initialized = False
     
@@ -174,7 +179,10 @@ class Provider:
     @classmethod
     def register(cls, provider: "BaseProvider") -> None:
         """Register a provider"""
-        cls._providers[provider.id] = provider
+        with cls._smg_lock:
+            cls._providers[provider.id] = provider
+            old_proxy = cls._smg_providers.pop(provider.id, None)
+        cls._close_smg_proxy(old_proxy)
         
         # Register models
         for model in provider.get_models():
@@ -447,13 +455,70 @@ class Provider:
     def get(cls, provider_id: str) -> Optional["BaseProvider"]:
         """Get a provider by ID"""
         cls._ensure_initialized()
-        return cls._providers.get(provider_id)
+        with cls._smg_lock:
+            raw = cls._providers.get(provider_id)
+            if raw is None:
+                return None
+            if cls._smg_config_stale:
+                raise RuntimeError(
+                    "Provider configuration reload is pending; refusing inference until configuration is applied"
+                )
+            config = cls._smg_config
+            if config is None or not getattr(config, "enabled", False):
+                return raw
+            proxy = cls._smg_providers.get(provider_id)
+            if proxy is None:
+                from flocks.provider.smg_provider import SMGProvider
+                proxy = SMGProvider(raw, config)
+                cls._smg_providers[provider_id] = proxy
+            return proxy
+
+    @classmethod
+    def _get_raw(cls, provider_id: str) -> Optional["BaseProvider"]:
+        cls._ensure_initialized()
+        with cls._smg_lock:
+            return cls._providers.get(provider_id)
+
+    @staticmethod
+    def _close_smg_proxy(proxy: Optional["BaseProvider"]) -> None:
+        if proxy is not None and hasattr(proxy, "close_clients"):
+            proxy.close_clients()
+
+    @classmethod
+    def invalidate_smg_cache(cls, provider_id: Optional[str] = None) -> None:
+        with cls._smg_lock:
+            if provider_id is None:
+                proxies = list(cls._smg_providers.values())
+                cls._smg_providers.clear()
+            else:
+                proxy = cls._smg_providers.pop(provider_id, None)
+                proxies = [proxy] if proxy is not None else []
+        for proxy in proxies:
+            cls._close_smg_proxy(proxy)
+
+    @classmethod
+    def unregister(cls, provider_id: str) -> None:
+        """Remove a raw provider and its SMG proxy from the runtime registry."""
+        with cls._smg_lock:
+            cls._providers.pop(provider_id, None)
+            proxy = cls._smg_providers.pop(provider_id, None)
+        cls._close_smg_proxy(proxy)
+    @classmethod
+    def invalidate_smg_runtime_config(cls) -> None:
+        """Invalidate proxy/config state and fail closed until apply_config succeeds."""
+        with cls._smg_lock:
+            proxies = list(cls._smg_providers.values())
+            cls._smg_providers.clear()
+            cls._smg_config_stale = True
+        for proxy in proxies:
+            cls._close_smg_proxy(proxy)
+
 
     @classmethod
     def remove_model_from_runtime(cls, provider_id: str, model_id: str) -> None:
         """Remove a model from runtime caches (both global registry and provider instance)."""
         cls._models.pop(model_id, None)
-        p = cls.get(provider_id)
+        p = cls._get_raw(provider_id)
         if p:
             if hasattr(p, "_custom_models"):
                 p._custom_models = [m for m in p._custom_models if m.id != model_id]
@@ -489,7 +554,7 @@ class Provider:
             model_info = None
             
             # 1. Check provider._config_models first (flocks.json models)
-            provider = cls.get(provider_id)
+            provider = cls._get_raw(provider_id)
             if provider:
                 for m in getattr(provider, "_config_models", []):
                     if m.id == model_id:
@@ -576,13 +641,34 @@ class Provider:
         if config is None:
             config = await Config.get()
 
+        smg_config = getattr(config, "smg", None)
+        if smg_config and getattr(smg_config, "enabled", False):
+            missing = [
+                name for name in ("base_url", "api_key", "platform_identifier")
+                if not str(getattr(smg_config, name, None) or "").strip()
+            ]
+            if missing:
+                cls.invalidate_smg_runtime_config()
+
+                raise ValueError("SMG is enabled but required configuration is missing: " + ", ".join(missing))
+        with cls._smg_lock:
+            if cls._smg_config != smg_config:
+                proxies = list(cls._smg_providers.values())
+                cls._smg_providers.clear()
+            else:
+                proxies = []
+            cls._smg_config = smg_config
+            cls._smg_config_stale = False
+        for proxy in proxies:
+            cls._close_smg_proxy(proxy)
+
         provider_configs = getattr(config, "provider", None) or {}
 
         for pid, pconfig in provider_configs.items():
             if provider_id and pid != provider_id:
                 continue
 
-            provider = cls.get(pid)
+            provider = cls._get_raw(pid)
             if not provider:
                 continue
 
@@ -716,6 +802,7 @@ class Provider:
         if not model:
             raise ValueError(f"Model {model_id} not found")
 
+        await cls.apply_config(provider_id=model.provider_id)
         provider = cls.get(model.provider_id)
         if not provider:
             raise ValueError(f"Provider {model.provider_id} not found")
@@ -744,6 +831,7 @@ class Provider:
         if not model:
             raise ValueError(f"Model {model_id} not found")
 
+        await cls.apply_config(provider_id=model.provider_id)
         provider = cls.get(model.provider_id)
         if not provider:
             raise ValueError(f"Provider {model.provider_id} not found")

@@ -242,8 +242,7 @@ class CloudflareGatewayProvider(BaseProvider):
                     )
                 else:
                     log.error("cloudflare_gateway.chat.error", {
-                        "status": response.status_code,
-                        "body": response.text[:500],
+                        "status": response.status_code
                     })
                     raise Exception(f"Cloudflare AI Gateway error: {response.status_code}")
                     

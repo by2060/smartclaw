@@ -294,8 +294,7 @@ class VertexAnthropicProvider(BaseProvider):
                     )
                 else:
                     log.error("vertex_anthropic.chat.error", {
-                        "status": response.status_code,
-                        "body": response.text[:500],
+                        "status": response.status_code
                     })
                     raise Exception(f"Vertex Anthropic API error: {response.status_code}")
                     

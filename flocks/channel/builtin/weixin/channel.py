@@ -688,7 +688,7 @@ class WeixinChannel(ChannelPlugin):
                 return path, True
             except Exception as exc:
                 log.warning("weixin.media.fetch_failed", {
-                    "url": media_url, "error": str(exc),
+                    "error": str(exc),
                 })
                 return None, False
 

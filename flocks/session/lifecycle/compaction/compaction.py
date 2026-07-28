@@ -611,6 +611,7 @@ class SessionCompaction:
         provider: Any,
         ChatMessage: Any,
         policy: Optional[CompactionPolicy] = None,
+        gateway_context: Any = None,
     ) -> None:
         """Extract key memories and save to daily file.
 
@@ -629,6 +630,7 @@ class SessionCompaction:
             ChatMessage=ChatMessage,
             policy=policy,
             count_tokens=SessionPrompt.count_tokens,
+            gateway_context=gateway_context,
         )
 
     @classmethod
@@ -642,6 +644,7 @@ class SessionCompaction:
         provider_client: Any,
         ChatMessage: Any,
         policy: Optional[CompactionPolicy],
+        gateway_context: Any = None,
     ) -> None:
         """Run ``_flush_memory_to_daily`` either in the background or inline.
 
@@ -670,6 +673,7 @@ class SessionCompaction:
             provider=provider_client,
             ChatMessage=ChatMessage,
             policy=policy,
+            gateway_context=gateway_context,
         )
 
         if not _flush_in_background_enabled():
@@ -778,6 +782,17 @@ class SessionCompaction:
             )
             return "stop"
 
+        try:
+            await Provider.apply_config(provider_id=provider_id)
+        except Exception as e:
+            log.error("compaction.process.provider_apply_config_error", {
+                "session_id": session_id,
+                "provider_id": provider_id,
+                "error_type": type(e).__name__,
+            })
+            _record_compaction_error(session_id, e)
+            return "stop"
+
         provider_client = Provider.get(provider_id)
         if not provider_client:
             log.error("compaction.process.provider_not_found", {
@@ -792,15 +807,12 @@ class SessionCompaction:
                 ),
             )
             return "stop"
+        from flocks.session.session import Session
+        gateway_context = await Session.build_gateway_request_context(
+            session_id, trace_id=parent_id,
+            call_source="session.lifecycle.compaction",
+        )
 
-        try:
-            await Provider.apply_config(provider_id=provider_id)
-        except Exception as e:
-            log.warn("compaction.process.provider_apply_config_error", {
-                "session_id": session_id,
-                "provider_id": provider_id,
-                "error": str(e),
-            })
 
         prompt_text = custom_prompt or DEFAULT_COMPACTION_PROMPT
 
@@ -878,6 +890,7 @@ class SessionCompaction:
                     conversation_text, prompt_text, target_chars,
                     provider_client, model_id, effective_summary_tokens,
                     focus_instruction=focus_instruction,
+                    gateway_context=gateway_context,
                 )
             else:
                 summary_text = await summary.summarize_chunked(
@@ -887,6 +900,7 @@ class SessionCompaction:
                     chunk_size=chunk_size,
                     focus_instruction=focus_instruction,
                     progress_callback=progress_callback,
+                    gateway_context=gateway_context,
                 )
 
             log.info("compaction.process.complete", {
@@ -917,6 +931,7 @@ class SessionCompaction:
                 provider_client=provider_client,
                 ChatMessage=ChatMessage,
                 policy=policy,
+                gateway_context=gateway_context,
             )
 
             # Write summary and archive old messages
