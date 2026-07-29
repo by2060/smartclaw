@@ -39,7 +39,7 @@ handler.type 必须是 http。
 只能输出稳定的 secret id、{secret:...}、{user:...} 占位符，或 SM4 密文字段占位说明。
 
 6. provider.authType 只能是：
-smart、iam6、bearerToken、basicAuth、custom。
+smart、smartAuth、iam6、bearerToken、basicAuth、custom。
 不要输出其它认证类型。
 不要在同一个 provider 中混填多套认证逻辑。
 
@@ -324,6 +324,7 @@ API 不相关材料包括但不限于：
 provider.authType 只能是以下值之一：
 
 - smart
+- smartAuth
 - iam6
 - bearerToken
 - basicAuth
@@ -334,9 +335,10 @@ provider.authType 只能是以下值之一：
 认证字段必须互斥使用：
 1. bearerToken 使用 provider.auth。
 2. smart 使用 provider.authExt。
-3. iam6 使用 provider.authExt。
-4. basicAuth 使用 provider.auth 和 credential_fields。
-5. custom 使用 provider.customAuth。
+3. smartAuth 使用 provider.auth 和 credential_fields。
+4. iam6 使用 provider.authExt。
+5. basicAuth 使用 provider.auth 和 credential_fields。
+6. custom 使用 provider.customAuth。
 
 不要在同一个 provider 中混填多套认证逻辑。
 
@@ -415,7 +417,19 @@ authExt 条目必须使用 key/value 字段，不要使用 header_name/header_va
 }}
 
 --------------------
-6.3 iam6 认证
+6.3 smartAuth 认证
+--------------------
+
+smartAuth 用于 AIS 产品的固定登录换取 Token 流程。
+
+规则：
+1. auth 只通过 header 注入 Token，默认 header_name=Authorization、header_prefix 为空。
+2. credential_fields 必须包含 username、password；tenant 可省略。
+3. config_value 只能填写原始 SM4 hex 密文，不得使用 sm4(...) 或 {{sm4:...}} 包装。
+4. 草稿无法生成真实密文时使用 <SM4_HEX_OF_...> 占位，等待前端人工填写。
+
+--------------------
+6.4 iam6 认证
 --------------------
 
 iam6 认证使用 provider.authExt 注入 Authorization。
@@ -441,7 +455,7 @@ authExt 条目必须使用 key/value 字段，不要使用 header_name/header_va
 }}
 
 --------------------
-6.4 basicAuth 认证
+6.5 basicAuth 认证
 --------------------
 
 basicAuth 用于 HTTP Basic Auth。
@@ -452,10 +466,10 @@ basicAuth 用于 HTTP Basic Auth。
 3. 如出现 config_value，应视为 SM4 hex 密文字段占位，不要写真实明文。
 
 --------------------
-6.5 custom 认证
+6.6 custom 认证
 --------------------
 
-custom 用于无法用 smart、iam6、bearerToken、basicAuth 表达的特殊认证。
+custom 用于无法用 smart、smartAuth、iam6、bearerToken、basicAuth 表达的特殊认证。
 
 规则：
 1. authType 使用 custom。

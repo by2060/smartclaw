@@ -347,6 +347,48 @@ class TestMcpClientRemoteFallback:
         assert events["call_tool_task"] is events["session_enter_task"]
 
     @pytest.mark.asyncio
+    async def test_list_resources_converts_sdk_uri_to_string(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        client = McpClient(
+            name="test-resources",
+            server_type="remote",
+            url="https://mcp.example.com/mcp",
+        )
+        sdk_resource = mcp_types.Resource(
+            name="message",
+            uri="resource://getXxMessage",
+            description="Message resource",
+            mimeType="application/json",
+        )
+        monkeypatch.setattr(
+            mcp_client_module,
+            "ClientSession",
+            _make_session_class(resources=[sdk_resource]),
+        )
+        _bind_method(
+            monkeypatch,
+            client,
+            "_create_streamable_http_streams",
+            _make_remote_transport_factory("http"),
+        )
+        _bind_method(
+            monkeypatch,
+            client,
+            "_create_sse_streams",
+            _make_remote_transport_factory("sse"),
+        )
+
+        await client.connect()
+        resources = await client.list_resources()
+        await client.disconnect()
+
+        assert len(resources) == 1
+        assert resources[0].uri == "resource://getXxMessage"
+        assert isinstance(resources[0].uri, str)
+
+    @pytest.mark.asyncio
     async def test_call_tool_from_foreign_loop_is_bridged_to_owner_task(
         self,
         monkeypatch: pytest.MonkeyPatch,

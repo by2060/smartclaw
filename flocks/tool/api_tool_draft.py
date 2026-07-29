@@ -4,8 +4,10 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+from flocks.tool.smart_auth import SmartAuthConfigError, build_smart_auth_config
 
-_ALLOWED_AUTH_TYPES = {"smart", "iam6", "bearerToken", "basicAuth", "custom"}
+
+_ALLOWED_AUTH_TYPES = {"smart", "smartAuth", "iam6", "bearerToken", "basicAuth", "custom"}
 _ALLOWED_AUTH_EXT_INJECT_AS = {"header", "query_param", "body"}
 # _MIN_HTTP_STATUS = 100
 # _MAX_HTTP_STATUS = 599
@@ -184,7 +186,12 @@ def _validate_http_response_config(
         #     ))
 
 
-def validate_api_tool_draft(draft: APIToolDraft, *, check_collisions: bool = True) -> list[DraftValidationIssue]:
+def validate_api_tool_draft(
+    draft: APIToolDraft,
+    *,
+    check_collisions: bool = True,
+    allow_empty_tools: bool = False,
+) -> list[DraftValidationIssue]:
     from flocks.tool.tool_loader import find_yaml_tool
 
     issues: list[DraftValidationIssue] = []
@@ -204,8 +211,13 @@ def validate_api_tool_draft(draft: APIToolDraft, *, check_collisions: bool = Tru
         if auth_type not in _ALLOWED_AUTH_TYPES:
             issues.append(DraftValidationIssue(
                 path="provider.authType",
-                message="authType 必须是 smart、iam6、bearerToken、basicAuth 或 custom",
+                message="authType 必须是 smart、smartAuth、iam6、bearerToken、basicAuth 或 custom",
             ))
+        elif auth_type == "smartAuth":
+            try:
+                build_smart_auth_config(provider.model_dump())
+            except SmartAuthConfigError as e:
+                issues.append(DraftValidationIssue(path=e.path, message=str(e)))
         elif auth_type in {"smart", "iam6"}:
             auth_ext = provider.authExt
             if not isinstance(auth_ext, list) or not auth_ext:
@@ -260,7 +272,7 @@ def validate_api_tool_draft(draft: APIToolDraft, *, check_collisions: bool = Tru
             # if not isinstance(auth_ext_value, str) or not auth_ext_value.strip():
             #     issues.append(DraftValidationIssue(path=f"{ext_path}.value", message="authExt 必须配置 SM4 密文 value"))
 
-    if not draft.tools:
+    if not draft.tools and not allow_empty_tools:
         issues.append(DraftValidationIssue(path="tools", message="至少需要一个工具草稿"))
 
     seen_tool_names: set[str] = set()
