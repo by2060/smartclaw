@@ -128,6 +128,11 @@ tool.run('write', filePath=str(artifacts_dir / 'payload_analysis.md'), content=l
 
 ---
 
+## 文件搜索约定
+- 当需要查找**outputs**、**uploads**目录中的文件时，一定是要求在<session_id>目录中进行搜索，给可用的搜索工具完整的目录结构
+- 禁止使用相对路径进行搜索操作
+
+
 ## 权限边界与能力缺口协议
 
 **本协议对 Rex 和所有主 Agent 强制适用。所有能力获取、工具调用和 Agent 委派都必须保持在当前权限范围内。**

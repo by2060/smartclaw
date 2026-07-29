@@ -18,7 +18,7 @@ from flocks.auth.context import get_current_auth_user
 from flocks.server.routes._timing import log_route_timing
 from flocks.session.session import Session, SessionInfo as SessionModel
 from flocks.session.policy import SessionPolicy
-from flocks.sandbox.uploads import UPLOADS_CHAT_PREFIX, rewrite_upload_paths_for_prompt
+from flocks.sandbox.uploads import UPLOADS_CHAT_PREFIX
 from flocks.workflow.skill_guard import workflow_session_metadata
 from flocks.utils.log import Log
 from flocks.utils.json_repair import parse_json_robust, repair_truncated_json

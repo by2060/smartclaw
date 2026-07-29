@@ -4,7 +4,7 @@
 对齐 OpenClaw sandbox/types.ts + types.docker.ts。
 使用 Pydantic BaseModel 与 flocks 现有配置风格保持一致。
 """
-
+import os
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -34,7 +34,7 @@ class SandboxDockerConfig(BaseModel):
         description="容器名称前缀",
     )
     workdir: str = Field(
-        default="/workspace",
+        default=os.getcwd(),
         description="容器内工作目录",
     )
     read_only_root: bool = Field(

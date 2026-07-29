@@ -441,7 +441,7 @@ g = {{
     "llm": _LLMProxy(),
 }}
 
-_extra_site = {json.dumps(_WORKFLOW_SITE_PACKAGES, ensure_ascii=False)}
+_extra_site = os.environ.get("FLOCKS_WORKSPACE_DIR", "/workspace").rstrip("/") + "/.flocks/workflow/site-packages"
 if _extra_site and os.path.isdir(_extra_site) and _extra_site not in sys.path:
     sys.path.insert(0, _extra_site)
 

@@ -724,13 +724,14 @@ async def test_dated_project_root_outputs_path_rewritten_to_user_workspace(
 async def test_sandbox_readonly_blocks_write(tmp_path):
     """Write must fail when sandbox.workspace_access == 'ro'."""
     sandbox = {
-        "workspace_dir": str(tmp_path),
+        "workspace_dir": "/opt/project/prompt_modif/flocks",
+        "container_workdir": "/opt/project/prompt_modif/flocks",
         "workspace_access": "ro",
     }
     ctx = _make_ctx(extra={"sandbox": sandbox})
 
     result = await ToolRegistry.execute(
-        "write", ctx, filePath=str(tmp_path / "blocked.py"), content="x"
+        "write", ctx, filePath=str("/opt/project/prompt_modif/flocks/blocked.py"), content="x"
     )
 
     assert not result.success

@@ -19,7 +19,7 @@ from flocks.tool.registry import (
 )
 from flocks.project.instance import Instance
 from flocks.utils.log import Log
-from flocks.tool.file.sandbox_paths import display_path, resolve_sandbox_path, sandbox_search_roots
+from flocks.tool.file.sandbox_paths import resolve_sandbox_path, sandbox_search_roots
 
 
 log = Log.create(service="tool.glob")
@@ -247,7 +247,7 @@ async def glob_tool(
     if not files:
         output_lines.append("No files found")
     else:
-        output_lines.extend(display_path(f['path'], ctx) for f in files)
+        output_lines.extend(f['path'] for f in files)
         
         if truncated:
             output_lines.append("")

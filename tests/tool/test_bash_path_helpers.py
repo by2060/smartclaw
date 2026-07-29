@@ -13,7 +13,6 @@ bash.py 路径处理辅助函数单元测试
 - _is_allowed_temporary_script_path
 - _is_flocks_plugin_write_path（补充边界用例）
 - _is_user_flocks_plugin_write_path（补充边界用例）
-- _normalize_bash_display_paths
 """
 
 import sys
@@ -35,7 +34,6 @@ from flocks.tool.code.bash import (
     _looks_like_shell_file_write,
     _looks_like_temporary_script_write,
     _next_available_path,
-    _normalize_bash_display_paths,
     _normalize_container_plugin_paths,
     _path_is_within,
     _rewrite_project_plugin_host_paths_for_sandbox,
@@ -553,13 +551,21 @@ class TestIsAllowedTemporaryScriptPath:
         )
         assert _is_allowed_temporary_script_path("/var/tmp/run.py", "/workspace", ctx) is True
 
-    def test_workspace_prefix_allowed(self, tmp_path, monkeypatch):
-        ctx = self._ctx()
+    def test_container_workdir_prefix_allowed(self, tmp_path, monkeypatch):
+        """路径统一后，container_workdir 下的脚本路径应被允许（替代原 /workspace/ 检查）"""
+        workdir = str(tmp_path / "agent_workspace")
+        (tmp_path / "agent_workspace").mkdir()
+        ctx = ToolContext(
+            session_id="ses_test",
+            message_id="m-test",
+            extra={"sandbox": {"container_workdir": workdir}},
+        )
         monkeypatch.setattr(
             "flocks.tool.code.bash._artifacts_dir_for_session",
             lambda _ctx: tmp_path / "artifacts",
         )
-        assert _is_allowed_temporary_script_path("/workspace/outputs/x.py", "/workspace", ctx) is True
+        script_path = f"{workdir}/outputs/x.py"
+        assert _is_allowed_temporary_script_path(script_path, workdir, ctx) is True
 
     def test_project_root_not_allowed(self, tmp_path, monkeypatch):
         ctx = self._ctx()
@@ -612,8 +618,10 @@ class TestIsFlocksPluginWritePathExtra:
     def test_dotslash_prefix_matched(self, tmp_path):
         assert _is_flocks_plugin_write_path("./.flocks/plugins/tool.yaml", str(tmp_path)) is True
 
-    def test_workspace_container_prefix_matched(self, tmp_path):
-        assert _is_flocks_plugin_write_path("/workspace/.flocks/plugins/agent.yaml", str(tmp_path)) is True
+    def test_workspace_container_prefix_no_longer_matched(self, tmp_path):
+        # 路径统一后 /workspace/.flocks/plugins/ 硬编码检查已移除；
+        # 不在 base_dir/.flocks/plugins 实际目录下时，应返回 False
+        assert _is_flocks_plugin_write_path("/workspace/.flocks/plugins/agent.yaml", str(tmp_path)) is False
 
     def test_relative_path_resolved_against_base(self, tmp_path):
         plugins = tmp_path / ".flocks" / "plugins"
@@ -658,85 +666,3 @@ class TestIsUserFlocksPluginWritePathExtra:
         project_plugin = str(tmp_path / ".flocks" / "plugins" / "tool.yaml")
         assert _is_user_flocks_plugin_write_path(project_plugin) is False
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# _normalize_bash_display_paths
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestNormalizeBashDisplayPaths:
-    """通过 mock _workspace_output_scope 隔离对 WorkspaceManager 的依赖。"""
-
-    SCOPE = "2026-07-08/ses_abc123"
-
-    def _ctx(self) -> ToolContext:
-        return ToolContext(session_id="ses_abc123", message_id="m-test")
-
-    def _patch_scope(self, monkeypatch):
-        monkeypatch.setattr(
-            "flocks.tool.code.bash._workspace_output_scope",
-            lambda _ctx: self.SCOPE,
-        )
-
-    # ── 基础替换 ───────────────────────────────────────────────────────────────
-
-    def test_short_outputs_path_expanded(self, monkeypatch):
-        self._patch_scope(monkeypatch)
-        ctx = self._ctx()
-        out = "/workspace/outputs/report.csv was created"
-        result = _normalize_bash_display_paths(ctx, out)
-        assert f"/workspace/outputs/{self.SCOPE}/report.csv" in result
-
-    def test_output_singular_also_replaced(self, monkeypatch):
-        self._patch_scope(monkeypatch)
-        ctx = self._ctx()
-        out = "/workspace/output/report.csv done"
-        result = _normalize_bash_display_paths(ctx, out)
-        assert f"/workspace/outputs/{self.SCOPE}/report.csv" in result
-
-    def test_artifacts_path_rewritten(self, monkeypatch):
-        self._patch_scope(monkeypatch)
-        ctx = self._ctx()
-        out = "chart saved to /workspace/artifacts/chart.png"
-        result = _normalize_bash_display_paths(ctx, out)
-        assert f"/workspace/outputs/{self.SCOPE}/artifacts/chart.png" in result
-
-    def test_file_uri_scheme_preserved(self, monkeypatch):
-        self._patch_scope(monkeypatch)
-        ctx = self._ctx()
-        out = "file:///workspace/outputs/report.csv"
-        result = _normalize_bash_display_paths(ctx, out)
-        assert result.startswith("file:///workspace/outputs/")
-        assert self.SCOPE in result
-
-    # ── 已含 scope 的路径不重复展开 ────────────────────────────────────────────
-
-    def test_already_scoped_path_not_double_expanded(self, monkeypatch):
-        self._patch_scope(monkeypatch)
-        ctx = self._ctx()
-        scoped = f"/workspace/outputs/{self.SCOPE}/report.csv"
-        result = _normalize_bash_display_paths(ctx, scoped)
-        assert result == scoped
-
-    # ── 无 /workspace/ 的输出不修改 ───────────────────────────────────────────
-
-    def test_no_workspace_in_output_unchanged(self, monkeypatch):
-        self._patch_scope(monkeypatch)
-        ctx = self._ctx()
-        out = "Process completed successfully"
-        assert _normalize_bash_display_paths(ctx, out) == out
-
-    def test_empty_output_unchanged(self, monkeypatch):
-        self._patch_scope(monkeypatch)
-        ctx = self._ctx()
-        assert _normalize_bash_display_paths(ctx, "") == ""
-
-    # ── scope 不可用时原样返回 ─────────────────────────────────────────────────
-
-    def test_no_scope_returns_original(self, monkeypatch):
-        monkeypatch.setattr(
-            "flocks.tool.code.bash._workspace_output_scope",
-            lambda _ctx: None,
-        )
-        ctx = self._ctx()
-        out = "/workspace/outputs/report.csv done"
-        assert _normalize_bash_display_paths(ctx, out) == out

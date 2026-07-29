@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -10,6 +11,7 @@ from pydantic import BaseModel, Field
 from flocks.workspace.manager import WorkspaceManager
 
 UPLOADS_CHAT_PREFIX = "uploads/chat"
+UPLOADS_TASK_PREFIX = "uploads/task"
 
 
 class SandboxUploadMount(BaseModel):
@@ -49,7 +51,7 @@ def get_session_upload_dir(session_id: str | None, *, create: bool = False) -> O
 def get_session_upload_mounts(
     session_id: str | None,
     *,
-    container_workdir: str = "/workspace",
+    container_workdir: str = os.getcwd(),
     create: bool = False,
 ) -> list[SandboxUploadMount]:
     """Build read-only bind mount metadata for this session's uploads."""
@@ -62,13 +64,18 @@ def get_session_upload_mounts(
     if not safe_id:
         return []
 
-    root = container_workdir.replace("\\", "/").rstrip("/") or "/workspace"
+    # 增加task目录，实现有点丑
     return [
         SandboxUploadMount(
             host_dir=str(upload_dir.resolve()),
-            container_dir=f"{root}/{UPLOADS_CHAT_PREFIX}/{safe_id}",
+            container_dir=str(upload_dir.resolve()),
             read_only=True,
-        )
+        ),
+        SandboxUploadMount(
+            host_dir=str(upload_dir.resolve()).replace(UPLOADS_CHAT_PREFIX, UPLOADS_TASK_PREFIX),
+            container_dir=str(upload_dir.resolve()).replace(UPLOADS_CHAT_PREFIX, UPLOADS_TASK_PREFIX),
+            read_only=True,
+        ),
     ]
 
 
@@ -86,7 +93,7 @@ def container_path_for_upload(
     host_path: str | Path,
     session_id: str | None,
     *,
-    container_workdir: str = "/workspace",
+    container_workdir: str = os.getcwd(),
 ) -> Optional[str]:
     """Map a host upload path to its sandbox-visible container path."""
 
@@ -112,28 +119,3 @@ def container_path_for_upload(
         return f"{mount.container_dir.rstrip('/')}/{suffix}" if suffix else mount.container_dir
     return None
 
-
-def rewrite_upload_paths_for_prompt(
-    text: str,
-    session_id: str | None,
-    *,
-    container_workdir: str = "/workspace",
-) -> str:
-    """Replace host upload path prefixes in prompt text with sandbox paths."""
-
-    if not text:
-        return text
-    mounts = get_session_upload_mounts(
-        session_id,
-        container_workdir=container_workdir,
-    )
-    rewritten = text
-    for mount in mounts:
-        host = str(Path(mount.host_dir))
-        host_posix = Path(mount.host_dir).as_posix()
-        container = mount.container_dir.rstrip("/")
-        rewritten = rewritten.replace(f"file://{host_posix}", container)
-        rewritten = rewritten.replace(f"file://{host}", container)
-        rewritten = rewritten.replace(host_posix, container)
-        rewritten = rewritten.replace(host, container)
-    return rewritten.replace("\\", "/") if rewritten != text else rewritten

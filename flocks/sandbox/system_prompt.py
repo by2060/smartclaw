@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 from .config import resolve_sandbox_config_for_agent
 from .context import resolve_sandbox_context
 from .runtime_status import resolve_sandbox_runtime_status
-
+from flocks.workspace.manager import WorkspaceManager
 
 async def build_sandbox_system_prompt(
     config_data: Dict[str, Any],
@@ -40,6 +40,9 @@ async def build_sandbox_system_prompt(
     if not sandbox_ctx:
         return None
 
+    workspace_manager = WorkspaceManager.get_instance()
+    user_workspace_dir = workspace_manager.get_user_workspace_dir()
+    
     elevated_tools = sandbox_cfg.elevated.tools or ["bash"]
     lines = [
         "## Sandbox Runtime",
@@ -50,10 +53,10 @@ async def build_sandbox_system_prompt(
         f"- sandbox_workspace: {sandbox_ctx.workspace_dir}",
         f"- container_workdir: {sandbox_ctx.container_workdir}",
         "- read/write/edit paths are constrained to sandbox workspace and session outputs.",
-        "- uploaded chat files are available read-only under /workspace/uploads/chat/<session_id>/.",
+        f"- uploaded chat files are available read-only under {user_workspace_dir}/uploads/chat/<session_id>/.",
         "- generated reports and final outputs should be written under $FLOCKS_OUTPUTS_DIR.",
         "- workflow intermediate artifacts should be written under $FLOCKS_ARTIFACTS_DIR.",
-        "- generated Flocks plugins must be written under /agent/.flocks/plugins/.",
+        f"- generated Flocks plugins must be written under {sandbox_ctx.container_workdir}/.flocks/plugins/.",
         "- bash runs in sandbox container by default.",
     ]
     if sandbox_ctx.workspace_access == "ro":
