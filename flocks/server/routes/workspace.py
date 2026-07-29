@@ -138,10 +138,12 @@ def _normalize_workspace_path(path: str | None) -> str:
     # Some integrations mistakenly prepend the project/session directory to
     # sandbox-visible paths such as /workspace/outputs/... . Treat the
     # sandbox-visible segment as authoritative so downloads still work.
+    manager = _get_manager()
     for marker, replacement in (
         ("/workspace/uploads/chat/", "uploads/chat/"),
         ("/workspace/uploads/task/", "uploads/task/"),
-        ("/workspace/outputs/", "outputs/")
+        ("/workspace/outputs/", "outputs/"),
+        (str(manager.get_user_workspace_dir()), ""),
     ):
         marker_index = raw.find(marker)
         if marker_index >= 0:
