@@ -27,6 +27,7 @@ from typing import Any, Callable, Dict, List, Optional
 import yaml
 
 from flocks.plugin.loader import DEFAULT_PLUGIN_ROOT
+from flocks.tool.auth_crypto import decrypt_sm4_value as _decrypt_sm4_value
 from flocks.tool.registry import (
     ParameterType,
     Tool,
@@ -37,6 +38,7 @@ from flocks.tool.registry import (
     ToolParameter,
     ToolResult,
 )
+from flocks.tool.smart_auth import SmartAuthBinding, SmartAuthError, build_smart_auth_binding
 from flocks.utils.log import Log
 
 log = Log.create(service="tool.loader")
@@ -198,7 +200,9 @@ def _merge_provider_defaults(raw: dict, provider: Optional[Dict[str, Any]]) -> d
 
         auth_type = provider.get("authType")
         auth = provider.get("auth")
-        if auth_type in {"smart", "iam6"}:
+        if auth_type == "smartAuth":
+            handler["_smart_auth_binding"] = build_smart_auth_binding(provider)
+        elif auth_type in {"smart", "iam6"}:
             _inject_provider_auth_ext(handler, provider.get("authExt"))
         elif auth_type == "bearerToken":
             if auth:
@@ -327,42 +331,6 @@ def _resolve_secrets(value: str) -> str:
         return match.group(0)
 
     return _SECRET_PATTERN.sub(_replacer, value)
-
-
-def _get_api_tool_sm4_key_hex() -> Optional[str]:
-    key_hex = os.environ.get("FLOCKS_API_TOOL_SM4_KEY_HEX")
-    if isinstance(key_hex, str) and key_hex.strip():
-        return key_hex.strip()
-    try:
-        from flocks.security import get_secret_manager
-        secret_value = get_secret_manager().get("api_tool_sm4_key")
-        if isinstance(secret_value, str) and secret_value.strip():
-            return secret_value.strip()
-    except Exception:
-        pass
-    return None
-
-
-def _decrypt_sm4_value(cipher_hex: str) -> str:
-    key_hex = _get_api_tool_sm4_key_hex()
-    if not key_hex:
-        raise ValueError("API tool SM4 key is not configured")
-    try:
-        from gmssl.sm4 import CryptSM4, SM4_DECRYPT
-    except ImportError as e:
-        raise ValueError("gmssl is required to decrypt API tool SM4 values") from e
-
-    try:
-        sm4 = CryptSM4()
-        sm4.set_key(bytes.fromhex(key_hex), SM4_DECRYPT)
-        plaintext = sm4.crypt_ecb(bytes.fromhex(cipher_hex.strip()))
-        if plaintext:
-            padding = plaintext[-1]
-            if 1 <= padding <= 16 and plaintext.endswith(bytes([padding]) * padding):
-                plaintext = plaintext[:-padding]
-        return plaintext.decode("utf-8")
-    except Exception as e:
-        raise ValueError("Failed to decrypt API tool SM4 value") from e
 
 
 def _resolve_sm4_values(value: str) -> str:
@@ -762,6 +730,7 @@ def _build_http_handler(cfg: dict) -> ToolHandler:
     query_params_template = cfg.get("query_params", {})
     body_template = cfg.get("body")
     basic_auth_template = cfg.get("basic_auth")
+    smart_auth_binding = cfg.get("_smart_auth_binding")
     timeout = cfg.get("timeout", 30)
     verify_ssl = _as_bool(cfg.get("verify_ssl", False), default=False)
     response_cfg = cfg.get("response", {})
@@ -861,29 +830,51 @@ def _build_http_handler(cfg: dict) -> ToolHandler:
                 if not verify_ssl:
                     req_kwargs["ssl"] = False
 
-                async with session.request(method, url, **req_kwargs) as resp:
-                    if resp.status >= 400:
-                        friendly = error_mapping.get(resp.status)
-                        if friendly:
-                            return ToolResult(success=False, error=friendly)
-                        text = await resp.text()
-                        return ToolResult(
-                            success=False,
-                            error=f"HTTP {resp.status}: {text[:500]}",
-                        )
+                smart_auth_token: Optional[str] = None
+                if isinstance(smart_auth_binding, SmartAuthBinding):
+                    smart_auth_token = await smart_auth_binding.get_token(session)
+                    smart_auth_binding.inject(headers, smart_auth_token)
 
-                    if _is_file_response_by_headers(resp):
-                        file_output = await _save_file_response(resp, url, ctx)
-                        return ToolResult(
-                            success=True,
-                            output=file_output,
-                            metadata={"file": file_output},
-                        )
+                for request_attempt in range(2):
+                    async with session.request(method, url, **req_kwargs) as resp:
+                        if (
+                            resp.status == 401
+                            and isinstance(smart_auth_binding, SmartAuthBinding)
+                            and smart_auth_token is not None
+                            and request_attempt == 0
+                        ):
+                            await resp.read()
+                            smart_auth_token = await smart_auth_binding.refresh_token(
+                                session,
+                                smart_auth_token,
+                            )
+                            smart_auth_binding.inject(headers, smart_auth_token)
+                            continue
 
-                    data = await resp.json(content_type=None)
-                    output = _extract_response(data, extract_path)
-                    return ToolResult(success=True, output=output)
+                        if resp.status >= 400:
+                            friendly = error_mapping.get(resp.status)
+                            if friendly:
+                                return ToolResult(success=False, error=friendly)
+                            text = await resp.text()
+                            return ToolResult(
+                                success=False,
+                                error=f"HTTP {resp.status}: {text[:500]}",
+                            )
 
+                        if _is_file_response_by_headers(resp):
+                            file_output = await _save_file_response(resp, url, ctx)
+                            return ToolResult(
+                                success=True,
+                                output=file_output,
+                                metadata={"file": file_output},
+                            )
+
+                        data = await resp.json(content_type=None)
+                        output = _extract_response(data, extract_path)
+                        return ToolResult(success=True, output=output)
+
+        except SmartAuthError as e:
+            return ToolResult(success=False, error=str(e))
         except aiohttp.ClientError as e:
             return ToolResult(success=False, error=f"HTTP request failed: {e}")
         except Exception as e:

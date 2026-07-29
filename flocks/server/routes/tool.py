@@ -1072,6 +1072,7 @@ class GenerateAPIToolDraftResponse(BaseModel):
 class ValidateAPIToolDraftRequest(BaseModel):
     draft: APIToolDraft
     check_collisions: bool = True
+    mode: Literal["create", "upsert"] = "create"
 
 
 class ValidateAPIToolDraftResponse(BaseModel):
@@ -1242,6 +1243,20 @@ async def _create_and_register_yaml_tool(
     return tool, yaml_path
 
 
+def _reload_api_provider_tool_bindings(provider_id: str) -> None:
+    """Reload one provider's handlers after its shared config changes."""
+    from flocks.tool.tool_loader import _read_yaml_raw, list_api_provider_tools, yaml_to_tool
+
+    ToolRegistry.init()
+    for yaml_path in list_api_provider_tools(provider_id):
+        tool = yaml_to_tool(_read_yaml_raw(yaml_path), yaml_path)
+        if not tool.info.source:
+            tool.info.source = "plugin_yaml"
+        ToolRegistry.register(tool)
+        if tool.info.name not in ToolRegistry._plugin_tool_names:
+            ToolRegistry._plugin_tool_names.append(tool.info.name)
+
+
 @router.post(
     "/drafts",
     response_model=GenerateAPIToolDraftResponse,
@@ -1308,7 +1323,11 @@ async def validate_api_tool_draft_route(
     _admin: object = Depends(require_admin),
 ):
     draft = normalize_api_tool_draft(request.draft)
-    issues = validate_api_tool_draft(draft, check_collisions=request.check_collisions)
+    issues = validate_api_tool_draft(
+        draft,
+        check_collisions=request.check_collisions,
+        allow_empty_tools=request.mode == "upsert",
+    )
     return ValidateAPIToolDraftResponse(
         draft=draft,
         issues=issues,
@@ -1337,8 +1356,12 @@ async def confirm_api_tool_draft_route(
 
     draft = normalize_api_tool_draft(request.draft)
     upsert = request.mode == "upsert"
-    delete_missing_tools = request.delete_missing_tools if upsert else False
-    issues = validate_api_tool_draft(draft, check_collisions=not upsert)
+    delete_missing_tools = request.delete_missing_tools if upsert and draft.tools else False
+    issues = validate_api_tool_draft(
+        draft,
+        check_collisions=not upsert,
+        allow_empty_tools=upsert,
+    )
     if has_validation_errors(issues):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1359,6 +1382,11 @@ async def confirm_api_tool_draft_route(
                 )
 
     existing_provider_dir = find_api_provider_dir(draft.provider.id)
+    if upsert and not draft.tools and existing_provider_dir is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Provider '{draft.provider.id}' does not exist",
+        )
     existing_provider_path = existing_provider_dir / "_provider.yaml" if existing_provider_dir is not None else None
     previous_provider_content = _snapshot_text_file(existing_provider_path)
 
@@ -1402,10 +1430,14 @@ async def confirm_api_tool_draft_route(
             for existing_tool_path in list_api_provider_tools(draft.provider.id):
                 tool_name = existing_tool_path.stem
                 if tool_name not in draft_tool_names:
-                    deleted_missing = delete_api_provider_tool(draft.provider.id, tool_name) or deleted_missing
+                    deleted = delete_api_provider_tool(draft.provider.id, tool_name)
+                    if deleted:
+                        _remove_plugin_tool_tracking(tool_name)
+                    deleted_missing = deleted or deleted_missing
             if deleted_missing:
-                ToolRegistry.refresh_plugin_tools()
                 _invalidate_agent_cache_after_tool_change("api_draft_missing_tools_deleted")
+        if upsert:
+            _reload_api_provider_tool_bindings(draft.provider.id)
     except Exception:
         for tool_name, yaml_path, previous_content in reversed(written_tool_snapshots):
             _restore_text_file(yaml_path, previous_content, name=tool_name)
@@ -1417,6 +1449,25 @@ async def confirm_api_tool_draft_route(
         except Exception as e:
             log.warning("tool.draft.rollback_refresh_failed", {"provider": draft.provider.id, "error": str(e)})
         raise
+
+    from flocks.tool.smart_auth import SmartAuthConfigError, invalidate_smart_auth_provider
+
+    provider_configs: List[Dict[str, Any]] = []
+    if previous_provider_content:
+        try:
+            import yaml
+
+            previous_provider = yaml.safe_load(previous_provider_content)
+            if isinstance(previous_provider, dict):
+                provider_configs.append(previous_provider)
+        except Exception:
+            log.warning("tool.draft.smart_auth_previous_config_invalid", {"provider": draft.provider.id})
+    provider_configs.append(provider_yaml)
+    for provider_config in provider_configs:
+        try:
+            invalidate_smart_auth_provider(provider_config)
+        except SmartAuthConfigError:
+            log.warning("tool.draft.smart_auth_cache_invalidate_failed", {"provider": draft.provider.id})
 
     _invalidate_agent_cache_after_tool_change("api_draft_confirmed")
 
