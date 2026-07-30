@@ -111,7 +111,7 @@ def set_todos(session_id: str, todos: List[Dict[str, Any]]) -> None:
             name="todos",
             type=ParameterType.ARRAY,
             description=("Array of todo items with id, content, and status fields\n",
-                         "todo items type must be a dict and include content key"
+                         "Array item type must be a dict and include content key"
                          ),
             required=True
         ),
