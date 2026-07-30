@@ -143,16 +143,17 @@ def _normalize_workspace_path(path: str | None) -> str:
         ("/workspace/uploads/chat/", "uploads/chat/"),
         ("/workspace/uploads/task/", "uploads/task/"),
         ("/workspace/outputs/", "outputs/"),
-        (str(manager.get_user_workspace_dir()), ""),
     ):
         marker_index = raw.find(marker)
         if marker_index >= 0:
             return replacement + raw[marker_index + len(marker):]
 
-    if raw in {"/workspace", "workspace"}:
+    if raw in {"/workspace", "workspace", str(manager.get_user_workspace_dir())}:
         return ""
     if raw.startswith("/workspace/"):
         raw = raw[len("/workspace/"):]
+    if raw.startswith(str(manager.get_user_workspace_dir())):
+        raw = raw[len(str(manager.get_user_workspace_dir())):]
     elif raw.startswith("workspace/"):
         raw = raw[len("workspace/"):]
     if raw == "upload":
