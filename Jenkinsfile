@@ -1,0 +1,268 @@
+// =============================================================================
+// SmartClaw 自动化部署流水线 —— 全流程在部署机本地执行
+// -----------------------------------------------------------------------------
+// 设计要点：
+//   * Jenkins(58) 只负责“分发脚本 + 后台启动 + 轮询监控”，不打镜像、不传镜像。
+//   * 真正的全流程(clone→7脚本→build→切容器)打包成一个自包含脚本，scp 到 部署机，
+//     用 setsid 脱离 ssh 会话在 部署机 本地运行 → 58 中途关机也不会中断 部署机 上的执行。
+//   * 脚本结束时(无论成败)写一个 status 文件；Jenkins 轮询它拿最终退出码，
+//     同时增量 tail 日志，实现“脱离会话执行 + 实时日志 + 可靠成败判定”。
+//   * GitLab 凭据用 git credential.helper 从环境变量注入，
+//     密码不出现在 clone URL、也不出现在 部署机 的进程列表(ps)里。
+
+// 【运行前需在 Jenkins 里准备】
+//   1. 插件：Pipeline（一般自带）
+//   2. 凭据①(Username with password)：ID = gitlab-smartclaw-cred      —— GitLab 账号/密码或【建议：只读 Deploy Token】
+//   3. 凭据②，用linux系统级原生 SSH（需先把 58 的公钥追加到 部署机 的 /root/.ssh/authorized_keys，确保免密 ssh/scp）
+//   4. 部署机 上需已安装：git、docker、python、npm/node
+// 如果换机器部署：
+//     1、修改 DEPLOY_HOST
+//     2、提前配置凭据2
+// =============================================================================
+
+pipeline {
+    agent any   // 表示该 Jenkins 任务可以在任意可用的 Jenkins Agent（节点）上执行。
+
+    parameters {
+        // 定义一个构建参数：GitLab 分支名。
+        // 用户手动触发构建时可以在界面选择/输入分支，默认值为 'feature/tool-data-permission-control'。
+        string(name: 'BRANCH', defaultValue: 'feature/tool-data-permission-control',
+               description: '要拉取并部署的 GitLab 分支')
+    }
+
+    options { 
+        timestamps()        // 在 Jenkins 控制台输出日志中加上时间戳。
+        disableConcurrentBuilds()          // 禁止并发构建（防止两个人同时点击部署造成机器上的资源冲突）。
+        timeout(time: 90, unit: 'MINUTES') // 整个流水线的最长超时时间设置为 90 分钟，超时自动挂断。
+    }
+
+    environment {
+        DEPLOY_HOST = 'user@192.168.183.66'        // 定义目标部署机器的 SSH 地址。
+        SSH_OPTS    = '-o StrictHostKeyChecking=no -o ConnectTimeout=15'    // SSH 参数：禁用首次连接的指纹确认，连接超时 15 秒。
+        RUN_DIR = "/opt/wbais/smartclaw_UR/build_${new Date().format('MMdd_HHmm')}" // 每次构建在 部署机 上的独立工作目录（脚本/日志/状态文件都放这里）
+    }
+
+    stages {
+        // ---------------------------------------------------------------------
+        stage('1. 生成部署脚本') {
+            steps {
+                // 使用 Jenkins 的 writeFile 命令，将 text 内容写入工作区文件，稍后 scp 过去。
+                // 三重单引号 => Groovy 不做插值，脚本里的 $VAR / ${...} / $? 原样保留给 shell。
+                writeFile file: 'deploy.sh', text: '''#!/bin/bash
+# =========================================================================
+# 在 部署机 本地执行的完整部署脚本（由 Jenkins scp 过来，setsid 脱离会话运行）
+# 需要的环境变量：BRANCH、GIT_USER、GIT_PASS、STATUS_FILE
+# =========================================================================
+set -e              # 脚本中任何一条命令报错（退出码 != 0），立即终止整个脚本。
+set -o pipefail     # 管道命令中只要有一个子命令失败，整个管道就视为失败。
+
+# ---- 配置 ----
+GIT_HOST="192.168.190.93"
+GIT_PATH="yf3/flocks.git"
+SRC_BASE="/opt/wbais/smartclaw_UR"       # 代码拉取根目录
+DEPLOY_DIR="/opt/wbais/smartclaw_docker" # 运行部署目录（docker脚本+数据目录所在）
+IMAGE="smartclaw:latest"
+TAG="$(date +%Y%m%d-%H%M)"                # 版本/数据备份后缀，如 0722（取 部署机 本地日期）
+
+# ---- 结束时无论成败都写退出码到 STATUS_FILE，供 Jenkins 轮询判定 ----
+# 必须存在 STATUS_FILE 环境变量，否则直接退出
+: "${STATUS_FILE:?need STATUS_FILE}"
+# trap 作用：无论脚本是以何种方式结束（成功或失败），退出前都会执行单引号内的代码：
+# 1. 取出最后的退出码 code=$?
+# 2. 将退出码写入 STATUS_FILE 文件（Jenkins 靠读取这个文件判断成功还是失败）
+trap 'code=$?; echo "$code" > "$STATUS_FILE"; echo "=== 脚本结束，退出码 $code ==="' EXIT
+
+# 直接把 root 下常见 Conda/Python 的安装路径硬编码塞进 PATH （覆盖所有的可能）
+# 优先使用系统全局的 node/npm，Conda 目录放在后面提供 Python 支持
+export PATH=/usr/local/bin:/usr/bin:$PATH:/root/miniconda3/bin:/root/anaconda3/bin
+# 利用 conda 官方机制一键激活 base 环境（自动挂载包含 yaml 在内的所有依赖包）
+eval "$(conda shell.bash hook 2>/dev/null)" && conda activate base 2>/dev/null || true
+# 如果 NVM 存在，就把 NVM 加载进当前 Shell（如果用 nvm 安装的 node，加上这句保证识别到正确的 npm）
+[ -s "/root/.nvm/nvm.sh" ] && source "/root/.nvm/nvm.sh" 2>/dev/null || true
+# 1. 允许非交互 Shell 脚本展开别名 (alias)
+shopt -s expand_aliases 2>/dev/null || true
+# 2. 判断：只要当前的 python 出来的不是 Python 3，且系统里有 python3，就强制映射为 python3
+if command -v python3 &>/dev/null; then
+    if ! python --version 2>&1 | grep -q "Python 3"; then
+        alias python=python3
+    fi
+fi
+
+echo "=== 部署开始  分支=$BRANCH  版本标签=$TAG ==="
+
+# ---- [1] 清理并拉取代码 ----
+echo "== [1/4] 清理并 clone (分支 $BRANCH) =="
+rm -rf "$SRC_BASE/flocks"   # 清空旧代码目录
+mkdir -p "$SRC_BASE"        # 创建目录
+
+# 用 credential.helper 从环境变量提供账号密码：
+# 密码不写在 URL 里，也不通过 ps 命令行参数传递，防止密码泄露
+git -c credential.helper='!f(){ echo "username=${GIT_USER}"; echo "password=${GIT_PASS}"; };f' \\
+    clone -b "$BRANCH" "http://${GIT_HOST}/${GIT_PATH}" "$SRC_BASE/flocks"
+
+cd "$SRC_BASE/flocks"
+
+# ---- [2] 7 个改造脚本（严格串行，任一失败 set -e 立即中断）----
+echo "== [2/4] 执行 7 个改造脚本 =="
+echo "-- [1/7] toggle_home_prompts --disable --";    python automated_script/toggle_home_prompts.py --disable
+echo "-- [2/7] rebrand_smartclaw --apply --";        python automated_script/rebrand_smartclaw.py --apply
+echo "-- [3/7] curate_builtin_plugins --apply --";   python automated_script/curate_builtin_plugins.py --apply
+echo "-- [4/7] npm ci --";                           npm --prefix webui ci
+echo "-- [5/7] npm run build --";                    npm --prefix webui run build
+echo "-- [6/7] prune_project --apply --";            python automated_script/prune_project.py --apply
+# 加上 || true，即使发现关键词也不阻断部署
+echo "-- [7/7] check_flocks_keyword --";             python automated_script/check_flocks_keyword.py || true
+
+# ---- [3] 删脚本目录 + 打镜像 + 版本标签 ----
+echo "== [3/4] 删 automated_script 并 build 镜像 =="
+rm -rf automated_script
+# 1. 一次性生成 latest 和 今天精确到分的版本镜像（如 smartclaw:0722-1430）
+#（Docker 会自动覆盖旧的 latest，而昨天/前天的日期镜像会安然无恙地留在本地作为历史版本）
+docker build -f docker/Dockerfile . -t "$IMAGE" -t "smartclaw:${TAG}"
+# 2. 清理构建产生的 <none> 悬空镜像
+docker image prune -f
+# 3. 自动保留最近 5 个历史镜像，超出 5 个的自动删掉（按实际构建时间排序，绝不删错）
+echo "-- 自动清理旧镜像，只保留最近 5 个历史版本 --"
+# 1. 提取所有 Tag
+# 2. 精准匹配 YYYYMMDD-HHMM 格式（自动过滤 latest、base-0.1 等任何非日期 Tag）
+# 3. 按 Tag 字典序降序排序（最新时间排最前，跨年依然绝对精准）
+# 4. tail -n +6 排除最新的 5 个，保留第 6 个及更早的旧 Tag
+# 5. docker rmi -f 强制删除旧 Tag（防止因旧容器占用导致删除失败）
+docker images "smartclaw" --format "{{.Tag}}" | \
+    grep -E "^[0-9]{8}-[0-9]{4}$" | \
+    sort -r | \
+    tail -n +6 | \
+    awk '{print "smartclaw:"$1}' | \
+    xargs -r docker rmi || true
+
+# ---- [4] 切换容器：停 → 备份数据目录 → 启 → 删默认 → 恢复 → 重启 ----
+echo "== [4/4] 切换容器 =="
+cd "$DEPLOY_DIR"
+
+echo "-- 停止旧容器 --"
+bash docker/stop_docker.sh
+
+echo "-- 备份现有数据目录 -> _${TAG} --"
+# 如果存在 .smartclaw / smartclaw-home 数据目录，重命名备份为带有当日日期后缀的目录
+if [ -e .smartclaw ];     then rm -rf ".smartclaw_${TAG}";     mv .smartclaw ".smartclaw_${TAG}"; fi
+if [ -e smartclaw-home ]; then rm -rf "smartclaw-home_${TAG}"; mv smartclaw-home "smartclaw-home_${TAG}"; fi
+
+echo "-- 启动新容器，自动输入普通用户名 smartclaw（会生成默认 .smartclaw / smartclaw-home）--"
+echo "smartclaw" | bash docker/start_docker.sh
+sleep 5   # 给容器一点时间生成默认目录（自动化比手工快，防止目录还没生成就被删）
+
+echo "-- 删除新生成的默认目录 --"
+rm -rf .smartclaw smartclaw-home
+
+echo "-- 恢复旧数据目录 --"
+# 将刚才备份的数据目录恢复回原名，保证数据不丢失
+if [ -e ".smartclaw_${TAG}" ];     then mv ".smartclaw_${TAG}" .smartclaw; fi
+if [ -e "smartclaw-home_${TAG}" ]; then mv "smartclaw-home_${TAG}" smartclaw-home; fi
+
+echo "-- 重启容器生效 --"
+bash docker/restart_docker.sh
+
+echo "=== 部署成功完成  版本=$TAG ==="
+'''
+                echo "部署脚本 deploy.sh 已生成"
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        stage('2. 分发脚本并在 部署机 后台启动') {
+            steps {
+                // sshagent(credentials: ["${SSH_CRED_ID}"]) {
+                    // 1. 在 部署机 机器上创建构建目录；同时清理 5 天前（-mtime +5）的旧构建目录，防止硬盘塞满
+                    sh 'ssh ${SSH_OPTS} ${DEPLOY_HOST} "sudo mkdir -p ${RUN_DIR} && sudo chmod 777 ${RUN_DIR}; find /opt/wbais/smartclaw_UR -maxdepth 1 -type d -name \'build_*\' -mtime +5 -exec rm -rf {} + 2>/dev/null || true"'
+                    // 2. 将本地生成的 deploy.sh 文件传输到部署机器对应的 RUN_DIR 下，如果需要重命名在/后面加对应名即可
+                    // sh 'scp ${SSH_OPTS} deploy.sh ${DEPLOY_HOST}:${RUN_DIR}/deploy_on.sh'
+                    sh 'scp ${SSH_OPTS} deploy.sh ${DEPLOY_HOST}:${RUN_DIR}/'
+
+                    // 3. 安全获取 GitLab 的账号密码凭据，并注入环境变量
+                    withCredentials([usernamePassword(credentialsId: 'gitlab-smartclaw-cred',
+                                                      usernameVariable: 'GIT_USER',
+                                                      passwordVariable: 'GIT_PASS')]) {
+                        sh '''
+                            set -e
+                            # 通过 SSH 在 部署机 机器上启动任务：
+                            # - setsid：开启一个全新的 Session，使 bash deploy.sh 彻底脱离当前的 SSH 会话！
+                            # - > run.log 2>&1：将标准输出和错误日志全部重定向到 run.log 文件。
+                            # - < /dev/null &：将标准输入重定向为空，并放到后台运行。
+                            # 结果：这个 SSH 命令在执行完这行启动指令后会【立即返回退出】，SSH 连接关闭，但 部署机 上的 deploy.sh 还在默默运行。
+                            ssh ${SSH_OPTS} ${DEPLOY_HOST} "sudo GIT_USER='${GIT_USER}' GIT_PASS='${GIT_PASS}' BRANCH='${BRANCH}' STATUS_FILE='${RUN_DIR}/status' setsid bash '${RUN_DIR}/deploy.sh' > '${RUN_DIR}/run.log' 2>&1 < /dev/null &"
+                            echo "已在 部署机 上后台启动部署，RUN_DIR=${RUN_DIR}"
+                        '''
+                    }
+                // }
+            }
+        }
+
+
+
+        // ---------------------------------------------------------------------
+        stage('3. 监控部署进度 (轮询 部署机)') {
+            steps {
+                // sshagent(credentials: ["${SSH_CRED_ID}"]) {
+                    // 进入 Groovy 脚本块，使用编程逻辑控制轮询
+                    script {
+                        def host    = env.DEPLOY_HOST
+                        def opts    = env.SSH_OPTS
+                        def logFile = "${env.RUN_DIR}/run.log"
+                        def statFile= "${env.RUN_DIR}/status"
+                        def seen    = 0     // 记录 Jenkins 已经打印到了第几行日志
+
+                        // 轮询逻辑：最长监控 80 分钟
+                        timeout(time: 80, unit: 'MINUTES') {
+                            while (true) {
+                                // 1. 远程获取 部署机 上 run.log 当前的总行数 total
+                                def total = sh(script: "ssh ${opts} ${host} 'wc -l < ${logFile} 2>/dev/null || echo 0'",
+                                               returnStdout: true).trim() as Integer
+                                // 2. 如果总行数大于已读行数 (total > seen)，说明产生了新日志
+                                if (total > seen) {
+                                    // 增量打印新日志：只 tail 从 (seen + 1) 行开始的内容到 Jenkins 控制台
+                                    sh "ssh ${opts} ${host} 'tail -n +${seen + 1} ${logFile}'"
+                                    seen = total    // 更新已读行数
+                                }
+                                // 3. 检查 status 文件是否存在（部署脚本结束时通过 trap 产生的）
+                                def done = sh(script: "ssh ${opts} ${host} 'test -f ${statFile} && echo 1 || echo 0'",
+                                              returnStdout: true).trim()
+                                if (done == '1') { break }  // 如果 status 文件存在，说明 部署机 上的脚本已运行结束，跳出循环
+                                sleep(6)    // 每 6 秒轮询检查一次
+                            }
+                        }
+
+                        // 退出循环后，最后补漏 tail 一次，防止遗漏脚本关闭前最后一秒打印的日志
+                        def total = sh(script: "ssh ${opts} ${host} 'wc -l < ${logFile} 2>/dev/null || echo 0'",
+                                       returnStdout: true).trim() as Integer
+                        if (total > seen) { sh "ssh ${opts} ${host} 'tail -n +${seen + 1} ${logFile}'" }
+
+                        // 读出 部署机 机器上 status 文件里的退出码
+                        def code = sh(script: "ssh ${opts} ${host} 'cat ${statFile}'", returnStdout: true).trim()
+                        // 判定成败：如果退出码不是 0，抛出 error 导致 Jenkins 任务标记为失败
+                        if (code != '0') {
+                            error("❌ 部署失败，退出码=${code}。完整日志：${host}:${logFile}")
+                        }
+                        echo "✅ 部署成功（退出码 0）"
+                    }
+                // }
+            }
+        }
+    }
+
+    post {
+        // 构建成功时触发
+        success {
+            echo "✅ 部署成功。镜像 smartclaw:latest 已在 部署机 上更新并重启；版本备份标签 smartclaw:<当天日期>。"
+        }
+        // 构建失败时触发
+        failure {
+            echo "❌ 部署失败。数据目录已在切容器前备份为 .smartclaw_<日期>/smartclaw-home_<日期>，未丢失，可人工恢复。"
+            echo "   排查：登录 部署机 查看 ${RUN_DIR}/run.log"
+        }
+    }
+}
+
+
+
+
+
