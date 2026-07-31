@@ -256,6 +256,7 @@ class TestToolRouteSecurity:
             title="child-output-session",
             parent_id=root.id,
             agent="rex",
+            user_context={"iamToken": "iam-token-123"},
         )
         message = await Message.create(
             session_id=child.id,
@@ -281,6 +282,7 @@ class TestToolRouteSecurity:
         assert ctx.message_id == message.id
         assert ctx.extra["output_session_id"] == root.id
         assert ctx.extra["main_session_key"] == root.id
+        assert ctx.extra["user_context"] == {"iamToken": "iam-token-123"}
 
     @pytest.mark.asyncio
     async def test_execute_rejects_message_outside_session(

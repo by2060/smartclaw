@@ -311,6 +311,9 @@ async def _build_http_tool_context(
             session = await Session.get_by_id(session_id)
             if session:
                 extra["session_category"] = getattr(session, "category", None)
+                user_context = getattr(session, "user_context", None)
+                if isinstance(user_context, dict):
+                    extra["user_context"] = dict(user_context)
                 session_metadata = getattr(session, "metadata", None)
                 if isinstance(session_metadata, dict):
                     extra["session_metadata"] = dict(session_metadata)

@@ -836,6 +836,11 @@ def _build_http_handler(cfg: dict) -> ToolHandler:
                     smart_auth_binding.inject(headers, smart_auth_token)
 
                 for request_attempt in range(2):
+                    for header_name in list(headers):
+                        if header_name.lower() == "iamtoken":
+                            headers.pop(header_name, None)
+                    iam_token = user_context.get("iamToken")
+                    headers["iamToken"] = iam_token if isinstance(iam_token, str) else ""
                     async with session.request(method, url, **req_kwargs) as resp:
                         if (
                             resp.status == 401

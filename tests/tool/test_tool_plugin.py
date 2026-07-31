@@ -994,6 +994,43 @@ class TestHttpHandler:
 
         assert result.success is True
         assert result.output == {"data": [1, 2, 3]}
+        assert mock_session.request.call_args.kwargs["headers"]["iamToken"] == ""
+
+    @pytest.mark.asyncio
+    async def test_iam_token_header_is_forwarded_from_user_context(self):
+        cfg = {
+            "type": "http",
+            "method": "GET",
+            "url": "https://api.example.com/search",
+            "headers": {"IamToken": "configured-value"},
+            "timeout": 10,
+        }
+        handler = _build_http_handler(cfg)
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={"ok": True})
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = AsyncMock()
+        mock_session.request = MagicMock(return_value=mock_resp)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        ctx = ToolContext(
+            session_id="test",
+            message_id="test",
+            extra={"user_context": {"iamToken": "iam-token-123"}},
+        )
+
+        with patch("aiohttp.ClientSession", return_value=mock_session):
+            result = await handler(ctx)
+
+        assert result.success is True
+        sent_headers = mock_session.request.call_args.kwargs["headers"]
+        assert sent_headers["iamToken"] == "iam-token-123"
+        assert "IamToken" not in sent_headers
 
     @pytest.mark.asyncio
     async def test_post_body_preserves_exact_json_placeholders(self):
