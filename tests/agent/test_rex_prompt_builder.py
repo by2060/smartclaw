@@ -75,6 +75,21 @@ def _session_prompt(
 
 
 class TestRexPromptBuilder:
+    def test_general_domain_scope_is_in_rex_prompt(self):
+        prompt = build_dynamic_rex_prompt(
+            available_agents=[],
+            available_tools=[],
+            available_skills=[],
+            available_categories=[],
+            available_workflows=[],
+        )
+
+        assert "general-purpose AI orchestrator" in prompt
+        assert "not security-related" in prompt
+        assert "Never reject or redirect" in prompt
+        assert "security operations as a priority specialty" in prompt
+        assert "不在我的专业范围内" not in prompt
+
     def test_agent_lookup_guidance_does_not_route_through_tool_search(self):
         prompt = build_dynamic_rex_prompt(
             available_agents=[],
@@ -117,6 +132,33 @@ class TestRexPromptBuilder:
         assert "Do NOT use direct Dify retrieval to bypass required skills" in prompt
         assert "Clearly state when an answer is based on Dify" in prompt
 
+    def test_public_information_queries_do_not_route_to_personal_memory(self):
+        prompt = build_dynamic_rex_prompt(
+            available_agents=[],
+            available_tools=[],
+            available_skills=[],
+            available_categories=[],
+            available_workflows=[],
+        )
+
+        assert "Public Information and Memory Routing Gate" in prompt
+        assert '"X是谁"' in prompt
+        assert "Do not call `memory_search` merely because the name is unfamiliar" in prompt
+        assert "use authorized `websearch` as the fallback" in prompt
+
+    def test_empty_memory_requires_public_information_source_reassessment(self):
+        prompt = build_dynamic_rex_prompt(
+            available_agents=[],
+            available_tools=[],
+            available_skills=[],
+            available_categories=[],
+            available_workflows=[],
+        )
+
+        assert "returned zero, stale, irrelevant, or insufficient results" in prompt
+        assert "call `websearch` before responding" in prompt
+        assert "Do not replace it with a claim that the user's personal memory contains no information" in prompt
+
     def test_skill_matching_rule_requires_authorized_visible_skill(self):
         prompt = build_dynamic_rex_prompt(
             available_agents=[],
@@ -139,13 +181,36 @@ class TestRexPromptBuilder:
             available_workflows=[],
         )
 
-        assert "Capability Self-Introduction" in prompt
+        assert "Titan Identity and Capability Self-Introduction" in prompt
         assert "current session's authorized scope" in prompt
         assert "Do not present broad SecOps positioning" in prompt
-        assert "actually exposed by the current prompt" in prompt
-        assert "I will not assume access to tools" in prompt
+        assert "通用辅助能力" in prompt
+        assert "without forcing a security-only redirect" in prompt
         assert "threat intelligence and IOC analysis" not in prompt
         assert "alert and log triage" not in prompt
+
+    def test_capability_list_keeps_security_business_sections_first(self):
+        prompt = build_dynamic_rex_prompt(
+            available_agents=[],
+            available_tools=[],
+            available_skills=[],
+            available_categories=[],
+            available_workflows=[],
+        )
+
+        expected_sections = (
+            "威胁检测与分析",
+            "事件响应",
+            "漏洞评估",
+            "安全自动化",
+            "资产安全",
+            "基线检测",
+            "知识检索",
+            "专业智能体委派",
+        )
+        assert all(section in prompt for section in expected_sections)
+        assert prompt.index("威胁检测与分析") < prompt.index("通用辅助能力")
+        assert "只使用当前实际授权并暴露出来的能力" in prompt
 
     def test_identity_question_uses_titan_business_assistant_reply(self):
         prompt = build_dynamic_rex_prompt(

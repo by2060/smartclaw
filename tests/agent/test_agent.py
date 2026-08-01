@@ -55,6 +55,8 @@ class TestPrimaryAgents:
         assert agent.native is True
         assert agent.hidden is False
         assert agent.delegatable is False
+        assert "websearch" in (agent.tools or [])
+        assert "webfetch" in (agent.tools or [])
 
     @pytest.mark.asyncio
     async def test_plan_agent(self):

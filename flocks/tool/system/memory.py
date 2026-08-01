@@ -23,6 +23,21 @@ log = Log.create(service="tool.memory")
 
 _session_memory_cache: Dict[str, SessionMemory] = {}
 
+MEMORY_SEARCH_DESCRIPTION = """Search account-scoped memory for the current human user's remembered profile, preferences, prior conversations, explicitly stored facts, or project/session history.
+
+Use this tool only when the request clearly concerns personal memory or conversation history. Do not use it for public people, organizations, events, current facts, or ordinary questions such as 'X是谁' / 'who is X'. For uncertain public information, use websearch when available."""
+
+MEMORY_SEARCH_DESCRIPTION_CN = """搜索当前用户账号范围内的记忆，包括用户画像、偏好、历史对话、明确保存的事实或项目/会话历史。
+
+仅当问题明确涉及个人记忆或对话历史时使用。不得用于查询公开人物、组织、事件、当前事实，也不得用于普通的“X是谁”类问题。无法确定的公开信息应在工具可用时使用 websearch。"""
+
+EMPTY_MEMORY_PUBLIC_FALLBACK = (
+    "No account-memory match was found. Do not treat this as evidence that a public person, "
+    "organization, event, or fact does not exist. If the user's request could concern public "
+    "information and websearch is available, call websearch before responding. Only report a "
+    "memory miss directly when the user explicitly asked about personal memory or prior conversations."
+)
+
 
 async def _get_session_memory(ctx: ToolContext) -> tuple[Optional[SessionMemory], Optional[ToolResult]]:
     """Resolve and initialize SessionMemory for the current context.
@@ -68,8 +83,8 @@ def evict_session_memory(session_id: str) -> None:
 
 @ToolRegistry.register_function(
     name="memory_search",
-    description="Search project memory using a natural language query.",
-    description_cn="使用自然语言查询搜索项目记忆。",
+    description=MEMORY_SEARCH_DESCRIPTION,
+    description_cn=MEMORY_SEARCH_DESCRIPTION_CN,
     category=ToolCategory.SEARCH,
     parameters=[
         ToolParameter(
@@ -134,14 +149,15 @@ async def memory_search_tool(
             for r in results
         ]
 
-        return ToolResult(
-            success=True,
-            output={
-                "results": formatted,
-                "count": len(formatted),
-                "query": query,
-            },
-        )
+        output = {
+            "results": formatted,
+            "count": len(formatted),
+            "query": query,
+        }
+        if not formatted:
+            output["public_information_fallback"] = EMPTY_MEMORY_PUBLIC_FALLBACK
+
+        return ToolResult(success=True, output=output)
     except Exception as e:
         log.error("memory_search.failed", {"error": str(e)})
         return ToolResult(success=False, error=f"Memory search failed: {str(e)}")
