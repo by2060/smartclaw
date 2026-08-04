@@ -1289,13 +1289,6 @@ class Config:
     def clear_cache(cls) -> None:
         """Clear cached configuration"""
         cls._cached_config = None
-        # Keep the provider proxy lifecycle aligned with configuration reloads.
-        # Import lazily to avoid the Config/Provider module cycle.
-        try:
-            from flocks.provider.provider import Provider
-            Provider.invalidate_smg_runtime_config()
-        except ImportError:
-            pass
     
     @classmethod
     def get_data_path(cls) -> Path:

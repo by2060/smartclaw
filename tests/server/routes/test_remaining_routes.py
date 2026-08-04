@@ -609,6 +609,24 @@ class TestConfigRoutes:
         )
 
 
+    @pytest.mark.asyncio
+    async def test_update_config_applies_runtime_provider_state(
+        self,
+        client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """PATCH /api/config applies provider state after reloading config."""
+        from flocks.provider.provider import Provider
+
+        apply_config = AsyncMock()
+        monkeypatch.setattr(Provider, "apply_config", apply_config)
+
+        resp = await client.patch("/api/config/", json={})
+
+        assert resp.status_code == status.HTTP_200_OK, resp.text
+        apply_config.assert_awaited_once()
+
+
 # ===========================================================================
 # Permission routes
 # ===========================================================================

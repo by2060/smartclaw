@@ -162,12 +162,15 @@ async def update_config(config_data: Dict[str, Any]) -> Dict[str, Any]:
         # Update project config
         await Config.update(config)
         
-        # Clear cache to reload
+        # Reload and apply runtime provider state. Provider.apply_config()
+        # invalidates SMG proxies only when the SMG configuration changed.
         Config.clear_cache()
+        complete_config = await Config.get()
+        await Provider.apply_config(complete_config)
         
         log.info("config.updated")
         
-        return await get_config()
+        return complete_config.model_dump(by_alias=True, exclude_none=True)
     except Exception as e:
         log.error("config.update.error", {"error": str(e)})
         raise HTTPException(status_code=400, detail=str(e))

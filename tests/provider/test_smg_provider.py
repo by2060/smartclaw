@@ -216,22 +216,21 @@ async def test_smg_proxy_cache_only_invalidates_when_gateway_config_changes(monk
     assert third._config.base_url == "https://new-smg.example/v1"
 
 
-def test_config_clear_cache_invalidates_smg_proxy_cache(monkeypatch):
+def test_config_clear_cache_preserves_smg_runtime(monkeypatch):
     from flocks.config.config import Config
     from flocks.provider.provider import Provider
 
-    monkeypatch.setattr(Provider, "_smg_providers", {"demo": object()})
+    proxy = object()
+    monkeypatch.setattr(Provider, "_smg_providers", {"demo": proxy})
     raw = _RawProvider()
     monkeypatch.setattr(Provider, "_initialized", True)
     monkeypatch.setattr(Provider, "_providers", {"demo": raw})
     monkeypatch.setattr(Provider, "_smg_config_stale", False)
     Config.clear_cache()
 
-    assert Provider._smg_providers == {}
-    assert Provider._smg_config_stale is True
+    assert Provider._smg_providers == {"demo": proxy}
+    assert Provider._smg_config_stale is False
     assert Provider._get_raw("demo") is raw
-    with pytest.raises(RuntimeError, match="reload is pending"):
-        Provider.get("demo")
 
 
 
