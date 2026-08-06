@@ -178,6 +178,7 @@ DESCRIPTION_CN = """启动新的 agent，自主处理复杂的多步骤任务。
     description=DESCRIPTION,
     description_cn=DESCRIPTION_CN,
     category=ToolCategory.SYSTEM,
+    enabled=False,
     parameters=[
         ToolParameter(
             name="description",

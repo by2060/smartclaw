@@ -30,9 +30,8 @@ tools:
   # - background_cancel
   # Agent delegate_task, call_omo_agent
   - delegate_task
-  # 任务/工作流  工作流	task, task_create, task_list, task_status, task_update, task_delete, task_rerun,
+  # 任务/工作流  工作流	task_create, task_list, task_status, task_update, task_delete, task_rerun
   # run_workflow, run_workflow_node, todowrite, todoread, plan_enter, plan_exit
-  - task
   - run_workflow
   - run_workflow_node
   - todoread

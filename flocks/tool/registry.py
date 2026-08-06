@@ -563,6 +563,9 @@ class ToolRegistry:
     _revision: int = 0
     _failure_state: Dict[str, Dict[str, Any]] = {}
     _failure_disable_threshold: int = 3
+    # Hard-disabled built-ins remain registered for historical compatibility,
+    # but cannot be exposed or executed even if a user overlay enables them.
+    _hard_disabled_tools: Set[str] = {"task"}
 
     # Snapshot of every tool's factory-default ``enabled`` flag — captured
     # in :meth:`register` at the moment the tool object is handed to the
@@ -648,6 +651,7 @@ class ToolRegistry:
         native: bool = False,
         always_load: Optional[bool] = None,
         tags: Optional[List[str]] = None,
+        enabled: bool = True,
     ) -> Callable[[ToolHandler], ToolHandler]:
         """
         Decorator to register a function as a tool.
@@ -674,6 +678,7 @@ class ToolRegistry:
                 description_cn=description_cn,
                 category=category,
                 parameters=parameters or [],
+                enabled=enabled,
                 requires_confirmation=requires_confirmation,
                 native=native,
                 always_load=always_load,
@@ -702,7 +707,10 @@ class ToolRegistry:
     def get(cls, name: str) -> Optional[Tool]:
         """Get a tool by name"""
         cls._ensure_initialized()
-        return cls._tools.get(name)
+        tool = cls._tools.get(name)
+        if tool and name in cls._hard_disabled_tools:
+            tool.info.enabled = False
+        return tool
 
     @classmethod
     def list_tools(cls, category: Optional[ToolCategory] = None) -> List[ToolInfo]:
@@ -713,6 +721,9 @@ class ToolRegistry:
         if category:
             tools = [t for t in tools if t.info.category == category]
 
+        for tool in tools:
+            if tool.info.name in cls._hard_disabled_tools:
+                tool.info.enabled = False
         return [t.info for t in tools]
 
     @classmethod

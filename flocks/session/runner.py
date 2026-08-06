@@ -864,7 +864,16 @@ class SessionRunner:
         
         # Resolve agent
         agent_name = last_user.agent or self.agent_name
-        agent = await Agent.get(agent_name) or await Agent.get("rex")
+        agent = await Agent.get(agent_name)
+        if not agent:
+            error = f'Agent "{agent_name}" not found'
+            log.error("runner.agent.not_found", {
+                "session_id": self.session.id,
+                "agent": agent_name,
+            })
+            if self.callbacks.on_error:
+                await self.callbacks.on_error(error)
+            return StepResult(action="stop", error=error)
 
         # Track session agent (Flocks compatibility)
         try:

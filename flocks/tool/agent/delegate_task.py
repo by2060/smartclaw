@@ -24,7 +24,7 @@ from flocks.session.session import Session
 from flocks.session.message import Message, MessageRole
 from flocks.session.session_loop import SessionLoop
 # 使用轻量级元数据查询，避免循环依赖
-from flocks.agent.registry import is_delegatable
+from flocks.agent.registry import Agent, is_delegatable
 from flocks.agent.controls import (
     agent_allowed_skills,
     agent_allows_skill,
@@ -169,6 +169,14 @@ async def _resolve_skill_content(skill_names: List[str]) -> Dict[str, Any]:
     return {"content": "\n\n".join(resolved), "error": None}
 
 
+async def _lookup_agent(name: str):
+    """Look up a delegation target without allowing registry errors to spawn a child."""
+    try:
+        return await Agent.get(name)
+    except Exception as exc:
+        log.warn("delegate_task.agent_lookup_failed", {"agent": name, "error": str(exc)})
+        return None
+
 def _derive_task_description(
     description: Optional[str],
     prompt: str,
@@ -283,6 +291,31 @@ async def delegate_task_tool(
     if not category and not subagent_type and not session_id:
         return ToolResult(success=False, error="Must provide either category or subagent_type.")
 
+    # Validate direct targets against the live Agent registry before any child
+    # Session or background task can be created. Keep matching case-sensitive
+    # apart from explicit registry aliases so typos cannot fall through to Rex.
+    resolved_subagent_type: Optional[str] = None
+    if subagent_type:
+        target_agent = await _lookup_agent(subagent_type)
+        if not target_agent:
+            return ToolResult(
+                success=False,
+                error=f'Agent "{subagent_type}" not found; delegation was not started.',
+                metadata={"delegation_failed": True, "reason": "agent_not_found"},
+            )
+        resolved_subagent_type = target_agent.name
+        if not target_agent.delegatable or not is_delegatable(target_agent.name):
+            if target_agent.name in {"sisyphus-junior", "rex-junior"}:
+                return ToolResult(
+                    success=False,
+                    error=f'Cannot use subagent_type="{subagent_type}" directly. Use category parameter instead.',
+                    metadata={"delegation_failed": True, "reason": "agent_not_delegatable"},
+                )
+            return ToolResult(
+                success=False,
+                error=f'Agent "{subagent_type}" cannot be delegated to (it may be a primary agent or restricted).',
+                metadata={"delegation_failed": True, "reason": "agent_not_delegatable"},
+            )
     await ctx.ask(
         permission="delegate_task",
         patterns=[category or subagent_type or "continue"],
@@ -340,6 +373,12 @@ async def delegate_task_tool(
         if not session:
             return ToolResult(success=False, error=f"Session {session_id} not found")
         target_agent = session.agent or ctx.agent
+        if session.agent and not await _lookup_agent(session.agent):
+            return ToolResult(
+                success=False,
+                error=f'Agent "{session.agent}" for session "{session_id}" was not found; continuation was not started.',
+                metadata={"delegation_failed": True, "reason": "agent_not_found"},
+            )
         if target_agent != ctx.agent and not await rex_session_allows_subagent(ctx.session_id, ctx.agent, target_agent):
             allowed_text = await rex_session_allowed_subagents_text(ctx.session_id, ctx.agent)
             return ToolResult(
@@ -403,6 +442,20 @@ async def delegate_task_tool(
         if not config:
             available = ", ".join(category_configs.keys())
             return ToolResult(success=False, error=f'Unknown category "{category}". Available: {available}')
+        category_agent = await _lookup_agent(agent_to_use)
+        if not category_agent:
+            return ToolResult(
+                success=False,
+                error=f'Agent "{agent_to_use}" required by category "{category}" was not found; delegation was not started.',
+                metadata={"delegation_failed": True, "reason": "agent_not_found"},
+            )
+        if not category_agent.delegatable or not is_delegatable(category_agent.name):
+            return ToolResult(
+                success=False,
+                error=f'Agent "{agent_to_use}" required by category "{category}" cannot be delegated to.',
+                metadata={"delegation_failed": True, "reason": "agent_not_delegatable"},
+            )
+        agent_to_use = category_agent.name
         raw_model = _parse_model(config.get("model") if isinstance(config, dict) else getattr(config, "model", None))
         category_model = _validate_category_model(raw_model, category)
         if raw_model and not category_model:
@@ -415,22 +468,8 @@ async def delegate_task_tool(
             (config.get("prompt_append") if isinstance(config, dict) else getattr(config, "prompt_append", None))
             or CATEGORY_PROMPT_APPENDS.get(category)
         )
-    elif subagent_type:
-        # 使用轻量级元数据查询，避免循环依赖
-        # 不再调用 Agent.get()，而是使用 is_delegatable()
-        if not is_delegatable(subagent_type):
-            # 针对特殊 Agent 提供更友好的错误提示
-            if subagent_type.lower() in ["sisyphus-junior", "rex-junior"]:
-                return ToolResult(
-                    success=False,
-                    error=f'Cannot use subagent_type="{subagent_type}" directly. Use category parameter instead.',
-                )
-            else:
-                return ToolResult(
-                    success=False,
-                    error=f'Agent "{subagent_type}" cannot be delegated to (it may be a primary agent or restricted).',
-                )
-        agent_to_use = subagent_type
+    elif resolved_subagent_type:
+        agent_to_use = resolved_subagent_type
 
     # subagents权限控制新增
     if agent_to_use and not await rex_session_allows_subagent(

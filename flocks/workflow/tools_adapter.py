@@ -19,7 +19,7 @@ class FlocksToolAdapter:
     """Adapts flocks async ToolRegistry to workflow sync tool.run(name, **kwargs).
 
     - run(name, **kwargs): sync, executes via the shared workflow async loop
-    - list(): all tool ids (auto-discovered from flocks), excluding blocklist
+    - list(): enabled tool ids (auto-discovered from flocks), excluding blocklist
     - get(name): stub impl for code_gen signature extraction
     - get_spec(name): ToolSpec for code_gen
     - run_workflow is hidden to avoid workflow-in-workflow circular calls.
@@ -128,14 +128,21 @@ class FlocksToolAdapter:
 
     def list(self) -> List[str]:
         ToolRegistry.init()
-        return [n for n in ToolRegistry.all_tool_ids() if n not in WORKFLOW_TOOL_BLOCKLIST]
+        # ``all_tool_ids`` intentionally includes disabled tools for registry
+        # compatibility; workflow creation must only see executable tools.
+        return [
+            info.name
+            for info in ToolRegistry.list_tools()
+            if info.name not in WORKFLOW_TOOL_BLOCKLIST
+            and getattr(info, "enabled", True)
+        ]
 
     def get(self, name: str) -> Optional[Any]:
         """Return a stub with .run for code_gen signature extraction."""
         if self._blocked(name):
             return None
         tool = ToolRegistry.get(name)
-        if tool is None:
+        if tool is None or not getattr(tool.info, "enabled", True):
             return None
         return _ToolStub(tool)
 
@@ -143,7 +150,7 @@ class FlocksToolAdapter:
         if self._blocked(name):
             return None
         tool = ToolRegistry.get(name)
-        if tool is None:
+        if tool is None or not getattr(tool.info, "enabled", True):
             return None
         info = tool.info
         props: Dict[str, Any] = {}
