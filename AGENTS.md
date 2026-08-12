@@ -73,13 +73,13 @@ Sure. I'll respond in English from now on. ...
 
 ### 默认输出目录
 
-所有输出文件写入 `~/.flocks/workspace/outputs/<YYYY-MM-DD>/<session_id>/`，日期在**执行时**动态获取（不能依赖 session 启动时注入的 `<env>` 值，因为 session 可能跨天运行），`session_id` 使用当前工具上下文或 `<env>` 中的会话输出目录。
+所有输出文件写入 `Workspace outputs directory`，日期在**执行时**动态获取（不能依赖 session 启动时注入的 `<env>` 值，因为 session 可能跨天运行），`session_id` 使用当前工具上下文或 `<env>` 中的会话输出目录。
 
 | 文件类型 | 默认路径 |
 |---|---|
-| 分析报告、汇总结果、最终输出 | `~/.flocks/workspace/outputs/<today>/<session_id>/` |
-| LLM 中间推理落盘（workflow 节点内） | `~/.flocks/workspace/outputs/<today>/<session_id>/artifacts/` |
-| 临时调试/草稿文件 | `~/.flocks/workspace/outputs/<today>/<session_id>/` |
+| 分析报告、汇总结果、最终输出 | `Workspace outputs directory` |
+| LLM 中间推理落盘（workflow 节点内） | `Workspace outputs directory` |
+| 临时调试/草稿文件 | `Workspace outputs directory` |
 
 ### 代码示例（workflow 节点 / Python 脚本）
 

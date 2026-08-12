@@ -191,12 +191,12 @@ class WorkspaceManager:
         Output files are organized as:
         ``~/.flocks/workspace/outputs/<YYYY-MM-DD>/<session_id>/``.
         """
-        direct_override = os.getenv("FLOCKS_OUTPUTS_DIR")
-        if direct_override:
-            output_dir = Path(direct_override).expanduser()
-            if create:
-                output_dir.mkdir(parents=True, exist_ok=True)
-            return output_dir
+        # direct_override = os.getenv("FLOCKS_OUTPUTS_DIR")
+        # if direct_override:
+        #     output_dir = Path(direct_override).expanduser()
+        #     if create:
+        #         output_dir.mkdir(parents=True, exist_ok=True)
+        #     return output_dir
 
         if isinstance(day, dt.date):
             day_component = day.isoformat()

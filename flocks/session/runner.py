@@ -243,6 +243,7 @@ class SessionRunner:
         self.session_ctx = session_ctx  # SessionContext interface for decoupled access
         self._memory_bootstrap_data: Optional[Dict[str, Any]] = memory_bootstrap_data
         self._static_cache = static_cache if static_cache is not None else {}
+        self._main_session_key: Optional[str] = None  # 首次调用 _resolve_output_session_id 时解析并缓存
 
     async def _list_callable_tool_infos_for_turn(
         self,
@@ -1616,7 +1617,11 @@ class SessionRunner:
     # 输出按会话隔离新增
     async def _resolve_output_session_id(self) -> str:
         """Use the root parent session for user-facing output directories."""
-        return await Session.resolve_root_session_id(self.session.id)
+        if self._main_session_key:
+            return self._main_session_key
+        result = await Session.resolve_root_session_id(self.session.id)
+        self._main_session_key = result
+        return result
     # ----------------------end-----------------------------------
 
     async def _build_sandbox_prompt(self, agent: AgentInfo) -> Optional[str]:

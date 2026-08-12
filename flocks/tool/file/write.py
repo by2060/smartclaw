@@ -845,7 +845,7 @@ async def write_tool(
 
     # Build output
     output = "Wrote workflow artifact successfully." if artifact_record is not None else "Wrote file successfully.\n"
-    output += f"最终文件输出目录：{filepath}"
+    output += f"最终文件输出路径：{filepath}"
     # Note: LSP diagnostics integration would go here
     # For now we just return success
     
