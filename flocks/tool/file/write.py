@@ -61,6 +61,7 @@ Usage:
 - For agent-generated files in the Workspace outputs directory, this tool will
   choose a numbered filename instead of overwriting an existing file.
 - If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.
+- The path to the file to be written. Prioritize using the path provided in the tool’s output; do not use the input path.
 - Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked."""
 
 DESCRIPTION_CN = """将文件写入本地文件系统。
@@ -70,6 +71,7 @@ DESCRIPTION_CN = """将文件写入本地文件系统。
 - Agent 生成的报告、摘要等文档输出会路由到根会话的 Workspace outputs 目录，无论沙箱模式或请求路径如何
 - 对于 Workspace outputs 目录中的 Agent 生成文件，此工具会选择带编号的文件名，而不是覆盖已有文件
 - 如果目标是现有文件，必须先使用 Read 工具读取文件内容；否则此工具会失败
+- 最终写入文件的路径，优先获取工具返回结果中的文件路径，不要使用传入路径
 - 仅在用户明确要求时使用 emoji；不要主动向文件中写入 emoji"""
 
 

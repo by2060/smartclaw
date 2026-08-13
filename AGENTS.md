@@ -73,7 +73,7 @@ Sure. I'll respond in English from now on. ...
 
 ### 默认输出目录
 
-所有输出文件写入 `Workspace outputs directory`，日期在**执行时**动态获取（不能依赖 session 启动时注入的 `<env>` 值，因为 session 可能跨天运行），`session_id` 使用当前工具上下文或 `<env>` 中的会话输出目录。
+所有输出文件写入 `Workspace outputs directory`，日期在**执行时**动态获取（不能依赖 session 启动时注入的 `<env>` 值，因为 session 可能跨天运行），使用当前工具上下文或 `<env>` 中的会话输出目录。
 
 | 文件类型 | 默认路径 |
 |---|---|
