@@ -1,0 +1,30 @@
+"""
+SmartClaw Updater
+
+Provides self-update capability via GitHub releases.
+Downloads source archives, backs up the current installation,
+and replaces source files — no git binary required at runtime.
+"""
+
+from smartclaw.updater.deploy import DeployMode, detect_deploy_mode
+from smartclaw.updater.models import VersionInfo, UpdateProgress, UpdateStage
+from smartclaw.updater.updater import (
+    build_updated_frontend,
+    check_update,
+    get_current_version,
+    get_latest_release,
+    perform_update,
+)
+
+__all__ = [
+    "DeployMode",
+    "detect_deploy_mode",
+    "VersionInfo",
+    "UpdateProgress",
+    "UpdateStage",
+    "build_updated_frontend",
+    "check_update",
+    "get_current_version",
+    "get_latest_release",
+    "perform_update",
+]

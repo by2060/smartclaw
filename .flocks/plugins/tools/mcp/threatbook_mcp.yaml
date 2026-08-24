@@ -1,4 +1,0 @@
-name: threatbook_mcp
-type: remote
-url: https://mcp.threatbook.cn/mcp?apikey={secret:threatbook_mcp_key}
-enabled: true

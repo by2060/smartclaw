@@ -1,0 +1,129 @@
+{
+  "provider": {
+    "custom-glm-4.7-fp8": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "apiKey": "{secret:custom-glm-4.7-fp8_llm_key}",
+        "baseURL": "http://192.168.186.114/v1"
+      },
+      "models": {
+        "GLM-4.7-FP8": {
+          "name": "GLM-4.7-FP8",
+          "context_window": 128000,
+          "max_output_tokens": 128000,
+          "supports_vision": false,
+          "supports_tools": true,
+          "supports_streaming": true,
+          "supports_reasoning": false,
+          "input_price": 0.0,
+          "output_price": 0.0,
+          "currency": "USD",
+          "created_at": "2026-05-19T07:01:12.097038+00:00"
+        }
+      },
+      "name": "GLM-4.7-FP8",
+      "description": "Any OpenAI-compatible API endpoint (private deployments, proxies, etc.)",
+      "created_at": "2026-05-19T07:00:53.993000+00:00"
+    }
+  },
+  "smg": {
+    "enabled": false,
+    "base_url": "{secret:smg_base_url}",
+    "api_key": "{secret:smg_api_key}",
+    "platform_identifier": "{secret:platform_identifier}"
+  },
+  "default_models": {
+    "llm": {
+      "provider_id": "custom-glm-4.7-fp8",
+      "model_id": "GLM-4.7-FP8"
+    }
+  },
+  "mcp": {},
+  "channels": {},
+  "api_services": {
+    "greynoise": {
+      "enabled": false
+    },
+    "ngtip_api": {
+      "enabled": false
+    },
+    "onesec_api": {
+      "enabled": false
+    },
+    "qingteng": {
+      "enabled": false
+    },
+    "skyeye_api": {
+      "enabled": false
+    },
+    "tdp_api": {
+      "enabled": false
+    },
+    "threatbook-cn": {
+      "enabled": false,
+      "base_url": "https://api.threatbook.cn"
+    },
+    "threatbook-io": {
+      "enabled": false,
+      "base_url": "https://api.threatbook.io"
+    },
+    "urlscan": {
+      "enabled": false
+    }
+  },
+  "sandbox": {
+    "mode": "on",
+    "scope": "session",
+    "workspace_access": "ro",
+    "docker": {
+      "image": "python:slim",
+      "network": "none",
+      "memory": "1g",
+      "cpus": 1,
+      "binds": [
+        "/root/miniconda3/envs/smartclaw:/root/miniconda3/envs/smartclaw:ro"
+      ],
+      "env": {
+        "PATH": "/root/miniconda3/envs/smartclaw/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "PYTHONDONTWRITEBYTECODE": "1"
+      }
+    },
+    "prune": {
+      "idle_hours": 3,
+      "max_age_days": 3
+    }
+  },
+  "server": {
+    "cors": ["http://127.0.0.1:5173", "http://localhost:5173"]
+  },
+  "allowReadPaths": [],
+  "updater": {
+    "enabled": true,
+    "repo": "AgentSmartClaw/smartclaw",
+    "gitee_repo": "smartclaw/smartclaw",
+    "sources": ["github", "gitee"],
+    "token": null,
+    "gitee_token": null,
+    "archive_format": "auto",
+    "backup_retain_count": 5
+  },
+  "memory": {
+      "enabled": true,
+      "sources": ["memory"],
+      "hooks": {
+        "session_memory": {
+          "enabled": true,
+          "message_count": 15,
+          "use_llm_slug": true,
+          "slug_timeout": 15
+        }
+      }
+  },
+  "bash": {
+    "command_black_list": ["rm", "sudo", "su","doas","run0","pkexec","rmdir","shred","wipe","sdelete","dd","mkfs",
+    "fdisk","parted","diskpart","mount","umount","chmod","chown","chgrp","passwd","useradd","userdel","groupadd",
+    "groupdel","systemctl","service","launchctl","sc","bcdedit","reg","netsh","halt","poweroff","shutdown", "reboot"],
+    "block_message": "没有执行，黑名单命令已被拒绝：{command}"
+  }
+
+}

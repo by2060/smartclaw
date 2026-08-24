@@ -1,0 +1,60 @@
+name: titan
+description: >-
+  Powerful AI orchestrator for security operations. Analyzes threats,
+  plans strategically, and delegates to specialized agents.
+description_cn: 强大的安全运维 AI 编排器，分析威胁、制定策略、调度专业智能体
+mode: primary
+hidden: false
+color: "#00CED1"
+delegatable: false
+skills:
+  - find-skills
+  - workflow-builder
+tools:
+  # 文件处理相关：read, write, edit, multiedit, apply_patch, glob, list, file_search, doc_parser  -
+  - read
+  - list
+  - glob
+  - edit
+  - write
+  - file_search
+  - doc_parser
+  # 代码/终端 bash, grep, codesearch, lsp
+  - bash
+  - grep
+  # 系统	 question, tool_search, skill, smartclaw_skills, batch, background_output, background_cancel, run_slash_command
+  - skill
+  - tool_search
+  - smartclaw_skills
+  # - background_output
+  # - background_cancel
+  # Agent delegate_task, call_omo_agent
+  - delegate_task
+  # 任务/工作流  工作流	task_create, task_list, task_status, task_update, task_delete, task_rerun
+  # run_workflow, run_workflow_node, todowrite, todoread, plan_enter, plan_exit
+  - run_workflow
+  - run_workflow_node
+  - todoread
+  - todowrite
+  # Session	session_list, session_get, session_create, session_update, session_delete, session_archive
+  - session_list
+  # 兜底测试工具 invalid, echo, get_time
+  - invalid
+  - echo
+  - get_time
+  # dify知识库检索
+  - dify_kb_search
+  # ------end------------
+  # 模型配置	list_providers, add_provider, add_model
+  # 安全运维  ssh_host_cmd, ssh_run_script
+  # 通道/企微	channel_message, wecom_mcp
+  #  always-load 工具包含 question, memory_search, memory_get, memory_write
+  # Web	搜索
+  - websearch
+  - webfetch
+  # MCP管理 smartclaw_mcp
+kb:
+  - all
+workflows:
+
+# prompt is left empty – injected dynamically by prompt_builder.py

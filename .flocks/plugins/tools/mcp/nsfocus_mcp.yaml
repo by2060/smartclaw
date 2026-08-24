@@ -1,4 +1,0 @@
-name: nsfocus_mcp
-type: remote
-url: https://mcp.nsfocus.cn/mcp?apikey={secret:nsfocus_mcp_key}
-enabled: true

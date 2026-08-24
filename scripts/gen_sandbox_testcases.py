@@ -192,12 +192,12 @@ m["cases"].append(("TC-MAP-005", "outputs 路径映射到会话输出目录",
     "正常", "高"))
 m["cases"].append(("TC-MAP-006", "plugins 路径映射到项目插件目录",
     "沙箱已启动，project_plugins_dir 已配置",
-    "1. 向 AI 发送指令：写入 /workspace/.flocks/plugins/my_tool.yaml\n2. 观察路径映射及写入结果",
+    "1. 向 AI 发送指令：写入 /workspace/.smartclaw/plugins/my_tool.yaml\n2. 观察路径映射及写入结果",
     "写操作成功，文件实际写入 project_plugins_dir 对应路径",
     "正常", "高"))
 m["cases"].append(("TC-MAP-007", "plugins 路径穿越被拒绝",
     "沙箱已启动，project_plugins_dir 已配置",
-    "1. 向 AI 发送指令：读取 /workspace/.flocks/plugins/../../secret\n2. 观察是否被拦截",
+    "1. 向 AI 发送指令：读取 /workspace/.smartclaw/plugins/../../secret\n2. 观察是否被拦截",
     "返回错误：Path escapes project plugin directory",
     "异常", "高"))
 m["cases"].append(("TC-MAP-008", "无沙箱配置时路径直接使用",
@@ -324,15 +324,15 @@ m["cases"].append(("TC-OUT-004", "脚本写入项目根目录被拦截",
     "1. 向 AI 发送指令：创建一个 run.sh 脚本到项目目录\n2. AI 尝试通过 Bash 写文件\n3. 观察是否被拦截",
     "Bash 工具调用被拦截，返回错误：Temporary helper scripts must not be created in the project directory，提示使用 artifacts 目录",
     "异常", "高"))
-m["cases"].append(("TC-OUT-005", "写入 ~/.flocks/plugins 被拦截",
+m["cases"].append(("TC-OUT-005", "写入 ~/.smartclaw/plugins 被拦截",
     "系统正常运行，会话已建立",
-    "1. 向 AI 发送指令：将插件定义写到 ~/.flocks/plugins/tool.yaml\n2. 观察 Bash 工具是否被拦截",
+    "1. 向 AI 发送指令：将插件定义写到 ~/.smartclaw/plugins/tool.yaml\n2. 观察 Bash 工具是否被拦截",
     "Bash 工具调用被拦截，返回错误：应写到项目级插件目录而非用户级目录",
     "异常", "高"))
-m["cases"].append(("TC-OUT-006", "FLOCKS_OUTPUTS_DIR 环境变量被正确注入",
+m["cases"].append(("TC-OUT-006", "SMARTCLAW_OUTPUTS_DIR 环境变量被正确注入",
     "系统正常运行，有效 session_id 存在",
-    "1. 向 AI 发送指令：在 Bash 中打印 $FLOCKS_OUTPUTS_DIR 环境变量\n2. 观察返回值是否为当前会话的输出目录",
-    "返回当前会话对应的输出目录路径，格式为 ~/.flocks/workspace/outputs/YYYY-MM-DD/sess-xxx/",
+    "1. 向 AI 发送指令：在 Bash 中打印 $SMARTCLAW_OUTPUTS_DIR 环境变量\n2. 观察返回值是否为当前会话的输出目录",
+    "返回当前会话对应的输出目录路径，格式为 ~/.smartclaw/workspace/outputs/YYYY-MM-DD/sess-xxx/",
     "正常", "高"))
 m["cases"].append(("TC-OUT-007", "子 Agent 输出归属主会话目录",
     "主会话 main-session 启动了子 Agent 会话 sub-session",
@@ -340,7 +340,7 @@ m["cases"].append(("TC-OUT-007", "子 Agent 输出归属主会话目录",
     "文件写入主会话 main-session 的输出目录，子 Agent 输出与主会话共享",
     "正常", "高"))
 m["cases"].append(("TC-OUT-008", "嵌套输出目录文件自动迁移",
-    "Python 脚本在 FLOCKS_OUTPUTS_DIR 下又创建了日期/session 子目录",
+    "Python 脚本在 SMARTCLAW_OUTPUTS_DIR 下又创建了日期/session 子目录",
     "1. 向 AI 发送指令：运行一个在输出目录下错误创建子目录的 Python 脚本\n2. Bash 执行完毕后观察文件位置",
     "Bash 工具执行后触发迁移，嵌套目录中的文件被自动移回正确的输出根目录",
     "异常", "中"))
@@ -512,7 +512,7 @@ m["cases"].append(("TC-INT-003", "路径映射后仍尝试逃逸被二次检查�
 m["cases"].append(("TC-INT-004", "命令超时后容器内进程被清理",
     "沙箱已激活，容器正在运行",
     "1. 向 AI 发送指令：执行一个耗时很长的命令（如 sleep 9999），设置很短的超时\n2. 等待超时触发\n3. 检查容器内是否仍有残留进程",
-    "超时后 kill_sandbox_exec 被调用，容器内进程被终止，/tmp/.flocks_exec_* 文件被清理",
+    "超时后 kill_sandbox_exec 被调用，容器内进程被终止，/tmp/.smartclaw_exec_* 文件被清理",
     "异常", "高"))
 m["cases"].append(("TC-INT-005", "主会话与子 Agent 输出目录共享",
     "主会话 main-session 已启动子 Agent 会话 sub-session",
@@ -521,8 +521,8 @@ m["cases"].append(("TC-INT-005", "主会话与子 Agent 输出目录共享",
     "正常", "高"))
 m["cases"].append(("TC-INT-006", "沙箱环境变量在容器内正确注入",
     "沙箱已激活并启动容器",
-    "1. 打开沙箱会话\n2. 向 AI 发送指令：在 Bash 中打印所有 FLOCKS_ 开头的环境变量\n3. 验证环境变量值",
-    "容器内存在 FLOCKS_OUTPUTS_DIR、FLOCKS_WORKSPACE_DIR、FLOCKS_ARTIFACTS_DIR、FLOCKS_SESSION_ID 等变量且值正确",
+    "1. 打开沙箱会话\n2. 向 AI 发送指令：在 Bash 中打印所有 SMARTCLAW_ 开头的环境变量\n3. 验证环境变量值",
+    "容器内存在 SMARTCLAW_OUTPUTS_DIR、SMARTCLAW_WORKSPACE_DIR、SMARTCLAW_ARTIFACTS_DIR、SMARTCLAW_SESSION_ID 等变量且值正确",
     "正常", "高"))
 m["cases"].append(("TC-INT-007", "高风险命令在沙箱内同样被拦截",
     "沙箱已激活，Docker 容器正在运行",
@@ -554,7 +554,7 @@ m["cases"].append(("TC-CROSS-001", "沙箱内 Write 工具写文件，宿主机�
     "1. 在沙箱会话中向 AI 发送指令：用 Write 工具将分析报告写入 /workspace/outputs/report.json\n"
     "2. 写入成功后，向 AI 发送指令：用 host=host 参数在宿主机执行 cat 命令读取该文件实际路径\n"
     "3. 观察宿主机读取结果是否与写入内容一致",
-    "Write 工具写入的文件内容与宿主机提升执行读取的内容完全一致；文件宿主机路径符合 ~/.flocks/workspace/outputs/<date>/<session>/ 规则",
+    "Write 工具写入的文件内容与宿主机提升执行读取的内容完全一致；文件宿主机路径符合 ~/.smartclaw/workspace/outputs/<date>/<session>/ 规则",
     "正常", "高"))
 m["cases"].append(("TC-CROSS-002", "宿主机预置上传文件，沙箱内工具读取处理并输出结果",
     "沙箱已激活，session_id='sess-test001'，宿主机已在对应 uploads/chat/sess-test001/ 目录放置 data.csv",
@@ -566,11 +566,11 @@ m["cases"].append(("TC-CROSS-002", "宿主机预置上传文件，沙箱内工�
     "正常", "高"))
 m["cases"].append(("TC-CROSS-003", "沙箱内 Bash 生成临时数据，沙箱内 Read 读回，Write 输出最终报告",
     "沙箱已激活，容器内 Python 可用",
-    "1. 向 AI 发送指令：用 Bash 执行 Python 脚本生成 JSON 数据并写到 $FLOCKS_OUTPUTS_DIR/raw.json\n"
+    "1. 向 AI 发送指令：用 Bash 执行 Python 脚本生成 JSON 数据并写到 $SMARTCLAW_OUTPUTS_DIR/raw.json\n"
     "2. 用 Read 工具读取 /workspace/outputs/raw.json 内容\n"
     "3. 用 Write 工具将格式化后的内容写到 /workspace/outputs/final_report.md\n"
     "4. 观察每步是否成功及路径一致性",
-    "Bash 写入 $FLOCKS_OUTPUTS_DIR/raw.json 成功；Read 读取 /workspace/outputs/raw.json 与 Bash 写入内容一致；Write 输出 final_report.md 成功；三个工具操作的实际宿主机路径指向同一会话输出目录",
+    "Bash 写入 $SMARTCLAW_OUTPUTS_DIR/raw.json 成功；Read 读取 /workspace/outputs/raw.json 与 Bash 写入内容一致；Write 输出 final_report.md 成功；三个工具操作的实际宿主机路径指向同一会话输出目录",
     "正常", "高"))
 m["cases"].append(("TC-CROSS-004", "沙箱内 Bash >> 重定向写 outputs 被拦截，改用 Write 工具成功",
     "沙箱已激活，当前在沙箱会话中",
@@ -589,10 +589,10 @@ m["cases"].append(("TC-CROSS-005", "沙箱内写 outputs 文件，跨会话路�
     "异常", "高"))
 m["cases"].append(("TC-CROSS-006", "沙箱内写插件目录，宿主机提升执行验证文件存在",
     "沙箱已激活，project_plugins_dir 已配置，sandbox_elevated.enabled=True",
-    "1. 在沙箱会话中用 Write 工具写入 /workspace/.flocks/plugins/test_tool.yaml\n"
+    "1. 在沙箱会话中用 Write 工具写入 /workspace/.smartclaw/plugins/test_tool.yaml\n"
     "2. 用 host=host 参数提升执行：在宿主机验证 project_plugins_dir/test_tool.yaml 是否存在\n"
     "3. 对比文件内容",
-    "Write 写入容器路径 /workspace/.flocks/plugins/test_tool.yaml，通过 bind mount 实际落在宿主机 project_plugins_dir；提升执行读取文件内容与写入内容一致",
+    "Write 写入容器路径 /workspace/.smartclaw/plugins/test_tool.yaml，通过 bind mount 实际落在宿主机 project_plugins_dir；提升执行读取文件内容与写入内容一致",
     "正常", "高"))
 m["cases"].append(("TC-CROSS-007", "上传目录只读：沙箱内 Write 工具写上传目录被拒绝",
     "沙箱已激活，session 已有上传文件",
@@ -609,14 +609,14 @@ m["cases"].append(("TC-CROSS-008", "沙箱外工具（提升）写文件，沙�
     "正常", "高"))
 m["cases"].append(("TC-CROSS-009", "多工具操作 artifacts 目录生命周期",
     "沙箱已激活，容器内 Python 可用",
-    "1. Bash 在 $FLOCKS_ARTIFACTS_DIR 下生成图表文件（如 chart.png 占位符）\n"
+    "1. Bash 在 $SMARTCLAW_ARTIFACTS_DIR 下生成图表文件（如 chart.png 占位符）\n"
     "2. 用 Read 工具列出 /workspace/outputs/artifacts/ 目录内容\n"
-    "3. 验证 $FLOCKS_ARTIFACTS_DIR 与 /workspace/outputs/artifacts/ 指向同一宿主机目录",
+    "3. 验证 $SMARTCLAW_ARTIFACTS_DIR 与 /workspace/outputs/artifacts/ 指向同一宿主机目录",
     "Bash 写入 artifacts 目录成功；Read 在 /workspace/outputs/artifacts/ 看到文件；宿主机路径验证两者指向同一物理目录",
     "正常", "中"))
 m["cases"].append(("TC-CROSS-010", "提示词路径替换后沙箱工具透明访问上传文件",
     "沙箱已激活，用户上传文件时提示词中包含宿主机路径",
-    "1. 构造包含宿主机上传文件绝对路径的用户提示词（如 /home/user/.flocks/workspace/uploads/chat/sess-001/data.csv）\n"
+    "1. 构造包含宿主机上传文件绝对路径的用户提示词（如 /home/user/.smartclaw/workspace/uploads/chat/sess-001/data.csv）\n"
     "2. 发起沙箱会话，观察 AI 收到的提示词中的路径\n"
     "3. AI 使用 Read 工具读取路径，观察是否成功",
     "提示词中宿主机路径被自动替换为 /workspace/uploads/chat/sess-001/data.csv；AI 使用该容器路径调用 Read 工具成功读取文件内容",
@@ -627,7 +627,7 @@ m = {"name": "多工具流水线协作", "color": "375623", "cases": []}
 m["cases"].append(("TC-PIPE-001", "数据获取 → 处理 → 报告生成全链路",
     "沙箱已激活，容器内安装 Python 及 pandas，已上传 sales.csv",
     "1. Bash 执行 Python 脚本读取 /workspace/uploads/chat/{sess}/sales.csv，计算各品类销售额并输出 JSON\n"
-    "2. Bash 脚本将 JSON 写入 $FLOCKS_OUTPUTS_DIR/summary.json\n"
+    "2. Bash 脚本将 JSON 写入 $SMARTCLAW_OUTPUTS_DIR/summary.json\n"
     "3. Read 工具读取 summary.json 内容\n"
     "4. Write 工具将摘要写成 Markdown 报告到 /workspace/outputs/report.md",
     "各步骤顺次成功；最终 report.md 存在于输出目录，内容涵盖上传 CSV 数据的统计摘要；整个流程无路径错误或权限拒绝",
@@ -636,7 +636,7 @@ m["cases"].append(("TC-PIPE-002", "代码生成 → 写文件 → 执行 → 结
     "沙箱已激活，容器内 Python 可用",
     "1. AI 用 Write 工具将生成的 Python 脚本写到 /workspace/outputs/process.py（注意：不能写到项目根目录）\n"
     "2. Bash 执行 python /workspace/outputs/process.py\n"
-    "3. Bash 将执行结果写到 $FLOCKS_OUTPUTS_DIR/exec_result.txt\n"
+    "3. Bash 将执行结果写到 $SMARTCLAW_OUTPUTS_DIR/exec_result.txt\n"
     "4. Read 工具读取 exec_result.txt 验证执行结果",
     "Write 写 outputs 目录的脚本成功（不触发项目目录拦截）；Bash 执行脚本成功；exec_result.txt 内容与预期输出一致",
     "正常", "高"))
@@ -644,7 +644,7 @@ m["cases"].append(("TC-PIPE-003", "Glob 搜索 → Read 多文件读取 → Bash
     "沙箱已激活，/workspace 下存在多个 .py 文件",
     "1. 用 Glob 工具搜索 /workspace/**/*.py\n"
     "2. 对返回的文件列表逐一使用 Read 工具读取\n"
-    "3. Bash 执行统计脚本，汇总各文件行数，写入 $FLOCKS_OUTPUTS_DIR/line_counts.csv",
+    "3. Bash 执行统计脚本，汇总各文件行数，写入 $SMARTCLAW_OUTPUTS_DIR/line_counts.csv",
     "Glob 返回文件列表，路径均在 sandbox workspace 内；Read 成功读取各文件内容；Bash 聚合后 line_counts.csv 内容准确",
     "正常", "中"))
 m["cases"].append(("TC-PIPE-004", "Bash 在 /tmp 写中间脚本，沙箱限制不阻止，Read 读回验证",
@@ -665,9 +665,9 @@ m["cases"].append(("TC-PIPE-005", "工具策略限制下多工具降级处理",
     "异常", "高"))
 m["cases"].append(("TC-PIPE-006", "并发多步骤：Bash 后台任务 → 轮询等待 → 收集结果",
     "沙箱已激活，容器内 Python 可用",
-    "1. Bash 启动后台 Python 脚本并写状态到 $FLOCKS_OUTPUTS_DIR/status.txt（如 running/done）\n"
+    "1. Bash 启动后台 Python 脚本并写状态到 $SMARTCLAW_OUTPUTS_DIR/status.txt（如 running/done）\n"
     "2. Bash 轮询 status.txt 直到内容变为 done\n"
-    "3. Read 工具读取 $FLOCKS_OUTPUTS_DIR/result.json\n"
+    "3. Read 工具读取 $SMARTCLAW_OUTPUTS_DIR/result.json\n"
     "4. 验证结果数据完整性",
     "后台脚本正常运行；status.txt 状态正确转换；result.json 可被 Read 工具读取；全程无路径或权限错误",
     "正常", "中"))
@@ -682,17 +682,17 @@ m["cases"].append(("TC-PIPE-008", "Read 读取上传 CSV → Bash Python 清洗 
     "沙箱已激活，上传目录有 dirty_data.csv（含缺失值和重复行）",
     "1. Read 工具读取 /workspace/uploads/chat/{sess}/dirty_data.csv\n"
     "2. AI 用 Write 工具将 pandas 清洗脚本写到 /workspace/outputs/clean.py\n"
-    "3. Bash 执行 python /workspace/outputs/clean.py，从上传目录读 CSV，输出清洗后数据到 $FLOCKS_OUTPUTS_DIR/clean_data.csv\n"
+    "3. Bash 执行 python /workspace/outputs/clean.py，从上传目录读 CSV，输出清洗后数据到 $SMARTCLAW_OUTPUTS_DIR/clean_data.csv\n"
     "4. Read 工具读取 clean_data.csv 验证清洗结果",
     "Read 读取原始 CSV 成功（只读上传目录）；clean.py 写入 outputs 成功；Bash 脚本在容器内访问上传文件并写到输出目录成功；最终 clean_data.csv 行数/列数符合预期",
     "正常", "高"))
 m["cases"].append(("TC-PIPE-009", "Bash 环境变量注入验证后执行动态路径脚本",
     "沙箱已激活，容器内环境变量已注入",
-    "1. Bash 执行 echo $FLOCKS_OUTPUTS_DIR 验证变量存在\n"
-    "2. Bash 执行 python -c \"import os; open(os.environ['FLOCKS_OUTPUTS_DIR']+'/env_test.txt','w').write('ok')\"\n"
+    "1. Bash 执行 echo $SMARTCLAW_OUTPUTS_DIR 验证变量存在\n"
+    "2. Bash 执行 python -c \"import os; open(os.environ['SMARTCLAW_OUTPUTS_DIR']+'/env_test.txt','w').write('ok')\"\n"
     "3. Read 工具通过 /workspace/outputs/env_test.txt 读取文件\n"
     "4. 验证文件内容为 ok",
-    "$FLOCKS_OUTPUTS_DIR 变量正确指向会话输出目录；Python 脚本通过环境变量动态拼接路径写文件成功；Read 工具读取成功，内容为 ok",
+    "$SMARTCLAW_OUTPUTS_DIR 变量正确指向会话输出目录；Python 脚本通过环境变量动态拼接路径写文件成功；Read 工具读取成功，内容为 ok",
     "正常", "高"))
 m["cases"].append(("TC-PIPE-010", "任务失败回滚：Write 成功后 Bash 执行失败，输出目录仍保留已写文件",
     "沙箱已激活",
@@ -710,8 +710,8 @@ m["cases"].append(("TC-AGENT-001", "子 Agent 写文件归属主会话输出目�
     "1. 主会话发起子 Agent\n"
     "2. 子 Agent 用 Write 工具写 /workspace/outputs/sub_report.md\n"
     "3. 在主会话侧验证 sub_report.md 存在于 main-sess 输出目录\n"
-    "4. 子 Agent 会话侧验证 $FLOCKS_OUTPUTS_DIR 指向主会话输出目录",
-    "子 Agent 写入的文件实际落到主会话输出目录；主会话可见 sub_report.md；子 Agent 的 FLOCKS_OUTPUTS_DIR 值等于主会话输出目录路径",
+    "4. 子 Agent 会话侧验证 $SMARTCLAW_OUTPUTS_DIR 指向主会话输出目录",
+    "子 Agent 写入的文件实际落到主会话输出目录；主会话可见 sub_report.md；子 Agent 的 SMARTCLAW_OUTPUTS_DIR 值等于主会话输出目录路径",
     "正常", "高"))
 m["cases"].append(("TC-AGENT-002", "子 Agent 策略不能超越主会话策略",
     "主会话沙箱策略 allow=['read','write'], deny=['bash']",
@@ -733,8 +733,8 @@ m["cases"].append(("TC-AGENT-004", "多层子 Agent 输出目录层层归属主�
     "1. sub-B 用 Write 工具写 /workspace/outputs/deep_result.txt\n"
     "2. sub-A 用 Read 工具读 /workspace/outputs/deep_result.txt\n"
     "3. main-sess 验证 deep_result.txt 在主会话输出目录\n"
-    "4. 所有层的 $FLOCKS_OUTPUTS_DIR 均验证",
-    "所有层级 Agent 的 FLOCKS_OUTPUTS_DIR 指向同一主会话输出目录；deep_result.txt 任何层级均可读写；宿主机只有一份文件",
+    "4. 所有层的 $SMARTCLAW_OUTPUTS_DIR 均验证",
+    "所有层级 Agent 的 SMARTCLAW_OUTPUTS_DIR 指向同一主会话输出目录；deep_result.txt 任何层级均可读写；宿主机只有一份文件",
     "正常", "高"))
 m["cases"].append(("TC-AGENT-005", "独立子 Agent（无 sess_root_id）输出目录与主会话隔离",
     "主会话 main-sess，独立子 Agent 使用独立 session_id=sub-independent",
@@ -745,7 +745,7 @@ m["cases"].append(("TC-AGENT-005", "独立子 Agent（无 sess_root_id）输出�
     "异常", "高"))
 m["cases"].append(("TC-AGENT-006", "主会话 Bash 处理文件，委托子 Agent Write 输出",
     "主会话沙箱已激活，子 Agent 以相同 sess_root_id 启动",
-    "1. 主会话用 Bash 在容器内处理数据并输出中间结果到 $FLOCKS_OUTPUTS_DIR/intermediate.json\n"
+    "1. 主会话用 Bash 在容器内处理数据并输出中间结果到 $SMARTCLAW_OUTPUTS_DIR/intermediate.json\n"
     "2. 主会话委托子 Agent 读取 intermediate.json\n"
     "3. 子 Agent 用 Read 读取并用 Write 写最终格式化报告到 /workspace/outputs/final.md\n"
     "4. 主会话用 Read 读取 final.md 验证",
@@ -759,8 +759,8 @@ m["cases"].append(("TC-AGENT-007", "子 Agent 超时后主会话输出目录状�
     "子 Agent 超时不影响已写入的文件；step1_done.txt 在输出目录仍然完整；超时仅终止后续执行，不回滚已成功的文件操作",
     "正常", "中"))
 m["cases"].append(("TC-AGENT-008", "嵌套输出子目录自动迁移到正确位置",
-    "子 Agent Python 脚本错误地在 FLOCKS_OUTPUTS_DIR 下创建 date/session 子目录",
-    "1. 子 Agent Bash 执行 Python 脚本，脚本将文件写到 $FLOCKS_OUTPUTS_DIR/2026-01-01/sub-sess/report.csv（嵌套子目录）\n"
+    "子 Agent Python 脚本错误地在 SMARTCLAW_OUTPUTS_DIR 下创建 date/session 子目录",
+    "1. 子 Agent Bash 执行 Python 脚本，脚本将文件写到 $SMARTCLAW_OUTPUTS_DIR/2026-01-01/sub-sess/report.csv（嵌套子目录）\n"
     "2. 触发 Bash 工具的嵌套目录迁移逻辑\n"
     "3. 主会话 Read 读取 /workspace/outputs/report.csv（无嵌套层）\n"
     "4. 验证文件被迁移到正确位置",
@@ -771,7 +771,7 @@ MODULES.append(m)
 m = {"name": "提升执行与宿主机交互", "color": "C00000", "cases": []}
 m["cases"].append(("TC-ELEV-ADV-001", "沙箱内 Bash 生成，提升 Bash 宿主机后处理",
     "沙箱已激活，sandbox_elevated.enabled=True，tools=['bash']，宿主机安装 jq",
-    "1. 沙箱内 Bash 生成 JSON 文件到 $FLOCKS_OUTPUTS_DIR/data.json\n"
+    "1. 沙箱内 Bash 生成 JSON 文件到 $SMARTCLAW_OUTPUTS_DIR/data.json\n"
     "2. 用 host=host 提升执行：宿主机 jq 命令处理 data.json（路径为宿主机输出目录绝对路径）\n"
     "3. 提升执行将处理结果写到同目录 data_processed.json\n"
     "4. 沙箱内 Read 工具读取 /workspace/outputs/data_processed.json",
@@ -792,14 +792,14 @@ m["cases"].append(("TC-ELEV-ADV-003", "提升执行路径安全：不能写沙�
     "异常", "高"))
 m["cases"].append(("TC-ELEV-ADV-004", "提升执行 vs 沙箱执行输出目录环境变量差异",
     "沙箱已激活，sandbox_elevated.enabled=True，tools=['bash']",
-    "1. 沙箱内 Bash（无 host=host）打印 $FLOCKS_OUTPUTS_DIR\n"
-    "2. 提升执行 Bash（host=host）打印 $FLOCKS_OUTPUTS_DIR\n"
+    "1. 沙箱内 Bash（无 host=host）打印 $SMARTCLAW_OUTPUTS_DIR\n"
+    "2. 提升执行 Bash（host=host）打印 $SMARTCLAW_OUTPUTS_DIR\n"
     "3. 对比两个路径",
-    "沙箱内输出为容器内路径（如 /workspace/outputs/...）；提升执行输出为宿主机绝对路径（如 ~/.flocks/workspace/outputs/...）；两个路径通过 bind mount 指向同一物理目录",
+    "沙箱内输出为容器内路径（如 /workspace/outputs/...）；提升执行输出为宿主机绝对路径（如 ~/.smartclaw/workspace/outputs/...）；两个路径通过 bind mount 指向同一物理目录",
     "正常", "高"))
 m["cases"].append(("TC-ELEV-ADV-005", "沙箱内+提升执行并发写同一文件，最终内容一致",
     "沙箱已激活，sandbox_elevated.enabled=True，tools=['bash']",
-    "1. 沙箱内 Bash 向 $FLOCKS_OUTPUTS_DIR/shared.txt 写入内容 'sandbox line'\n"
+    "1. 沙箱内 Bash 向 $SMARTCLAW_OUTPUTS_DIR/shared.txt 写入内容 'sandbox line'\n"
     "2. 提升执行 Bash 向宿主机输出目录的 shared.txt 追加内容 'host line'\n"
     "3. Read 工具读取 /workspace/outputs/shared.txt\n"
     "4. 验证文件包含两行内容",

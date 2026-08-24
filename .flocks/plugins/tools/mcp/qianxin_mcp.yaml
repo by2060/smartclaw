@@ -1,4 +1,0 @@
-name: qianxin_mcp
-type: remote
-url: https://mcp.ti.qianxin.com/ti-stream-mcp?apikey={secret:qianxin_mcp_key}
-enabled: true
