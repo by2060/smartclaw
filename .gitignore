@@ -68,31 +68,31 @@ logs/
 vectordb/
 # storage/
 data/
-!.flocks/data/
+!.smartclaw/data/
 temp/
 tmp/
 .cache/
-.tmp-flocks
+.tmp-smartclaw
 
-# Flocks runtime (but keep config files)
-.flocks/data/*
-!.flocks/data/tiktoken/
-.flocks/logs/
-.flocks/*.db
-.flocks/*.sqlite*
-.flocks/.DS_Store
+# smartclaw runtime (but keep config files)
+.smartclaw/data/*
+!.smartclaw/data/tiktoken/
+.smartclaw/logs/
+.smartclaw/*.db
+.smartclaw/*.sqlite*
+.smartclaw/.DS_Store
 
 # User-specific configuration (keep only example files)
-.flocks/flocks.json
-.flocks/flocks.jsonc
+.smartclaw/smartclaw.json
+.smartclaw/smartclaw.jsonc
 
-# Flocks built-in MCP servers
-.flocks/mcp_list.json
-.flocks/mcp_list.jsonc
+# smartclaw built-in MCP servers
+.smartclaw/mcp_list.json
+.smartclaw/mcp_list.jsonc
 
-# Flocks plugins pycache (runtime-generated compiled files)
-.flocks/plugins/**/__pycache__/
-.flocks/plugins/**/*.py[cod]
+# smartclaw plugins pycache (runtime-generated compiled files)
+.smartclaw/plugins/**/__pycache__/
+.smartclaw/plugins/**/*.py[cod]
 
 # Jupyter
 .ipynb_checkpoints
@@ -125,7 +125,7 @@ webui/.vite/deps/_metadata.json
 # Windows packaging outputs
 packaging/windows/Output/
 
-.flocks/.storage_migrated
+.smartclaw/.storage_migrated
 artifacts/
 prompt.txt
 CHANGELOG.md
