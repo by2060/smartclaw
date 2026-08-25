@@ -85,6 +85,12 @@ SKIP_DIR_NAMES = {
     ".vscode",
 }
 
+# 指定需要跳过的具体目录或文件相对路径（相对于项目根目录）
+SKIP_PATHS = {
+    "aaa/bbb.py",
+
+}
+
 SKIP_FILE_NAMES = {
     SCRIPT_PATH.name,
 }
@@ -271,10 +277,28 @@ def is_text_file(path: Path) -> bool:
     return path.suffix.lower() in TEXT_SUFFIXES
 
 
+# def should_skip(path: Path) -> bool:
+#     if path.name in SKIP_FILE_NAMES:
+#         return True
+#     return any(part in SKIP_DIR_NAMES for part in path.parts)
+
+
 def should_skip(path: Path) -> bool:
     if path.name in SKIP_FILE_NAMES:
         return True
-    return any(part in SKIP_DIR_NAMES for part in path.parts)
+    if any(part in SKIP_DIR_NAMES for part in path.parts):
+        return True
+
+    # ====== 新增以下 4 行逻辑 ======
+    try:
+        rel = path.relative_to(ROOT).as_posix()
+        if any(rel == p or rel.startswith(f"{p}/") for p in SKIP_PATHS):
+            return True
+    except ValueError:
+        pass
+    # ==============================
+
+    return False
 
 
 def iter_repo_files(root: Path) -> Iterable[Path]:
