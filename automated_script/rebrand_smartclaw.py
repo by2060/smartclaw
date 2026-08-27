@@ -69,6 +69,9 @@ SENTRY_JUNIOR_HYPHEN_TITLE = "Titan-Junior"
 SENTRY_JUNIOR_CAMEL = "TitanJunior"
 SENTRY_JUNIOR_LOWER_CAMEL = "titanJunior"
 
+# 【1. 目录名全局黑名单】
+# 无论在哪个层级，只要文件夹名字匹配以下任意一项，直接跳过其内部所有文件
+# 只能写“单独的文件夹名字”（不能带斜杠路径）
 SKIP_DIR_NAMES = {
     ".git",
     ".venv",
@@ -85,16 +88,23 @@ SKIP_DIR_NAMES = {
     ".vscode",
 }
 
-# 指定需要跳过的具体目录或文件相对路径（相对于项目根目录）
+# 【2. 精准相对路径黑名单】
+# 针对相对于项目根目录的具体文件或特定目录进行跳过（支持精准到单文件，不误伤其他同名文件）
 SKIP_PATHS = {
     "aaa/bbb.py",
+    ".smartclaw/plugins/tools/python/report_generator.py",
+    ".smartclaw/plugins/tools/python/report_generator_scripts",
 
 }
 
+# 【3. 文件名全局黑名单】
+# 无论在哪个目录，只要文件名匹配就跳过；默认包含脚本自身，防止脚本修改自身代码
 SKIP_FILE_NAMES = {
-    SCRIPT_PATH.name,
+    SCRIPT_PATH.name,  # 当前脚本自身 rebrand_smartclaw.py
 }
 
+# 【4. 特殊文本文件名白名单】
+# 针对没有标准扩展名（如无后缀或以点开头）但属于纯文本的文件，允许进行内容替换
 TEXT_FILE_NAMES = {
     "Dockerfile",
     "Makefile",
@@ -106,6 +116,8 @@ TEXT_FILE_NAMES = {
     ".env.local.example",
 }
 
+# 【5. 文本文件后缀白名单】
+# 仅对以下扩展名的文本文件做内容替换，其余二进制文件（图片、音视频、压缩包等）自动跳过防损坏
 TEXT_SUFFIXES = {
     ".py",
     ".pyi",
@@ -140,13 +152,15 @@ TEXT_SUFFIXES = {
     ".example",
 }
 
+# 【6. 正则内容保护规则】
+# 匹配到的文本片段会先被临时占位符保护，替换完成后原样还原（用于防止外链 URL、哈希值等被误替换）
 PROTECT_PATTERNS = [
-    # re.compile(r"https?://[^\s'\"<>`]+"),
-    # re.compile(r"ghcr\.io/[^\s'\"<>`]+"),
+    # re.compile(r"https?://[^\s'\"<>`]+"),   # 保护 HTTP/HTTPS 完整链接
+    # re.compile(r"ghcr\.io/[^\s'\"<>`]+"),    # 保护容器镜像源地址
     # re.compile(r"ghcr\.nju\.edu\.cn/[^\s'\"<>`]+"),
-    # re.compile(r"\bsha(?:1|224|256|384|512)-[A-Za-z0-9+/=._-]+"),
+    # re.compile(r"\bsha(?:1|224|256|384|512)-[A-Za-z0-9+/=._-]+"),  # 保护 sha 哈希校验码
     # re.compile(r"\bsha(?:1|224|256|384|512):[A-Fa-f0-9]+\b"),
-    # re.compile(r"(?i)\bt-rex\b"),
+    # re.compile(r"(?i)\bt-rex\b"),   # 保护特定专属词汇
 ]
 
 CONTENT_REPLACEMENTS: list[tuple[re.Pattern[str], str]] = [
