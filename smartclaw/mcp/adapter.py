@@ -38,8 +38,15 @@ class McpToolAdapter:
             return {}
 
         meta = {}
-        # reportModelPaths 报告模板路径，localDB 数据库连接信息加密串
-        for key in ("currentUserName", "currentToken", "reportModelPaths","localDB", "iamToken"):
+        # reportModelPaths 报告模板路径，localDB 数据库连接信息加密串，aisBaseUrl ais服务的url
+        for key in (
+            "currentUserName",
+            "currentToken",
+            "reportModelPaths",
+            "localDB",
+            "iamToken",
+            "aisBaseUrl",
+        ):
             value = user_context.get(key)
             if value is not None:
                 meta[key] = value
