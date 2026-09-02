@@ -62,7 +62,9 @@ DEFAULT_TARGETS: tuple[str, ...] = (
     "webui/tsconfig.node.json",
     "webui/vite.config.ts",
     "webui/vitest.config.ts",
-    "webui/.env.example"
+    "webui/.env.example",
+    "Jenkinsfile_docker",
+    "Jenkinsfile_src"
 
 
 )
