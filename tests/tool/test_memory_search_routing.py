@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+from types import SimpleNamespace
 
 import pytest
 
@@ -49,3 +50,35 @@ async def test_empty_memory_search_result_instructs_public_web_fallback(monkeypa
     assert result.output["count"] == 0
     assert result.output["public_information_fallback"] == module.EMPTY_MEMORY_PUBLIC_FALLBACK
     assert "call websearch before responding" in result.output["public_information_fallback"]
+
+
+@pytest.mark.asyncio
+async def test_nonempty_memory_search_result_does_not_add_public_fallback(monkeypatch):
+    module = _memory_module()
+    memory_result = SimpleNamespace(
+        path="memory.md",
+        start_line=1,
+        end_line=2,
+        score=0.9,
+        snippet="remembered fact",
+        source=SimpleNamespace(value="memory"),
+        citation="memory.md:1-2",
+    )
+
+    class NonEmptyMemory:
+        async def search(self, **_kwargs):
+            return [memory_result]
+
+    async def get_memory(_ctx):
+        return NonEmptyMemory(), None
+
+    monkeypatch.setattr(module, "_get_session_memory", get_memory)
+
+    result = await module.memory_search_tool(
+        ToolContext(session_id="session-1", message_id="message-1", agent="titan"),
+        query="remembered fact",
+    )
+
+    assert result.success is True
+    assert result.output["count"] == 1
+    assert "public_information_fallback" not in result.output

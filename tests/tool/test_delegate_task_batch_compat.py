@@ -4,10 +4,30 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from smartclaw.tool.registry import ToolContext, ToolRegistry
+from smartclaw.tool.agent import delegate_task as delegate_task_module
 
 
 def _make_ctx() -> ToolContext:
     return ToolContext(session_id="test-session", message_id="test-message", agent="titan")
+
+
+@pytest.fixture(autouse=True)
+def _allow_full_tool_catalog(monkeypatch):
+    """Keep these behavior tests focused on delegation, not catalog policy lookup."""
+    monkeypatch.setattr(
+        "smartclaw.agent.controls.titan_session_uses_full_tool_catalog",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        delegate_task_module,
+        "titan_session_uses_full_skill_catalog",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        delegate_task_module,
+        "titan_session_allows_subagent",
+        AsyncMock(return_value=True),
+    )
 
 
 class TestDelegateTaskTolerance:
@@ -29,7 +49,7 @@ class TestDelegateTaskTolerance:
                 session_id="ses-child",
             ))
         )
-        with patch("smartclaw.tool.agent.delegate_task._find_completed_delegate", AsyncMock(return_value=None)),              patch("smartclaw.tool.agent.delegate_task.Config.get", AsyncMock(return_value=SimpleNamespace(categories=None))),              patch("smartclaw.tool.agent.delegate_task.is_delegatable", return_value=True),              patch("smartclaw.tool.agent.delegate_task.get_background_manager", return_value=manager),              patch("smartclaw.tool.agent.delegate_task.Skill.get", AsyncMock()) as skill_get:
+        with patch("smartclaw.tool.agent.delegate_task._find_completed_delegate", AsyncMock(return_value=None)),              patch("smartclaw.tool.agent.delegate_task._lookup_agent", AsyncMock(return_value=SimpleNamespace(name="asset-survey", delegatable=True, permission=[]))),              patch("smartclaw.tool.agent.delegate_task.Config.get", AsyncMock(return_value=SimpleNamespace(categories=None))),              patch("smartclaw.tool.agent.delegate_task.is_delegatable", return_value=True),              patch("smartclaw.tool.agent.delegate_task.get_background_manager", return_value=manager),              patch("smartclaw.tool.agent.delegate_task.Skill.get", AsyncMock()) as skill_get:
             result = await ToolRegistry.execute(
                 "delegate_task",
                 ctx=_make_ctx(),
@@ -66,6 +86,7 @@ class TestDelegateTaskTolerance:
         })
 
         with patch("smartclaw.tool.agent.delegate_task._find_completed_delegate", AsyncMock(return_value=None)), \
+             patch("smartclaw.tool.agent.delegate_task._lookup_agent", AsyncMock(return_value=SimpleNamespace(name="titan-junior", delegatable=True, permission=[]))), \
              patch("smartclaw.tool.agent.delegate_task.Config.get", AsyncMock(return_value=cfg)), \
              patch("smartclaw.tool.agent.delegate_task._validate_category_model", return_value={
                  "providerID": "anthropic",
@@ -98,6 +119,7 @@ class TestDelegateTaskTolerance:
         )
 
         with patch("smartclaw.tool.agent.delegate_task.Config.get", AsyncMock(return_value=SimpleNamespace(categories=None))), \
+             patch("smartclaw.tool.agent.delegate_task._lookup_agent", AsyncMock(return_value=SimpleNamespace(name="asset-survey", delegatable=True, permission=[]))), \
              patch("smartclaw.tool.agent.delegate_task.Session.get_by_id", AsyncMock(return_value=session)), \
              patch("smartclaw.tool.agent.delegate_task.Message.create", AsyncMock()), \
              patch("smartclaw.tool.agent.delegate_task.SessionLoop.run", AsyncMock(return_value=SimpleNamespace(

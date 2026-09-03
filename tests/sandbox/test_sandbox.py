@@ -433,6 +433,8 @@ class TestDockerArgs:
 
         monkeypatch.setattr(docker_module, "ensure_docker_image", fake_ensure_docker_image)
         monkeypatch.setattr(docker_module, "exec_docker", fake_exec_docker)
+        monkeypatch.setattr(docker_module.os, "getuid", lambda: 1001, raising=False)
+        monkeypatch.setattr(docker_module.os, "getgid", lambda: 1002, raising=False)
 
         await docker_module.create_sandbox_container(
             name="test-container",
@@ -448,11 +450,13 @@ class TestDockerArgs:
         )
 
         create_args = captured_args[0]
-        workspace_index = create_args.index("/host/workspace:/workspace:ro")
+        workspace_index = create_args.index("/host/workspace:/host/workspace:ro")
         outputs_index = create_args.index("/host/outputs:/workspace/outputs")
         image_index = create_args.index("python:slim")
 
         assert workspace_index < outputs_index < image_index
+        assert create_args[create_args.index("--workdir") + 1] == "/host/workspace"
+        assert create_args[create_args.index("--user") + 1] == "1001:1002"
 
     def test_build_exec_args(self):
         """docker exec 参数构建."""

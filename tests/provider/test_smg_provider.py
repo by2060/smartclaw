@@ -11,9 +11,16 @@ from smartclaw.provider.provider import (
     ModelCapabilities,
     ModelInfo,
     ProviderConfig,
+    StreamChunk,
 )
 from smartclaw.provider.sdk.openai_base import OpenAIBaseProvider
-from smartclaw.provider.smg_provider import GatewayRequestContext, SMGProvider
+from smartclaw.provider.smg_provider import (
+    GatewayRequestContext,
+    SMGProvider,
+    _exception_diagnostics,
+    _redact_detail,
+    _safe_url,
+)
 from smartclaw.utils.log import Log
 
 
@@ -561,3 +568,139 @@ async def test_child_session_inherits_parent_user_trace_without_losing_metadata(
         "child-session",
         metadata={"existing": "value", "smgTraceId": "user-turn"},
     )
+
+
+def test_smg_url_and_diagnostic_helpers_cover_edge_cases():
+    assert _safe_url("https://user:secret@example.com:8443/path?q=secret#fragment") == (
+        "https://example.com:8443/path"
+    )
+    assert _safe_url("https://example.com:not-a-port/path") == "invalid-url"
+    assert _redact_detail("plain", (None, "")) == "plain"
+    assert _exception_diagnostics(RuntimeError("plain failure"), (None,)) == (
+        ["RuntimeError"],
+        None,
+    )
+
+
+def test_smg_http_event_hooks_include_request_and_response_handlers():
+    proxy = SMGProvider(_RawProvider(), _smg_config())
+
+    hooks = proxy._http_event_hooks()
+
+    assert hooks["request"] == [proxy._log_http_attempt]
+    assert hooks["response"] == [proxy._log_http_response]
+    assert OpenAIBaseProvider._http_event_hooks(proxy) == {}
+
+
+@pytest.mark.asyncio
+async def test_smg_stream_error_is_wrapped_after_received_chunk():
+    proxy = SMGProvider(_RawProvider(), _smg_config())
+    context = GatewayRequestContext(trace_id="trace-1", call_source="test.stream")
+    received = []
+
+    async def failing_stream(_self, _model_id, _messages, **_kwargs):
+        yield StreamChunk(delta="first")
+        raise httpx.ReadError(
+            "stream interrupted",
+            request=httpx.Request("POST", "https://smg.example/v1/chat/completions"),
+        )
+
+    with patch.object(OpenAIBaseProvider, "chat_stream", new=failing_stream):
+        with pytest.raises(RuntimeError, match="SMG request failed") as exc_info:
+            async for chunk in proxy.chat_stream(
+                "demo-model",
+                [ChatMessage(role="user", content="hello")],
+                gateway_context=context,
+            ):
+                received.append(chunk.delta)
+
+    assert received == ["first"]
+    assert "trace_id=trace-1" in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
+
+
+@pytest.mark.asyncio
+async def test_gateway_trace_resolution_and_inheritance_failure_paths(monkeypatch):
+    from smartclaw.session.message import Message
+    from smartclaw.session.session import Session
+
+    get_session = AsyncMock(return_value=SimpleNamespace(metadata={}))
+    get_message = AsyncMock(
+        side_effect=[
+            SimpleNamespace(id="assistant", role="assistant", parentID="parent"),
+            SimpleNamespace(id="parent", role="assistant"),
+        ]
+    )
+    monkeypatch.setattr(Session, "get_by_id", get_session)
+    monkeypatch.setattr(Message, "get", get_message)
+
+    assert await Session.resolve_gateway_trace_id("session-1", None) is None
+    assert await Session.resolve_gateway_trace_id("session-1", "assistant") == "assistant"
+
+    child = SimpleNamespace(
+        id="child",
+        project_id="project-1",
+        metadata={"smgTraceId": "same-trace"},
+    )
+    update = AsyncMock()
+    monkeypatch.setattr(Session, "update", update)
+
+    assert await Session.inherit_gateway_trace(child, None, "message") is child
+    assert await Session.inherit_gateway_trace(child, "parent", None) is child
+
+    resolve = AsyncMock(side_effect=RuntimeError("lookup failed"))
+    monkeypatch.setattr(Session, "resolve_gateway_trace_id", resolve)
+    assert await Session.inherit_gateway_trace(child, "parent", "message") is child
+
+    resolve.side_effect = None
+    resolve.return_value = None
+    assert await Session.inherit_gateway_trace(child, "parent", "message") is child
+
+    resolve.return_value = "same-trace"
+    assert await Session.inherit_gateway_trace(child, "parent", "message") is child
+    update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_gateway_trace_persist_and_context_resolution_failures(monkeypatch):
+    from smartclaw.session.session import Session
+
+    child = SimpleNamespace(id="child", project_id="project-1", metadata={})
+    monkeypatch.setattr(
+        Session,
+        "resolve_gateway_trace_id",
+        AsyncMock(return_value="resolved-trace"),
+    )
+    monkeypatch.setattr(
+        Session,
+        "update",
+        AsyncMock(side_effect=RuntimeError("persist failed")),
+    )
+
+    assert await Session.inherit_gateway_trace(child, "parent", "message") is child
+
+    monkeypatch.setattr(
+        Session,
+        "resolve_session_chain",
+        AsyncMock(return_value=["root", "child"]),
+    )
+    monkeypatch.setattr(
+        Session,
+        "resolve_gateway_trace_id",
+        AsyncMock(side_effect=RuntimeError("resolve failed")),
+    )
+    monkeypatch.setattr(
+        Session,
+        "get_by_id",
+        AsyncMock(return_value=SimpleNamespace(user_context={})),
+    )
+
+    context = await Session.build_gateway_request_context(
+        "child",
+        trace_id="original-trace",
+        call_source="test.failure",
+    )
+
+    assert context.session_chain_ids == ("root", "child")
+    assert context.trace_id == "original-trace"
+    assert context.call_source == "test.failure"

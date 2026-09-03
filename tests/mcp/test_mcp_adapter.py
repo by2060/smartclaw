@@ -194,6 +194,83 @@ class TestMcpToolAdapter:
             meta={"currentUserName": "alice", "currentToken": "token-123"},
         )
 
+    def test_build_call_meta_forwards_new_fields_and_ignores_null_values(self):
+        from smartclaw.tool.registry import ToolContext
+
+        ctx = ToolContext(
+            session_id="test_session",
+            message_id="test_message",
+            extra={
+                "user_context": {
+                    "iamToken": "iam-123",
+                    "aisBaseUrl": "https://ais.example.com",
+                    "currentToken": None,
+                    "unapproved": "must-not-forward",
+                }
+            },
+        )
+        assert McpToolAdapter._build_call_meta(ctx) == {
+            "iamToken": "iam-123",
+            "aisBaseUrl": "https://ais.example.com",
+        }
+
+    def test_build_call_meta_forwards_iam_token(self):
+        from smartclaw.tool.registry import ToolContext
+
+        ctx = ToolContext(
+            session_id="session",
+            message_id="message",
+            extra={"user_context": {"iamToken": "iam-123"}},
+        )
+        assert McpToolAdapter._build_call_meta(ctx) == {"iamToken": "iam-123"}
+
+    def test_build_call_meta_forwards_ais_base_url(self):
+        from smartclaw.tool.registry import ToolContext
+
+        ctx = ToolContext(
+            session_id="session",
+            message_id="message",
+            extra={"user_context": {"aisBaseUrl": "https://ais.example.com"}},
+        )
+        assert McpToolAdapter._build_call_meta(ctx) == {
+            "aisBaseUrl": "https://ais.example.com"
+        }
+
+    @pytest.mark.asyncio
+    async def test_tool_handler_passes_iam_token_and_ais_base_url_to_mcp(self):
+        mcp_tool = McpToolDef(
+            name="meta_tool",
+            description="Test",
+            input_schema={"properties": {}},
+        )
+        client = AsyncMock()
+        result = MagicMock(isError=False, content=[MagicMock(text="ok")])
+        client.call_tool = AsyncMock(return_value=result)
+        tool = McpToolAdapter.convert_tool("server", mcp_tool, client)
+        from smartclaw.tool.registry import ToolContext
+
+        ctx = ToolContext(
+            session_id="session",
+            message_id="message",
+            extra={
+                "user_context": {
+                    "iamToken": "iam-123",
+                    "aisBaseUrl": "https://ais.example.com",
+                }
+            },
+        )
+        response = await tool.handler(ctx)
+        assert response.success
+        client.call_tool.assert_awaited_once_with(
+            "meta_tool", {}, meta={"iamToken": "iam-123", "aisBaseUrl": "https://ais.example.com"}
+        )
+
+    def test_build_call_meta_without_user_context_returns_empty_dict(self):
+        from smartclaw.tool.registry import ToolContext
+
+        ctx = ToolContext(session_id="session", message_id="message", extra={"user_context": []})
+        assert McpToolAdapter._build_call_meta(ctx) == {}
+
     @pytest.mark.asyncio
     async def test_tool_handler_ignores_argument_meta(self):
         """Test tool arguments cannot spoof MCP request meta."""

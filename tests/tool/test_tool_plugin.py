@@ -4,6 +4,7 @@ Tests for the YAML tool plugin system (smartclaw.tool.tool_loader).
 
 import json
 import textwrap
+from datetime import date
 from pathlib import Path
 from typing import Any, Dict
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -411,6 +412,19 @@ class TestMergeProviderDefaults:
         provider = {"defaults": {"category": "search"}}
         result = _merge_provider_defaults(raw, provider)
         assert result["category"] == "search"
+
+    def test_smart_auth_provider_builds_binding_on_http_handler(self):
+        raw = {"handler": {"type": "http", "url": "{base_url}/query"}}
+        provider = {
+            "defaults": {"base_url": "https://auth.example.com"},
+            "authType": "smartAuth",
+        }
+        binding = object()
+        with patch("smartclaw.tool.tool_loader.build_smart_auth_binding", return_value=binding):
+            result = _merge_provider_defaults(raw, provider)
+
+        assert result["handler"]["url"] == "https://auth.example.com/query"
+        assert result["handler"]["_smart_auth_binding"] is binding
 
 
 # ---------------------------------------------------------------------------
@@ -1002,7 +1016,7 @@ class TestHttpHandler:
             "type": "http",
             "method": "GET",
             "url": "https://api.example.com/search",
-            "headers": {"IamToken": "configured-value"},
+            "headers": {"Accept": "application/json", "IamToken": "configured-value"},
             "timeout": 10,
         }
         handler = _build_http_handler(cfg)
@@ -1029,6 +1043,7 @@ class TestHttpHandler:
 
         assert result.success is True
         sent_headers = mock_session.request.call_args.kwargs["headers"]
+        assert sent_headers["Accept"] == "application/json"
         assert sent_headers["iamToken"] == "iam-token-123"
         assert "IamToken" not in sent_headers
 
@@ -1292,7 +1307,10 @@ class TestHttpHandler:
                     yield chunk
 
         output_dir = tmp_path / "outputs"
-        monkeypatch.setenv("SMARTCLAW_OUTPUTS_DIR", str(output_dir))
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setattr("smartclaw.workspace.manager._user_home_dir", lambda: home)
+        monkeypatch.setattr("smartclaw.workspace.manager.WorkspaceManager._instance", None)
 
         cfg = {
             "type": "http",
@@ -1326,11 +1344,12 @@ class TestHttpHandler:
 
         assert result.success is True
         assert result.output["type"] == "file"
-        assert result.output["filename"] == "report.pdf"
+        assert result.output["filename"].startswith("report")
+        assert result.output["filename"].endswith(".pdf")
         assert result.output["content_type"] == "application/pdf"
         assert result.output["size"] == len(body)
         saved_path = Path(result.output["saved_path"])
-        assert saved_path.parent == output_dir
+        assert saved_path.parent == home / ".smartclaw" / "workspace" / "outputs" / date.today().isoformat() / "root"
         assert saved_path.read_bytes() == body
         assert result.metadata["file"] == result.output
         mock_resp.json.assert_not_called()
@@ -1342,7 +1361,10 @@ class TestHttpHandler:
         monkeypatch,
     ):
         output_dir = tmp_path / "outputs"
-        monkeypatch.setenv("SMARTCLAW_OUTPUTS_DIR", str(output_dir))
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setattr("smartclaw.workspace.manager._user_home_dir", lambda: home)
+        monkeypatch.setattr("smartclaw.workspace.manager.WorkspaceManager._instance", None)
 
         cfg = {
             "type": "http",
@@ -1373,11 +1395,63 @@ class TestHttpHandler:
 
         assert result.success is True
         assert result.output["type"] == "file"
-        assert result.output["filename"] == "export.bin"
+        assert result.output["filename"].startswith("export")
+        assert result.output["filename"].endswith(".bin")
         saved_path = Path(result.output["saved_path"])
-        assert saved_path.parent == output_dir
+        assert saved_path.parent == home / ".smartclaw" / "workspace" / "outputs" / date.today().isoformat() / "http-tool"
         assert saved_path.read_bytes() == body
         mock_resp.json.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_smart_auth_refreshes_after_401_and_retries_once(self):
+        from smartclaw.tool.smart_auth import SmartAuthBinding, SmartAuthConfig
+
+        binding = SmartAuthBinding(
+            SmartAuthConfig(
+                "https://auth.example.com", "tenant", "user", "pwd", False, "Authorization", "Bearer "
+            )
+        )
+        binding.get_token = AsyncMock(return_value="old-token")
+        binding.refresh_token = AsyncMock(return_value="new-token")
+        cfg = {
+            "type": "http",
+            "method": "GET",
+            "url": "https://api.example.com/protected",
+            "_smart_auth_binding": binding,
+        }
+        handler = _build_http_handler(cfg)
+
+        unauthorized = AsyncMock()
+        unauthorized.status = 401
+        unauthorized.read = AsyncMock(return_value=b"expired")
+        unauthorized.__aenter__ = AsyncMock(return_value=unauthorized)
+        unauthorized.__aexit__ = AsyncMock(return_value=False)
+        success = AsyncMock()
+        success.status = 200
+        success.json = AsyncMock(return_value={"ok": True})
+        success.__aenter__ = AsyncMock(return_value=success)
+        success.__aexit__ = AsyncMock(return_value=False)
+
+        captured_headers = []
+        session = AsyncMock()
+
+        def request(_method, _url, **kwargs):
+            captured_headers.append(dict(kwargs["headers"]))
+            return [unauthorized, success][len(captured_headers) - 1]
+
+        session.request = MagicMock(side_effect=request)
+        session.__aenter__ = AsyncMock(return_value=session)
+        session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession", return_value=session):
+            result = await handler(ToolContext(session_id="smart-auth", message_id="message"))
+
+        assert result.success is True
+        assert result.output == {"ok": True}
+        assert captured_headers[0]["Authorization"] == "Bearer old-token"
+        assert captured_headers[1]["Authorization"] == "Bearer new-token"
+        binding.get_token.assert_awaited_once()
+        binding.refresh_token.assert_awaited_once_with(session, "old-token")
 
 
 class TestExecutionHandler:

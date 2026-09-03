@@ -34,6 +34,17 @@ def _make_ctx(**extra_kwargs) -> ToolContext:
     return ToolContext(**params)
 
 
+@pytest.fixture(autouse=True)
+def _allow_full_tool_catalog(monkeypatch):
+    """Keep write behavior tests independent from agent catalog configuration."""
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(
+        "smartclaw.agent.controls.titan_session_uses_full_tool_catalog",
+        AsyncMock(return_value=True),
+    )
+
+
 VALID_WORKFLOW_JSON = '{"start":"n1","nodes":[{"id":"n1","type":"python","code":"outputs[\\"ok\\"] = True"}],"edges":[]}\n'
 INVALID_WORKFLOW_JSON_WITH_LINT_DETAILS = '''{
   "id": "alerts_query",
@@ -778,6 +789,44 @@ def test_filepath_parameter_references_env():
     filepath_param = next(p for p in tool.info.parameters if p.name == "filePath")
     desc = filepath_param.description
 
-    assert "Workspace outputs directory" in desc
+    assert "Session outputs directory" in desc
     assert "<env>" in desc
     assert "Source code directory" in desc
+
+
+@pytest.mark.asyncio
+async def test_success_output_reports_final_written_path_not_requested_path(tmp_path):
+    target = tmp_path / "final.txt"
+    result = await ToolRegistry.execute(
+        "write", _make_ctx(), filePath=str(target), content="final path"
+    )
+
+    assert result.success, f"write failed: {result.error}"
+    assert f"最终文件输出路径：{result.metadata['filepath']}" in result.output
+    assert str(target) in result.output
+
+
+@pytest.mark.asyncio
+async def test_success_output_reports_rewritten_session_output_path(tmp_path, monkeypatch):
+    from smartclaw.config.config import Config
+    from smartclaw.workspace.manager import WorkspaceManager
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr("smartclaw.workspace.manager._user_home_dir", lambda: home)
+    monkeypatch.setenv("SMARTCLAW_WORKSPACE_DIR", str(tmp_path / "workspace"))
+    WorkspaceManager._instance = None
+    Config._global_config = None
+    try:
+        requested = "/workspace/.smartclaw_outputs/2026-05-07/baseline-report.md"
+        result = await ToolRegistry.execute(
+            "write", _make_ctx(), filePath=str(requested), content="rewritten"
+        )
+    finally:
+        WorkspaceManager._instance = None
+        Config._global_config = None
+
+    assert result.success, f"write failed: {result.error}"
+    assert result.metadata["filepath"] != requested
+    assert str(result.metadata["filepath"]) in result.output
+    assert requested not in result.output
