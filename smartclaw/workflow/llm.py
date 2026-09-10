@@ -263,6 +263,28 @@ class LLMClient:
         max_retries: int = 0,
         retry_delay_s: float = 1.0,
     ) -> str:
+        return self.ask_messages(
+            [ChatMessage(role="user", content=prompt + "请使用中文输出。")],
+            temperature=temperature,
+            model=model,
+            provider_id=provider_id,
+            timeout_s=timeout_s,
+            max_retries=max_retries,
+            retry_delay_s=retry_delay_s,
+        )
+
+    def ask_messages(
+        self,
+        messages: list[ChatMessage],
+        temperature: float = 0.2,
+        *,
+        model: Optional[str] = None,
+        provider_id: Optional[str] = None,
+        timeout_s: Optional[float] = None,
+        max_retries: int = 0,
+        retry_delay_s: float = 1.0,
+        max_tokens: Optional[int] = None,
+    ) -> str:
         if model is not None or provider_id is not None:
             return LLMClient(
                 api_key=self.api_key,
@@ -271,12 +293,13 @@ class LLMClient:
                 provider_id=provider_id if provider_id is not None else self.provider_id,
                 session_id=self.session_id,
                 trace_id=self.trace_id,
-            ).ask(
-                prompt,
+            ).ask_messages(
+                messages,
                 temperature=temperature,
                 timeout_s=timeout_s,
                 max_retries=max_retries,
                 retry_delay_s=retry_delay_s,
+                max_tokens=max_tokens,
             )
 
         targets = self._build_candidate_targets()
@@ -309,8 +332,9 @@ class LLMClient:
                     )
                 coro = provider.chat(
                     model_id=target.model_id,
-                    messages=[ChatMessage(role="user", content=prompt + "请使用中文输出。")],
+                    messages=messages,
                     temperature=temperature,
+                    max_tokens=max_tokens,
                     gateway_context=gateway_context,
                 )
                 if timeout_s is not None and float(timeout_s) > 0:
