@@ -65,6 +65,7 @@ PDF_VISION_RETRY_DELAY_S = 1.0
 PDF_PASSWORD_REQUIRED = "pdf_password_required"
 PDF_TEXT_EXTRACTION_FAILED = "pdf_text_extraction_failed"
 PDF_VISION_EXTRACTION_FAILED = "pdf_vision_extraction_failed"
+PDF_UNREADABLE = "pdf_unreadable"
 
 
 @dataclass(frozen=True)
@@ -380,22 +381,49 @@ def _pdf_needs_password(file_path: Path) -> bool:
         document.close()
 
 
-def _classify_pdf_page(page: object, page_no: int, *, threshold: int = PDF_TEXT_PAGE_THRESHOLD) -> _PdfPageDecision:
+def _classify_pdf_page(
+    page: object,
+    page_no: int,
+    *,
+    threshold: int = PDF_TEXT_PAGE_THRESHOLD,
+    emit_log: bool = True,
+) -> _PdfPageDecision:
     text = str(page.get_text() or "").strip()
     has_images = bool(page.get_images())
-    is_text_page = len(text) >= threshold and not has_images
-    log.info("doc_parser.pdf_vision.page_classified", {
-        "page": page_no,
-        "text_length": len(text),
-        "has_images": has_images,
-        "classification": "text" if is_text_page else "image",
-    })
+    is_text_page = len(text) >= threshold
+    if emit_log:
+        log.info("doc_parser.pdf_vision.page_classified", {
+            "page": page_no,
+            "text_length": len(text),
+            "has_images": has_images,
+            "classification": "text" if is_text_page else "image",
+        })
     return _PdfPageDecision(
         page_no=page_no,
         text=text,
         has_images=has_images,
         is_text_page=is_text_page,
     )
+
+
+def _pdf_requires_page_level_vision(file_path: Path) -> bool:
+    fitz = importlib.import_module("fitz")
+
+    try:
+        document = fitz.open(file_path)
+    except Exception as exc:
+        log.warning("doc_parser.pdf_vision.inspect_failed", {"path": str(file_path), "error": str(exc)})
+        return False
+
+    try:
+        for index in range(len(document)):
+            page = document.load_page(index)
+            decision = _classify_pdf_page(page, index + 1, emit_log=False)
+            if not decision.is_text_page:
+                return True
+        return False
+    finally:
+        document.close()
 
 
 def _build_pdf_vision_prompt(page_no: int, raw_text: str, config: _PdfVisionConfig) -> str:
@@ -959,6 +987,33 @@ def _run_extractors_detailed(
                 "error": str(exc),
             })
 
+        try:
+            if _pdf_requires_page_level_vision(file_path):
+                vision_content, vision_errors, attempted = _extract_pdf_with_vision(
+                    file_path,
+                    session_id=session_id,
+                )
+                if vision_content:
+                    return _ExtractorOutcome(
+                        vision_content,
+                        "vision",
+                        vision_errors,
+                        vision_attempted=attempted,
+                    )
+                if attempted:
+                    return _ExtractorOutcome(
+                        "",
+                        "",
+                        vision_errors,
+                        failure_reason=PDF_VISION_EXTRACTION_FAILED,
+                        vision_attempted=True,
+                    )
+        except Exception as exc:
+            log.warning("doc_parser.pdf_vision.inspect_or_extract_failed", {
+                "path": str(file_path),
+                "error": str(exc),
+            })
+
         extractors = [
             ("markitdown", _extract_with_markitdown),
             ("pymupdf", _extract_pdf_with_pymupdf),
@@ -1024,11 +1079,14 @@ def _run_extractors_detailed(
             combined_errors,
             vision_attempted=attempted,
         )
+    failure_reason = PDF_VISION_EXTRACTION_FAILED if attempted else PDF_TEXT_EXTRACTION_FAILED
+    if _is_pdf_unreadable(combined_errors):
+        failure_reason = PDF_UNREADABLE
     return _ExtractorOutcome(
         "",
         "",
         combined_errors,
-        failure_reason=PDF_VISION_EXTRACTION_FAILED if attempted else PDF_TEXT_EXTRACTION_FAILED,
+        failure_reason=failure_reason,
         vision_attempted=attempted,
     )
 
@@ -1038,12 +1096,32 @@ def _run_extractors(file_path: Path) -> tuple[str, str, list[str]]:
     return outcome.content, outcome.parser_name, outcome.errors
 
 
+def _is_pdf_unreadable(errors: list[str]) -> bool:
+    unreadable_markers = (
+        "cannot open broken document",
+        "failed to open file",
+        "eof marker not found",
+        "stream has ended unexpectedly",
+        "is not a valid pdf",
+        "filedataerror",
+        "pdf starts with",
+        "invalid pdf",
+    )
+    for error in errors:
+        lowered = error.lower()
+        if any(marker in lowered for marker in unreadable_markers):
+            return True
+    return False
+
+
 def _format_doc_parser_error(input_file: Path, outcome: _ExtractorOutcome) -> str:
     error_lines = "\n".join(outcome.errors) if outcome.errors else "No parser produced content."
     if input_file.suffix.lower() != ".pdf":
         return f"Failed to parse document: {input_file.name}\n{error_lines}"
     if outcome.failure_reason == PDF_PASSWORD_REQUIRED:
         headline = "PDF 需要密码"
+    elif outcome.failure_reason == PDF_UNREADABLE:
+        headline = "PDF 无法解析"
     elif outcome.failure_reason == PDF_VISION_EXTRACTION_FAILED:
         headline = "PDF 图片页视觉识别失败"
     else:

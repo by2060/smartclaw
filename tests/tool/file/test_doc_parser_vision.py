@@ -141,6 +141,20 @@ def test_run_extractors_detailed_uses_vision_for_image_pdf(tmp_path, monkeypatch
     assert "扫描件识别结果" in outcome.content
 
 
+def test_run_extractors_detailed_merges_mixed_pdf(tmp_path, monkeypatch, doc_parser_module):
+    source = tmp_path / "mixed-detailed.pdf"
+    _create_mixed_pdf(source)
+
+    monkeypatch.setattr(doc_parser_module, "_call_pdf_vision_model", lambda **kwargs: "扫描页补充内容")
+
+    outcome = doc_parser_module._run_extractors_detailed(source, session_id="mixed")
+
+    assert outcome.parser_name == "vision"
+    assert "This is a text page" in outcome.content
+    assert "## 第 2 页（图片识别）" in outcome.content
+    assert "扫描页补充内容" in outcome.content
+
+
 def test_call_pdf_vision_model_uses_multimodal_llm(monkeypatch, doc_parser_module):
     captured: dict[str, object] = {}
 
@@ -251,6 +265,24 @@ async def test_doc_parser_reports_vision_failure(tmp_path, monkeypatch, doc_pars
 
     assert result.success is False
     assert "PDF 图片页视觉识别失败" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_doc_parser_reports_unreadable_pdf(tmp_path, monkeypatch, doc_parser_module):
+    source = tmp_path / "unreadable.pdf"
+    output = tmp_path / "unreadable.md"
+    source.write_bytes(b"not-a-real-pdf")
+
+    monkeypatch.setattr(doc_parser_module, "_extract_with_markitdown", lambda _: "")
+
+    result = await doc_parser_module.doc_parser(
+        ToolContext(session_id="test", message_id="test"),
+        input_path=str(source),
+        output_path=str(output),
+    )
+
+    assert result.success is False
+    assert "PDF 无法解析" in (result.error or "")
 
 
 def test_run_extractors_detailed_handles_corrupt_pdf(tmp_path, doc_parser_module):
