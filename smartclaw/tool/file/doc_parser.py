@@ -58,7 +58,7 @@ DOCX_SOFT_BREAK_TOKEN = "<<SMARTCLAW_DOCX_SOFT_BREAK>>"
 PDF_TEXT_PAGE_THRESHOLD = 50
 PDF_VISION_DEFAULT_DPI = 150
 PDF_VISION_DEFAULT_MAX_PAGES = 50
-PDF_VISION_DEFAULT_MAX_TOKENS = 1200
+PDF_VISION_DEFAULT_MAX_TOKENS = 3000
 PDF_VISION_DEFAULT_TIMEOUT_S = 30.0
 PDF_VISION_RETRY_COUNT = 1
 PDF_VISION_RETRY_DELAY_S = 1.0
@@ -93,6 +93,12 @@ class _ExtractorOutcome:
     errors: list[str]
     failure_reason: str | None = None
     vision_attempted: bool = False
+
+
+@dataclass(frozen=True)
+class _PdfVisionLimitState:
+    processed_scan_pages: int = 0
+    skipped_scan_pages: int = 0
 
 
 def _normalize_markdown(text: str) -> str:
@@ -491,10 +497,10 @@ def _extract_pdf_with_vision(
 
     Configuration is controlled by environment variables:
     - ``SMARTCLAW_DOC_PARSER_PDF_VISION_DPI``: render DPI for image pages, default 150.
-    - ``SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_PAGES``: maximum number of pages processed by the
-      vision fallback, default 50.
+    - ``SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_PAGES``: maximum number of scan/image pages processed
+      by the vision fallback, default 50. Text pages are still preserved for the whole document.
     - ``SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_TOKENS``: per-page output token cap for the vision
-      model, default 1200.
+      model, default 3000.
     - ``SMARTCLAW_DOC_PARSER_PDF_VISION_TIMEOUT_S`` plus optional
       ``SMARTCLAW_DOC_PARSER_PDF_VISION_MODEL`` / ``SMARTCLAW_DOC_PARSER_PDF_VISION_PROVIDER``
       for model selection.
@@ -507,6 +513,7 @@ def _extract_pdf_with_vision(
     errors: list[str] = []
     parts: list[str] = []
     attempted = False
+    limit_state = _PdfVisionLimitState()
     fitz = importlib.import_module("fitz")
 
     try:
@@ -517,15 +524,7 @@ def _extract_pdf_with_vision(
 
     try:
         total_pages = len(document)
-        pages_to_process = min(total_pages, config.max_pages)
-        if total_pages > config.max_pages:
-            log.warning("doc_parser.pdf_vision.page_limit_reached", {
-                "path": str(file_path),
-                "total_pages": total_pages,
-                "processed_pages": pages_to_process,
-            })
-
-        for index in range(pages_to_process):
+        for index in range(total_pages):
             page_no = index + 1
             page = document.load_page(index)
             decision = _classify_pdf_page(page, page_no)
@@ -534,7 +533,26 @@ def _extract_pdf_with_vision(
                     parts.append(decision.text)
                 continue
 
+            if limit_state.processed_scan_pages >= config.max_pages:
+                limit_state = _PdfVisionLimitState(
+                    processed_scan_pages=limit_state.processed_scan_pages,
+                    skipped_scan_pages=limit_state.skipped_scan_pages + 1,
+                )
+                log.warning("doc_parser.pdf_vision.scan_page_limit_reached", {
+                    "path": str(file_path),
+                    "page": page_no,
+                    "processed_scan_pages": limit_state.processed_scan_pages,
+                    "max_scan_pages": config.max_pages,
+                })
+                if decision.text:
+                    parts.append(decision.text)
+                continue
+
             attempted = True
+            limit_state = _PdfVisionLimitState(
+                processed_scan_pages=limit_state.processed_scan_pages + 1,
+                skipped_scan_pages=limit_state.skipped_scan_pages,
+            )
             pix = None
             try:
                 pix = page.get_pixmap(dpi=config.dpi)
@@ -573,8 +591,13 @@ def _extract_pdf_with_vision(
             else:
                 errors.append(f"vision page {page_no}: extracted empty content")
 
-        if total_pages > pages_to_process:
-            parts.append(f"## 说明\n仅处理前 {pages_to_process} 页，其余页面因页数限制未执行视觉识别。")
+        if limit_state.skipped_scan_pages > 0:
+            parts.append(
+                "## 说明\n"
+                f"已处理 {limit_state.processed_scan_pages} 个扫描/图片页；"
+                f"另有 {limit_state.skipped_scan_pages} 个扫描/图片页因上限 "
+                f"{config.max_pages} 未执行视觉识别。"
+            )
     finally:
         document.close()
 

@@ -70,6 +70,21 @@ def _create_mixed_pdf(path: Path) -> None:
         document.close()
 
 
+def _create_large_mixed_pdf(path: Path, *, scan_pages: int, trailing_text: str) -> None:
+    import fitz
+
+    document = fitz.open()
+    try:
+        for index in range(scan_pages):
+            page = document.new_page()
+            page.insert_image(page.rect, stream=_png_bytes(f"扫描页 {index + 1}"))
+        text_page = document.new_page()
+        text_page.insert_text((72, 72), trailing_text)
+        document.save(path)
+    finally:
+        document.close()
+
+
 def _create_encrypted_pdf(path: Path) -> None:
     plain = path.with_name("plain.pdf")
     _create_text_pdf(plain, "这是需要加密的 PDF。" * 10)
@@ -202,6 +217,13 @@ def test_call_pdf_vision_model_uses_multimodal_llm(monkeypatch, doc_parser_modul
     }
     assert captured["kwargs"]["max_tokens"] == 321
     assert captured["kwargs"]["timeout_s"] == 12.5
+
+
+def test_load_pdf_vision_config_defaults(doc_parser_module):
+    config = doc_parser_module._load_pdf_vision_config()
+
+    assert config.max_pages == 50
+    assert config.max_tokens == 3000
 
 
 @pytest.mark.asyncio
@@ -337,4 +359,23 @@ def test_extract_pdf_with_vision_limits_pages_and_tokens(tmp_path, monkeypatch, 
     assert len(calls) == 50
     assert calls[0] == (1, 321)
     assert calls[-1] == (50, 321)
-    assert "仅处理前 50 页" in content
+    assert "已处理 50 个扫描/图片页；另有 5 个扫描/图片页因上限 50 未执行视觉识别" in content
+
+
+def test_extract_pdf_with_vision_only_limits_scan_pages(tmp_path, monkeypatch, doc_parser_module):
+    source = tmp_path / "large-mixed.pdf"
+    trailing_text = "Trailing text page stays available. " * 10
+    _create_large_mixed_pdf(source, scan_pages=55, trailing_text=trailing_text)
+
+    monkeypatch.setenv("SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_PAGES", "50")
+    monkeypatch.setattr(doc_parser_module, "_call_pdf_vision_model", lambda **kwargs: f"第 {kwargs['page_no']} 页")
+
+    content, errors, attempted = doc_parser_module._extract_pdf_with_vision(source, session_id="large-mixed")
+
+    assert attempted is True
+    assert errors == []
+    assert "## 第 1 页（图片识别）" in content
+    assert "## 第 50 页（图片识别）" in content
+    assert "## 第 51 页（图片识别）" not in content
+    assert "Trailing text page stays available" in content
+    assert "已处理 50 个扫描/图片页；另有 5 个扫描/图片页因上限 50 未执行视觉识别" in content

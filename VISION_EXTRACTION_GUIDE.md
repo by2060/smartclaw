@@ -27,8 +27,8 @@
 可通过环境变量调整：
 
 - `SMARTCLAW_DOC_PARSER_PDF_VISION_DPI`：图片页渲染 DPI，默认 `150`
-- `SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_PAGES`：视觉兜底最多处理页数，默认 `50`
-- `SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_TOKENS`：每页视觉识别的输出 token 上限，默认 `1200`
+- `SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_PAGES`：最多执行视觉识别的扫描/图片页数量，默认 `50`；不会截断整份 PDF 的文本页
+- `SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_TOKENS`：每页视觉识别的输出 token 上限，默认 `3000`
 - `SMARTCLAW_DOC_PARSER_PDF_VISION_TIMEOUT_S`：单页模型调用超时时间（秒），默认 `30`
 - `SMARTCLAW_DOC_PARSER_PDF_VISION_MODEL`：可选，指定视觉模型
 - `SMARTCLAW_DOC_PARSER_PDF_VISION_PROVIDER`：可选，指定模型 provider
@@ -37,5 +37,5 @@
 
 - 识别效果受扫描清晰度、旋转角度、遮挡情况影响
 - 大文件或多页扫描件会增加处理时延
-- 默认仅处理前 50 页扫描内容，超出部分会被跳过并在结果中提示
+- 默认最多处理 50 个扫描/图片页，超出上限的扫描页会被跳过并在结果中提示；其余文本页仍会继续保留
 - 多模态模型对复杂表格和低质量手写内容可能存在漏识别或格式偏差
