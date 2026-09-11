@@ -186,7 +186,7 @@ def test_call_pdf_vision_model_uses_multimodal_llm(monkeypatch, doc_parser_modul
 
     config = doc_parser_module._PdfVisionConfig(
         dpi=150,
-        max_pages=50,
+        max_scan_pages=50,
         max_tokens=321,
         timeout_s=12.5,
         model="demo/model",
@@ -222,8 +222,25 @@ def test_call_pdf_vision_model_uses_multimodal_llm(monkeypatch, doc_parser_modul
 def test_load_pdf_vision_config_defaults(doc_parser_module):
     config = doc_parser_module._load_pdf_vision_config()
 
-    assert config.max_pages == 50
+    assert config.max_scan_pages == 50
     assert config.max_tokens == 3000
+
+
+def test_load_pdf_vision_config_prefers_dedicated_scan_page_env(monkeypatch, doc_parser_module):
+    monkeypatch.setenv("SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_SCAN_PAGES", "66")
+    monkeypatch.setenv("SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_PAGES", "12")
+
+    config = doc_parser_module._load_pdf_vision_config()
+
+    assert config.max_scan_pages == 66
+
+
+def test_load_pdf_vision_config_supports_legacy_page_env(monkeypatch, doc_parser_module):
+    monkeypatch.setenv("SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_PAGES", "44")
+
+    config = doc_parser_module._load_pdf_vision_config()
+
+    assert config.max_scan_pages == 44
 
 
 @pytest.mark.asyncio
@@ -341,7 +358,7 @@ def test_extract_pdf_with_vision_limits_pages_and_tokens(tmp_path, monkeypatch, 
     source = tmp_path / "large-scan.pdf"
     _create_image_pdf(source, [f"扫描页 {index}" for index in range(1, 56)])
 
-    monkeypatch.setenv("SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_PAGES", "50")
+    monkeypatch.setenv("SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_SCAN_PAGES", "50")
     monkeypatch.setenv("SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_TOKENS", "321")
 
     calls: list[tuple[int, int]] = []
@@ -367,7 +384,7 @@ def test_extract_pdf_with_vision_only_limits_scan_pages(tmp_path, monkeypatch, d
     trailing_text = "Trailing text page stays available. " * 10
     _create_large_mixed_pdf(source, scan_pages=55, trailing_text=trailing_text)
 
-    monkeypatch.setenv("SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_PAGES", "50")
+    monkeypatch.setenv("SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_SCAN_PAGES", "50")
     monkeypatch.setattr(doc_parser_module, "_call_pdf_vision_model", lambda **kwargs: f"第 {kwargs['page_no']} 页")
 
     content, errors, attempted = doc_parser_module._extract_pdf_with_vision(source, session_id="large-mixed")

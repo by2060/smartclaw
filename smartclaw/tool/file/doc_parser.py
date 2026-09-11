@@ -57,7 +57,7 @@ SPREADSHEET_NAMESPACE = {
 DOCX_SOFT_BREAK_TOKEN = "<<SMARTCLAW_DOCX_SOFT_BREAK>>"
 PDF_TEXT_PAGE_THRESHOLD = 50
 PDF_VISION_DEFAULT_DPI = 150
-PDF_VISION_DEFAULT_MAX_PAGES = 50
+PDF_VISION_DEFAULT_MAX_SCAN_PAGES = 50
 PDF_VISION_DEFAULT_MAX_TOKENS = 3000
 PDF_VISION_DEFAULT_TIMEOUT_S = 30.0
 PDF_VISION_RETRY_COUNT = 1
@@ -71,7 +71,7 @@ PDF_UNREADABLE = "pdf_unreadable"
 @dataclass(frozen=True)
 class _PdfVisionConfig:
     dpi: int
-    max_pages: int
+    max_scan_pages: int
     max_tokens: int
     timeout_s: float
     model: str | None
@@ -366,10 +366,24 @@ def _env_float(name: str, default: float, *, minimum: float = 0.1) -> float:
         return default
 
 
+def _load_pdf_vision_max_scan_pages() -> int:
+    legacy_name = "SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_PAGES"
+    preferred_name = "SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_SCAN_PAGES"
+    if os.getenv(preferred_name):
+        return _env_int(preferred_name, PDF_VISION_DEFAULT_MAX_SCAN_PAGES)
+    if os.getenv(legacy_name):
+        log.warning("doc_parser.pdf_vision.legacy_scan_page_limit_env", {
+            "legacy_env": legacy_name,
+            "preferred_env": preferred_name,
+        })
+        return _env_int(legacy_name, PDF_VISION_DEFAULT_MAX_SCAN_PAGES)
+    return PDF_VISION_DEFAULT_MAX_SCAN_PAGES
+
+
 def _load_pdf_vision_config() -> _PdfVisionConfig:
     return _PdfVisionConfig(
         dpi=_env_int("SMARTCLAW_DOC_PARSER_PDF_VISION_DPI", PDF_VISION_DEFAULT_DPI),
-        max_pages=_env_int("SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_PAGES", PDF_VISION_DEFAULT_MAX_PAGES),
+        max_scan_pages=_load_pdf_vision_max_scan_pages(),
         max_tokens=_env_int("SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_TOKENS", PDF_VISION_DEFAULT_MAX_TOKENS),
         timeout_s=_env_float("SMARTCLAW_DOC_PARSER_PDF_VISION_TIMEOUT_S", PDF_VISION_DEFAULT_TIMEOUT_S),
         model=(os.getenv("SMARTCLAW_DOC_PARSER_PDF_VISION_MODEL") or "").strip() or None,
@@ -497,8 +511,9 @@ def _extract_pdf_with_vision(
 
     Configuration is controlled by environment variables:
     - ``SMARTCLAW_DOC_PARSER_PDF_VISION_DPI``: render DPI for image pages, default 150.
-    - ``SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_PAGES``: maximum number of scan/image pages processed
-      by the vision fallback, default 50. Text pages are still preserved for the whole document.
+    - ``SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_SCAN_PAGES``: maximum number of scan/image pages
+      processed by the vision fallback, default 50. Text pages are still preserved for the whole
+      document.
     - ``SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_TOKENS``: per-page output token cap for the vision
       model, default 3000.
     - ``SMARTCLAW_DOC_PARSER_PDF_VISION_TIMEOUT_S`` plus optional
@@ -533,7 +548,7 @@ def _extract_pdf_with_vision(
                     parts.append(decision.text)
                 continue
 
-            if limit_state.processed_scan_pages >= config.max_pages:
+            if limit_state.processed_scan_pages >= config.max_scan_pages:
                 limit_state = _PdfVisionLimitState(
                     processed_scan_pages=limit_state.processed_scan_pages,
                     skipped_scan_pages=limit_state.skipped_scan_pages + 1,
@@ -542,7 +557,7 @@ def _extract_pdf_with_vision(
                     "path": str(file_path),
                     "page": page_no,
                     "processed_scan_pages": limit_state.processed_scan_pages,
-                    "max_scan_pages": config.max_pages,
+                    "max_scan_pages": config.max_scan_pages,
                 })
                 if decision.text:
                     parts.append(decision.text)
@@ -596,7 +611,7 @@ def _extract_pdf_with_vision(
                 "## 说明\n"
                 f"已处理 {limit_state.processed_scan_pages} 个扫描/图片页；"
                 f"另有 {limit_state.skipped_scan_pages} 个扫描/图片页因上限 "
-                f"{config.max_pages} 未执行视觉识别。"
+                f"{config.max_scan_pages} 未执行视觉识别。"
             )
     finally:
         document.close()
