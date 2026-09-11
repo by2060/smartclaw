@@ -7,18 +7,23 @@ Converts PDF, Office, and HTML documents into Markdown files.
 from __future__ import annotations
 
 import asyncio
+import base64
 import datetime as dt
 import html as html_lib
 import importlib
+import logging
+import os
 import re
 import subprocess
 import xml.etree.ElementTree as ET
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
 from defusedxml import ElementTree as DefusedET
 
+from smartclaw.provider.provider import ChatMessage
 from smartclaw.tool.registry import (
     ParameterType,
     ToolCategory,
@@ -34,6 +39,9 @@ from smartclaw.tool.file.sandbox_paths import (
     resolve_sandbox_path,
 )
 from smartclaw.workspace.manager import WorkspaceManager
+from smartclaw.workflow.llm import LLMClient
+
+log = logging.getLogger(__name__)
 
 SUPPORTED_SUFFIXES = {
     ".pdf", ".docx", ".doc", ".html", ".htm",
@@ -47,6 +55,50 @@ SPREADSHEET_NAMESPACE = {
     "s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
 }
 DOCX_SOFT_BREAK_TOKEN = "<<SMARTCLAW_DOCX_SOFT_BREAK>>"
+PDF_TEXT_PAGE_THRESHOLD = 50
+PDF_VISION_DEFAULT_DPI = 150
+PDF_VISION_DEFAULT_MAX_SCAN_PAGES = 100
+PDF_VISION_DEFAULT_MAX_TOKENS = 3000
+PDF_VISION_DEFAULT_TIMEOUT_S = 30.0
+PDF_VISION_RETRY_COUNT = 1
+PDF_VISION_RETRY_DELAY_S = 1.0
+PDF_PASSWORD_REQUIRED = "pdf_password_required"
+PDF_TEXT_EXTRACTION_FAILED = "pdf_text_extraction_failed"
+PDF_VISION_EXTRACTION_FAILED = "pdf_vision_extraction_failed"
+PDF_UNREADABLE = "pdf_unreadable"
+
+
+@dataclass(frozen=True)
+class _PdfVisionConfig:
+    dpi: int
+    max_scan_pages: int
+    max_tokens: int
+    timeout_s: float
+    model: str | None
+    provider_id: str | None
+
+
+@dataclass(frozen=True)
+class _PdfPageDecision:
+    page_no: int
+    text: str
+    has_images: bool
+    is_text_page: bool
+
+
+@dataclass(frozen=True)
+class _ExtractorOutcome:
+    content: str
+    parser_name: str
+    errors: list[str]
+    failure_reason: str | None = None
+    vision_attempted: bool = False
+
+
+@dataclass(frozen=True)
+class _PdfVisionLimitState:
+    processed_scan_pages: int = 0
+    skipped_scan_pages: int = 0
 
 
 def _normalize_markdown(text: str) -> str:
@@ -290,6 +342,281 @@ def _extract_pdf_with_pypdf(file_path: Path) -> str:
     reader = PdfReader(str(file_path))
     text_parts = [page.extract_text() or "" for page in reader.pages]
     return _normalize_markdown("\n\n".join(text_parts))
+
+
+def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        return max(minimum, int(raw))
+    except ValueError:
+        log.warning("doc_parser.pdf_vision.invalid_int_env", {"name": name, "value": raw})
+        return default
+
+
+def _env_float(name: str, default: float, *, minimum: float = 0.1) -> float:
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        return max(minimum, float(raw))
+    except ValueError:
+        log.warning("doc_parser.pdf_vision.invalid_float_env", {"name": name, "value": raw})
+        return default
+
+
+def _load_pdf_vision_max_scan_pages() -> int:
+    legacy_name = "SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_PAGES"
+    preferred_name = "SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_SCAN_PAGES"
+    if os.getenv(preferred_name):
+        return _env_int(preferred_name, PDF_VISION_DEFAULT_MAX_SCAN_PAGES)
+    if os.getenv(legacy_name):
+        log.warning("doc_parser.pdf_vision.legacy_scan_page_limit_env", {
+            "legacy_env": legacy_name,
+            "preferred_env": preferred_name,
+        })
+        return _env_int(legacy_name, PDF_VISION_DEFAULT_MAX_SCAN_PAGES)
+    return PDF_VISION_DEFAULT_MAX_SCAN_PAGES
+
+
+def _load_pdf_vision_config() -> _PdfVisionConfig:
+    return _PdfVisionConfig(
+        dpi=_env_int("SMARTCLAW_DOC_PARSER_PDF_VISION_DPI", PDF_VISION_DEFAULT_DPI),
+        max_scan_pages=_load_pdf_vision_max_scan_pages(),
+        max_tokens=_env_int("SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_TOKENS", PDF_VISION_DEFAULT_MAX_TOKENS),
+        timeout_s=_env_float("SMARTCLAW_DOC_PARSER_PDF_VISION_TIMEOUT_S", PDF_VISION_DEFAULT_TIMEOUT_S),
+        model=(os.getenv("SMARTCLAW_DOC_PARSER_PDF_VISION_MODEL") or "").strip() or None,
+        provider_id=(os.getenv("SMARTCLAW_DOC_PARSER_PDF_VISION_PROVIDER") or "").strip() or None,
+    )
+
+
+def _pdf_needs_password(file_path: Path) -> bool:
+    fitz = importlib.import_module("fitz")
+
+    document = fitz.open(file_path)
+    try:
+        return bool(getattr(document, "needs_pass", False))
+    finally:
+        document.close()
+
+
+def _classify_pdf_page(
+    page: object,
+    page_no: int,
+    *,
+    threshold: int = PDF_TEXT_PAGE_THRESHOLD,
+    emit_log: bool = True,
+) -> _PdfPageDecision:
+    text = str(page.get_text() or "").strip()
+    has_images = bool(page.get_images())
+    is_text_page = len(text) >= threshold
+    if emit_log:
+        log.info("doc_parser.pdf_vision.page_classified", {
+            "page": page_no,
+            "text_length": len(text),
+            "has_images": has_images,
+            "classification": "text" if is_text_page else "image",
+        })
+    return _PdfPageDecision(
+        page_no=page_no,
+        text=text,
+        has_images=has_images,
+        is_text_page=is_text_page,
+    )
+
+
+def _pdf_requires_page_level_vision(file_path: Path) -> bool:
+    fitz = importlib.import_module("fitz")
+
+    try:
+        document = fitz.open(file_path)
+    except Exception as exc:
+        log.warning("doc_parser.pdf_vision.inspect_failed", {"path": str(file_path), "error": str(exc)})
+        return False
+
+    try:
+        for index in range(len(document)):
+            page = document.load_page(index)
+            decision = _classify_pdf_page(page, index + 1, emit_log=False)
+            if not decision.is_text_page:
+                return True
+        return False
+    finally:
+        document.close()
+
+
+def _build_pdf_vision_prompt(page_no: int, raw_text: str, config: _PdfVisionConfig) -> str:
+    reference_text = raw_text.strip()
+    raw_text_section = (
+        f"\n可参考的原始文本（可能为空或不完整）：\n{reference_text}\n"
+        if reference_text
+        else "\n该页没有可用的原始文本，请完全依据图片识别。\n"
+    )
+    return (
+        "请作为 PDF 图片页识别助手，准确提取当前页面中的文字、表格、标题、项目符号和关键数字。"
+        "如果内容可读，请输出简洁 Markdown；如果是表格，尽量整理为 Markdown 表格；"
+        "如果部分内容无法辨认，明确写出“[部分内容无法识别]”；不要编造图片中不存在的内容；"
+        f"请将回答控制在约 {config.max_tokens} 个输出 token 以内，并使用中文输出。"
+        f"\n当前页码：第 {page_no} 页。"
+        f"{raw_text_section}"
+    )
+
+
+def _call_pdf_vision_model(
+    *,
+    image_b64: str,
+    page_no: int,
+    raw_text: str,
+    session_id: str | None,
+    config: _PdfVisionConfig,
+) -> str:
+    prompt = _build_pdf_vision_prompt(page_no, raw_text, config)
+    client = LLMClient(
+        model=config.model,
+        provider_id=config.provider_id,
+        session_id=session_id,
+    )
+    log.info("doc_parser.pdf_vision.model_call", {
+        "page": page_no,
+        "dpi": config.dpi,
+        "max_tokens": config.max_tokens,
+        "model": config.model,
+        "provider_id": config.provider_id,
+    })
+    return client.ask_messages(
+        [
+            ChatMessage(
+                role="user",
+                content=[
+                    {"type": "text", "text": prompt},
+                    {"type": "image", "mimeType": "image/png", "data": image_b64},
+                ],
+            )
+        ],
+        temperature=0.1,
+        timeout_s=config.timeout_s,
+        max_retries=PDF_VISION_RETRY_COUNT,
+        retry_delay_s=PDF_VISION_RETRY_DELAY_S,
+        max_tokens=config.max_tokens,
+    )
+
+
+def _extract_pdf_with_vision(
+    file_path: Path,
+    *,
+    session_id: str | None = None,
+) -> tuple[str, list[str], bool]:
+    """Extract PDF content with a vision fallback for scan/image pages.
+
+    Configuration is controlled by environment variables:
+    - ``SMARTCLAW_DOC_PARSER_PDF_VISION_DPI``: render DPI for image pages, default 150.
+    - ``SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_SCAN_PAGES``: maximum number of scan/image pages
+      processed by the vision fallback, default 100. Text pages are still preserved for the whole
+      document.
+    - ``SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_TOKENS``: per-page output token cap for the vision
+      model, default 3000.
+    - ``SMARTCLAW_DOC_PARSER_PDF_VISION_TIMEOUT_S`` plus optional
+      ``SMARTCLAW_DOC_PARSER_PDF_VISION_MODEL`` / ``SMARTCLAW_DOC_PARSER_PDF_VISION_PROVIDER``
+      for model selection.
+
+    When image rendering or model inference fails, the function falls back to the page's raw text
+    (if any) or leaves the page empty instead of raising.
+    """
+
+    config = _load_pdf_vision_config()
+    errors: list[str] = []
+    parts: list[str] = []
+    attempted = False
+    limit_state = _PdfVisionLimitState()
+    fitz = importlib.import_module("fitz")
+
+    try:
+        document = fitz.open(file_path)
+    except Exception as exc:
+        log.warning("doc_parser.pdf_vision.open_failed", {"path": str(file_path), "error": str(exc)})
+        return "", [f"vision: {exc}"], False
+
+    try:
+        total_pages = len(document)
+        for index in range(total_pages):
+            page_no = index + 1
+            page = document.load_page(index)
+            decision = _classify_pdf_page(page, page_no)
+            if decision.is_text_page:
+                if decision.text:
+                    parts.append(decision.text)
+                continue
+
+            if limit_state.processed_scan_pages >= config.max_scan_pages:
+                limit_state = _PdfVisionLimitState(
+                    processed_scan_pages=limit_state.processed_scan_pages,
+                    skipped_scan_pages=limit_state.skipped_scan_pages + 1,
+                )
+                log.warning("doc_parser.pdf_vision.scan_page_limit_reached", {
+                    "path": str(file_path),
+                    "page": page_no,
+                    "processed_scan_pages": limit_state.processed_scan_pages,
+                    "max_scan_pages": config.max_scan_pages,
+                })
+                if decision.text:
+                    parts.append(decision.text)
+                continue
+
+            attempted = True
+            limit_state = _PdfVisionLimitState(
+                processed_scan_pages=limit_state.processed_scan_pages + 1,
+                skipped_scan_pages=limit_state.skipped_scan_pages,
+            )
+            pix = None
+            try:
+                pix = page.get_pixmap(dpi=config.dpi)
+                image_b64 = base64.b64encode(pix.tobytes("png")).decode("utf-8")
+            except Exception as exc:
+                log.warning("doc_parser.pdf_vision.render_failed", {"page": page_no, "error": str(exc)})
+                errors.append(f"vision page {page_no}: render failed: {exc}")
+                if decision.text:
+                    parts.append(decision.text)
+                continue
+            finally:
+                if pix is not None:
+                    pix = None
+
+            try:
+                recognized = _call_pdf_vision_model(
+                    image_b64=image_b64,
+                    page_no=page_no,
+                    raw_text=decision.text,
+                    session_id=session_id,
+                    config=config,
+                )
+            except Exception as exc:
+                log.warning("doc_parser.pdf_vision.model_failed", {"page": page_no, "error": str(exc)})
+                errors.append(f"vision page {page_no}: model failed: {exc}")
+                if decision.text:
+                    parts.append(decision.text)
+                continue
+
+            normalized = _normalize_markdown(recognized)
+            if normalized:
+                parts.append(f"## 第 {page_no} 页（图片识别）\n{normalized}")
+            elif decision.text:
+                errors.append(f"vision page {page_no}: extracted empty content")
+                parts.append(decision.text)
+            else:
+                errors.append(f"vision page {page_no}: extracted empty content")
+
+        if limit_state.skipped_scan_pages > 0:
+            parts.append(
+                "## 说明\n"
+                f"已处理 {limit_state.processed_scan_pages} 个扫描/图片页；"
+                f"另有 {limit_state.skipped_scan_pages} 个扫描/图片页因上限 "
+                f"{config.max_scan_pages} 未执行视觉识别。"
+            )
+    finally:
+        document.close()
+
+    return _normalize_markdown("\n\n".join(parts)), errors, attempted
 
 
 def _word_tag(name: str) -> str:
@@ -651,10 +978,80 @@ def _extract_with_pandoc(file_path: Path) -> str:
     return _normalize_markdown(result.stdout)
 
 
-def _run_extractors(file_path: Path) -> tuple[str, str, list[str]]:
+def _run_extractor_chain(
+    file_path: Path,
+    extractors: list[tuple[str, Callable[[Path], str]]],
+) -> tuple[str, str, list[str]]:
+    errors: list[str] = []
+    for parser_name, extractor in extractors:
+        try:
+            content = extractor(file_path)
+        except ImportError as exc:
+            errors.append(f"{parser_name}: {exc}")
+            continue
+        except FileNotFoundError as exc:
+            errors.append(f"{parser_name}: {exc}")
+            continue
+        except Exception as exc:
+            errors.append(f"{parser_name}: {exc}")
+            continue
+
+        if content and content.strip():
+            return content, parser_name, errors
+        errors.append(f"{parser_name}: extracted empty content")
+
+    return "", "", errors
+
+
+def _run_extractors_detailed(
+    file_path: Path,
+    *,
+    session_id: str | None = None,
+) -> _ExtractorOutcome:
     extractors: list[tuple[str, Callable[[Path], str]]]
     suffix = file_path.suffix.lower()
     if suffix == ".pdf":
+        try:
+            if _pdf_needs_password(file_path):
+                return _ExtractorOutcome(
+                    content="",
+                    parser_name="",
+                    errors=["pdf: file is encrypted and requires a password"],
+                    failure_reason=PDF_PASSWORD_REQUIRED,
+                )
+        except Exception as exc:
+            log.warning("doc_parser.pdf_vision.password_check_failed", {
+                "path": str(file_path),
+                "error": str(exc),
+            })
+
+        try:
+            if _pdf_requires_page_level_vision(file_path):
+                vision_content, vision_errors, attempted = _extract_pdf_with_vision(
+                    file_path,
+                    session_id=session_id,
+                )
+                if vision_content:
+                    return _ExtractorOutcome(
+                        vision_content,
+                        "vision",
+                        vision_errors,
+                        vision_attempted=attempted,
+                    )
+                if attempted:
+                    return _ExtractorOutcome(
+                        "",
+                        "",
+                        vision_errors,
+                        failure_reason=PDF_VISION_EXTRACTION_FAILED,
+                        vision_attempted=True,
+                    )
+        except Exception as exc:
+            log.warning("doc_parser.pdf_vision.inspect_or_extract_failed", {
+                "path": str(file_path),
+                "error": str(exc),
+            })
+
         extractors = [
             ("markitdown", _extract_with_markitdown),
             ("pymupdf", _extract_pdf_with_pymupdf),
@@ -703,25 +1100,71 @@ def _run_extractors(file_path: Path) -> tuple[str, str, list[str]]:
             ("olefile", _extract_doc_with_olefile),
         ]
 
-    errors: list[str] = []
-    for parser_name, extractor in extractors:
-        try:
-            content = extractor(file_path)
-        except ImportError as exc:
-            errors.append(f"{parser_name}: {exc}")
-            continue
-        except FileNotFoundError as exc:
-            errors.append(f"{parser_name}: {exc}")
-            continue
-        except Exception as exc:
-            errors.append(f"{parser_name}: {exc}")
-            continue
+    content, parser_name, errors = _run_extractor_chain(file_path, extractors)
+    if content or suffix != ".pdf":
+        failure_reason = PDF_TEXT_EXTRACTION_FAILED if suffix == ".pdf" and not content else None
+        return _ExtractorOutcome(content, parser_name, errors, failure_reason=failure_reason)
 
-        if content and content.strip():
-            return content, parser_name, errors
-        errors.append(f"{parser_name}: extracted empty content")
+    vision_content, vision_errors, attempted = _extract_pdf_with_vision(
+        file_path,
+        session_id=session_id,
+    )
+    combined_errors = [*errors, *vision_errors]
+    if vision_content:
+        return _ExtractorOutcome(
+            vision_content,
+            "vision",
+            combined_errors,
+            vision_attempted=attempted,
+        )
+    failure_reason = PDF_VISION_EXTRACTION_FAILED if attempted else PDF_TEXT_EXTRACTION_FAILED
+    if _is_pdf_unreadable(combined_errors):
+        failure_reason = PDF_UNREADABLE
+    return _ExtractorOutcome(
+        "",
+        "",
+        combined_errors,
+        failure_reason=failure_reason,
+        vision_attempted=attempted,
+    )
 
-    return "", "", errors
+
+def _run_extractors(file_path: Path) -> tuple[str, str, list[str]]:
+    outcome = _run_extractors_detailed(file_path)
+    return outcome.content, outcome.parser_name, outcome.errors
+
+
+def _is_pdf_unreadable(errors: list[str]) -> bool:
+    unreadable_markers = (
+        "cannot open broken document",
+        "failed to open file",
+        "eof marker not found",
+        "stream has ended unexpectedly",
+        "is not a valid pdf",
+        "filedataerror",
+        "pdf starts with",
+        "invalid pdf",
+    )
+    for error in errors:
+        lowered = error.lower()
+        if any(marker in lowered for marker in unreadable_markers):
+            return True
+    return False
+
+
+def _format_doc_parser_error(input_file: Path, outcome: _ExtractorOutcome) -> str:
+    error_lines = "\n".join(outcome.errors) if outcome.errors else "No parser produced content."
+    if input_file.suffix.lower() != ".pdf":
+        return f"Failed to parse document: {input_file.name}\n{error_lines}"
+    if outcome.failure_reason == PDF_PASSWORD_REQUIRED:
+        headline = "PDF 需要密码"
+    elif outcome.failure_reason == PDF_UNREADABLE:
+        headline = "PDF 无法解析"
+    elif outcome.failure_reason == PDF_VISION_EXTRACTION_FAILED:
+        headline = "PDF 图片页视觉识别失败"
+    else:
+        headline = "PDF 文本提取失败"
+    return f"{headline}: {input_file.name}\n{error_lines}"
 
 
 @ToolRegistry.register_function(
@@ -860,13 +1303,14 @@ async def doc_parser(
         metadata={"filepath": str(input_file)},
     )
 
-    markdown, parser_name, errors = await asyncio.to_thread(_run_extractors, input_file)
+    outcome = await asyncio.to_thread(
+        _run_extractors_detailed,
+        input_file,
+        session_id=ctx.session_id,
+    )
+    markdown, parser_name = outcome.content, outcome.parser_name
     if not markdown:
-        error_lines = "\n".join(errors) if errors else "No parser produced content."
-        return ToolResult(
-            success=False,
-            error=f"Failed to parse document: {input_file.name}\n{error_lines}",
-        )
+        return ToolResult(success=False, error=_format_doc_parser_error(input_file, outcome))
 
     output_file.parent.mkdir(parents=True, exist_ok=True)
     diff = f"Generated markdown for {input_file.name}"

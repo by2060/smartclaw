@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+from smartclaw.provider.provider import ChatMessage
 from smartclaw.workflow.llm import LLMClient
 from smartclaw.workflow.engine import WorkflowEngine
 from smartclaw.workflow.models import Workflow
@@ -32,6 +33,8 @@ class _FakeProvider:
         self._models = models or []
         self.calls = 0
         self.last_config = None
+        self.last_messages = None
+        self.last_kwargs = None
 
     def configure(self, cfg):  # pragma: no cover
         self.last_config = cfg
@@ -45,6 +48,8 @@ class _FakeProvider:
 
     async def chat(self, model_id: str, messages, **kwargs):
         self.calls += 1
+        self.last_messages = messages
+        self.last_kwargs = kwargs
         behavior = self._behavior
         if isinstance(behavior, list):
             current = behavior.pop(0) if behavior else "ok"
@@ -101,6 +106,30 @@ def test_llm_ask_uses_provider_chat(monkeypatch):
 
     assert out == "demo:m"
     assert provider.calls == 1
+
+
+def test_llm_ask_messages_preserves_multimodal_blocks(monkeypatch):
+    provider = _FakeProvider("demo", "ok", models=["m"])
+    _patch_provider(monkeypatch, {"demo": provider})
+
+    client = LLMClient(provider_id="demo", model="m")
+    out = client.ask_messages(
+        [
+            ChatMessage(
+                role="user",
+                content=[
+                    {"type": "text", "text": "请识别图片"},
+                    {"type": "image", "mimeType": "image/png", "data": "abcd"},
+                ],
+            )
+        ],
+        max_tokens=321,
+    )
+
+    assert out == "demo:m"
+    assert provider.calls == 1
+    assert provider.last_messages[0].content[1]["type"] == "image"
+    assert provider.last_kwargs["max_tokens"] == 321
 
 
 def test_llm_keeps_trust_env_from_workflow_config(monkeypatch):
@@ -257,4 +286,3 @@ def test_get_llm_client_does_not_stick_to_old_default(monkeypatch):
 
     assert out1 == "first:first-model"
     assert out2 == "second:second-model"
-
