@@ -512,7 +512,7 @@ def _extract_pdf_with_vision(
     Configuration is controlled by environment variables:
     - ``SMARTCLAW_DOC_PARSER_PDF_VISION_DPI``: render DPI for image pages, default 150.
     - ``SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_SCAN_PAGES``: maximum number of scan/image pages
-      processed by the vision fallback, default 50. Text pages are still preserved for the whole
+      processed by the vision fallback, default 100. Text pages are still preserved for the whole
       document.
     - ``SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_TOKENS``: per-page output token cap for the vision
       model, default 3000.
