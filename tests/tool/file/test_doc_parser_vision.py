@@ -222,7 +222,7 @@ def test_call_pdf_vision_model_uses_multimodal_llm(monkeypatch, doc_parser_modul
 def test_load_pdf_vision_config_defaults(doc_parser_module):
     config = doc_parser_module._load_pdf_vision_config()
 
-    assert config.max_scan_pages == 50
+    assert config.max_scan_pages == 100
     assert config.max_tokens == 3000
 
 

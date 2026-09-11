@@ -27,7 +27,7 @@
 可通过环境变量调整：
 
 - `SMARTCLAW_DOC_PARSER_PDF_VISION_DPI`：图片页渲染 DPI，默认 `150`
-- `SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_SCAN_PAGES`：最多执行视觉识别的扫描/图片页数量，默认 `50`；不会截断整份 PDF 的文本页
+- `SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_SCAN_PAGES`：最多执行视觉识别的扫描/图片页数量，默认 `100`；不会截断整份 PDF 的文本页
 - `SMARTCLAW_DOC_PARSER_PDF_VISION_MAX_TOKENS`：每页视觉识别的输出 token 上限，默认 `3000`
 - `SMARTCLAW_DOC_PARSER_PDF_VISION_TIMEOUT_S`：单页模型调用超时时间（秒），默认 `30`
 - `SMARTCLAW_DOC_PARSER_PDF_VISION_MODEL`：可选，指定视觉模型
