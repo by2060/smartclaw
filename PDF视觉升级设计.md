@@ -191,7 +191,17 @@ ChatMessage(
 )
 ```
 
-### 6.4 视觉 Prompt 设计目标
+### 6.4 模型配置与 SmartClaw 复用规则
+
+PDF 视觉解析复用 SmartClaw 现有的模型配置和 Provider 体系，不单独实现模型客户端、鉴权或网关配置。调用链为：`doc_parser.py` → `LLMClient.ask_messages()` → SmartClaw `Provider` → 已配置的模型网关/API。
+
+- `LLMClient` 位于 `smartclaw/workflow/llm.py`，底层继续使用 `Config`、`Provider`、`ProviderConfig`、`Provider.apply_config()` 和 `provider.chat()`。
+- 未显式指定模型时，读取 SmartClaw 全局默认配置 `default_models.llm`。
+- 可通过 `provider_id`、`model` 或 `provider/model` 显式指定模型。
+- `SMARTCLAW_DOC_PARSER_PDF_VISION_MODEL` 和 `SMARTCLAW_DOC_PARSER_PDF_VISION_PROVIDER` 仅用于 PDF 视觉解析场景的可选覆盖；未设置时回退到全局默认模型。
+- 模型的 API 地址、密钥、鉴权方式和 Provider 参数继续由 SmartClaw 统一管理。
+
+### 6.5 视觉 Prompt 设计目标
 
 Prompt 的目标不是泛化描述图片，而是尽量还原文档页面信息，要求模型：
 
@@ -201,7 +211,7 @@ Prompt 的目标不是泛化描述图片，而是尽量还原文档页面信息�
 - 对无法辨认内容明确标注
 - 避免编造不存在的信息
 
-### 6.5 结果标记
+### 6.6 结果标记
 
 图片页结果前统一追加页码标识：
 
